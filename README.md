@@ -6,16 +6,14 @@ Test script to validate correlation analysis approach before building full Russe
 
 1. Fetches historical stock data from Tiingo API (S&P 500 sample)
 2. Calculates daily returns
-3. Computes correlation matrix (NOT covariance - correlation is bounded -1 to 1)
+3. Computes correlation matrix (NOT covariance as correlation is bounded between -1 to 1)
 4. Generates interactive Plotly heatmap
-5. Saves all data to CSV files
+5. Saves all data to CSV files (will save to BigQuery once connected)
 
 ## Prerequisites
 
-1. **Tiingo API Key** (Free tier works!)
-   - Sign up at https://www.tiingo.com/
-   - Go to Account → API
-   - Copy your token
+1. **Tiingo API Key** (Free tier works up to 500 unique tickers, need paid pro tier for more tickers)
+   - Available on https://www.tiingo.com/
 
 2. **Python 3.8+**
 
@@ -43,7 +41,7 @@ This will:
 - Generate interactive heatmap
 - Save everything to `sp500_data/` folder
 
-### View the heatmap:
+### Viewing the heatmap:
 ```bash
 # Open the generated file in your browser
 open sp500_data/correlation_heatmap.html
@@ -70,28 +68,12 @@ sp500_data/
 
 ### Correlation Values:
 - **1.0**: Perfect positive correlation (stocks move exactly together)
-- **0.5 to 1.0**: Strong positive correlation
-- **0.2 to 0.5**: Moderate positive correlation
 - **-0.2 to 0.2**: Weak/no correlation (good for diversification!)
-- **-0.5 to -0.2**: Moderate negative correlation
-- **-1.0 to -0.5**: Strong negative correlation
 - **-1.0**: Perfect negative correlation (stocks move exactly opposite)
-
-### What to Look For:
-✅ **Good signs** (your project is valuable):
-- Average correlation < 0.7
-- Multiple pairs with correlation < 0.3
-- Some negative correlations
-- Variation between sectors
-
-❌ **Bad signs** (might need to pivot):
-- Average correlation > 0.9
-- All correlations > 0.8
-- No variation between stocks
 
 ## Customization
 
-### Test more stocks:
+### How to test more stocks:
 ```python
 # In sp500_correlation_test.py, line 18-23
 # Add more tickers to SP500_TICKERS list
@@ -105,11 +87,12 @@ SP500_TICKERS = [
 ### Change date range:
 ```python
 # Line 14
-START_DATE = "2020-01-01"  # 5 years of data
+START_DATE = "2020-01-01"  # 5 years of data (can change to expand or close scope)
 ```
 
 ### Test specific sectors:
 ```python
+# Can later assign sectors/industries to each stock ticker when BigQuery is connected
 # Technology stocks
 TECH_STOCKS = ['AAPL', 'MSFT', 'GOOGL', 'NVDA', 'META']
 
@@ -135,42 +118,3 @@ HEALTHCARE_STOCKS = ['JNJ', 'UNH', 'PFE', 'ABBV', 'TMO']
 ```bash
 pip install plotly
 ```
-
-## Next Steps After Testing
-
-If the test shows meaningful correlation variation:
-
-1. ✅ **Proceed with full project**
-   - Upgrade to Tiingo paid tier ($30/month)
-   - Implement BigQuery storage
-   - Build Next.js frontend
-   - Deploy to Google Cloud
-
-2. **Add features:**
-   - Sector/industry filtering
-   - Variable matrix sizes (5×5, 10×10, 25×25)
-   - "Find diversifiers" recommendation engine
-   - Time-period comparison
-
-3. **Architecture:**
-   ```
-   Cloud Scheduler → Cloud Functions → BigQuery
-                                     ↓
-                               Correlation matrices
-                                     ↓
-                     Cloud Run (FastAPI) ← Next.js Frontend
-   ```
-
-## Key Insights from Testing
-
-After running this script, you should be able to answer:
-- Is there meaningful variation in correlations? (YES = project valuable)
-- What's the typical correlation between stocks? (~0.3-0.7 for diverse stocks)
-- Are there negative correlations? (Usually a few)
-- How do sectors differ? (Tech stocks highly correlated, Energy less so)
-
-## Questions?
-
-Check the code comments or refer back to the architecture discussion.
-
-Good luck with your capstone project! 🚀
