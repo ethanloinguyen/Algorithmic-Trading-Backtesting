@@ -1,0 +1,26 @@
+LEAD-LAG ANALYSIS SUMMARY
+======================================================================
+
+Analysis Date: 2026-02-13 02:18:15
+Stocks: 488
+Period: 2020-01-01 to 2024-12-31
+
+FILTERS APPLIED:
+  1. Data quality (volume, missing data, outliers)
+  2. Partial correlation (removes spurious lead-lag)
+  3. Synchronous filtering
+  4. FDR correction (alpha=0.05)
+  5. Temporal persistence (less than or equal to50%)
+
+TOP 10 PAIRS:
+   leader lagger  strength  optimal_lag  persistence    direction
+1    TTWO   STNG  0.588094            1          1.0  TTWO → STNG
+2    RVLV    SJM  0.587114            1          1.0   RVLV → SJM
+3     RUN    LMT  0.581333            5          1.0    RUN → LMT
+4     SFM   UPWK  0.581081            4          1.0   SFM → UPWK
+5     EIX   FSLY  0.577993            5          1.0   EIX → FSLY
+6     XOM   FSLY  0.577538            4          1.0   XOM → FSLY
+7     BMY   PLUG  0.576608            2          1.0   BMY → PLUG
+8    TNDM     SO  0.575273            3          1.0    TNDM → SO
+9     LHX   FSLY  0.575123            4          1.0   LHX → FSLY
+10   TTWO    DHT  0.573134            4          1.0   TTWO → DHT
