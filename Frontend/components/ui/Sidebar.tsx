@@ -1,3 +1,4 @@
+// frontend/src/components/ui/Sidebar.tsx
 "use client";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -62,8 +63,9 @@ export default function Sidebar({ isOpen, onClose }: { isOpen?: boolean; onClose
 
       {/* Right side */}
       <div className="ml-auto flex items-center gap-3">
-        <div
-          className="flex items-center gap-2 px-3 py-1.5 rounded-full text-sm"
+        <Link
+          href="/dashboard/profile"
+          className="flex items-center gap-2 px-3 py-1.5 rounded-full text-sm transition-all hover:opacity-80"
           style={{
             background: "hsl(215, 25%, 14%)",
             border: "1px solid hsl(215, 20%, 20%)",
@@ -71,8 +73,8 @@ export default function Sidebar({ isOpen, onClose }: { isOpen?: boolean; onClose
           }}
         >
           <User className="w-3.5 h-3.5" />
-          <span>Demo User</span>
-        </div>
+          <span>User Name</span>
+        </Link>
         <button
           onClick={handleLogout}
           className="p-1.5 rounded-md transition-colors hover:opacity-80"
