@@ -26,6 +26,12 @@ INDEX_META: dict[str, str] = {
     "DJI":  "Dow Jones Industrial Average",
 }
 
+FEATURED_TICKERS = [
+    "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL",
+    "META", "TSLA", "JPM", "V", "UNH",
+    "XOM", "JNJ", "WMT", "AVGO", "AMD",
+]
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _abbreviate_volume(vol: int | float) -> str:
@@ -83,17 +89,17 @@ def get_ohlcv(symbol: str, range_: TimeRange) -> list[OHLCVCandle]:
 
     query = f"""
         SELECT
-            CAST(trade_date AS STRING) AS trade_date,
-            open_price,
-            high_price,
-            low_price,
-            close_price,
+            CAST(date AS STRING) AS date,
+            open,
+            high,
+            low,
+            close,
             volume
-        FROM {settings.fq_ohlcv}
+        FROM {settings.fq_market_data}
         WHERE
-            symbol     = @symbol
-            AND trade_date >= DATE_SUB(CURRENT_DATE(), INTERVAL @days DAY)
-        ORDER BY trade_date ASC
+            ticker = @symbol
+            AND date >= DATETIME_SUB(CURRENT_DATETIME(), INTERVAL @days DAY)
+        ORDER BY date ASC
     """
 
     job_config = bigquery.QueryJobConfig(
@@ -108,11 +114,11 @@ def get_ohlcv(symbol: str, range_: TimeRange) -> list[OHLCVCandle]:
     candles: list[OHLCVCandle] = []
     for row in rows:
         candles.append(OHLCVCandle(
-            date   = _format_date_label(row.trade_date, range_),
-            open   = f"{row.open_price:.2f}",
-            high   = f"{row.high_price:.2f}",
-            low    = f"{row.low_price:.2f}",
-            close  = f"{row.close_price:.2f}",
+            date   = _format_date_label(str(row.date), range_),
+            open   = f"{row.open:.2f}",
+            high   = f"{row.high:.2f}",
+            low    = f"{row.low:.2f}",
+            close  = f"{row.close:.2f}",
             volume = _abbreviate_volume(row.volume),
         ))
 
@@ -130,7 +136,7 @@ def _summaries_from_query(rows) -> list[StockSummary]:
         change_str = f"{'+'if positive else ''}{pct:.2f}%"
 
         results.append(StockSummary(
-            symbol   = row.symbol,
+            symbol   = row.ticker,
             name     = row.company_name,
             price    = _format_price(today),
             change   = change_str,
@@ -141,50 +147,57 @@ def _summaries_from_query(rows) -> list[StockSummary]:
 
 
 def get_all_stock_summaries() -> list[StockSummary]:
-    """
-    Fetch the latest price, change, and volume for every stock in the database.
-    Uses a window function to grab the two most recent trading days per symbol
-    so we can compute day-over-day percentage change.
-    Used to populate the Featured Stocks table.
-    """
-    client   = get_bq_client()
-    settings = get_settings()
+    # """
+    # Fetch the latest price, change, and volume for every stock in the database.
+    # Uses a window function to grab the two most recent trading days per symbol
+    # so we can compute day-over-day percentage change.
+    # Used to populate the Featured Stocks table.
+    # """
+    # client   = get_bq_client()
+    # settings = get_settings()
 
-    query = f"""
-        WITH ranked AS (
-            SELECT
-                o.symbol,
-                s.company_name,
-                o.trade_date,
-                o.close_price,
-                o.volume,
-                ROW_NUMBER() OVER (PARTITION BY o.symbol ORDER BY o.trade_date DESC) AS rn
-            FROM {settings.fq_ohlcv} o
-            JOIN {settings.fq_stocks} s USING (symbol)
-        ),
-        today AS (
-            SELECT symbol, company_name,
-                   close_price AS today_close,
-                   volume      AS today_volume
-            FROM ranked WHERE rn = 1
-        ),
-        yesterday AS (
-            SELECT symbol, close_price AS prev_close
-            FROM ranked WHERE rn = 2
-        )
-        SELECT
-            t.symbol,
-            t.company_name,
-            t.today_close,
-            t.today_volume,
-            COALESCE(y.prev_close, t.today_close) AS prev_close
-        FROM today t
-        LEFT JOIN yesterday y USING (symbol)
-        ORDER BY t.symbol
-    """
+    # query = f"""
+    #     WITH ranked AS (
+    #         SELECT
+    #             o.ticker,
+    #             COALESCE(s.company_name, o.ticker) AS company_name,
+    #             o.date,
+    #             o.close,
+    #             o.volume,
+    #             ROW_NUMBER() OVER (PARTITION BY o.ticker ORDER BY o.date DESC) AS rn
+    #         FROM {settings.fq_market_data} o
+    #         LEFT JOIN {settings.fq_ticker_metadata} s ON o.ticker = s.ticker
+    #     ),
+    #     today AS (
+    #         SELECT ticker, company_name,
+    #                close  AS today_close,
+    #                volume AS today_volume
+    #         FROM ranked WHERE rn = 1
+    #     ),
+    #     yesterday AS (
+    #         SELECT ticker, close AS prev_close
+    #         FROM ranked WHERE rn = 2
+    #     )
+    #     SELECT
+    #         t.ticker,
+    #         t.company_name,
+    #         t.today_close,
+    #         t.today_volume,
+    #         COALESCE(y.prev_close, t.today_close) AS prev_close
+    #     FROM today t
+    #     LEFT JOIN yesterday y USING (ticker)
+    #     ORDER BY t.ticker
+    #     LIMIT 15
+    # """
 
-    rows = client.query(query).result()
-    return _summaries_from_query(rows)
+    # rows = client.query(query).result()
+    # return _summaries_from_query(rows)
+
+    """
+    Fetch the latest price, change, and volume for a curated list
+    of popular stocks. Used to populate the Featured Stocks table.
+    """
+    return get_stock_summaries(FEATURED_TICKERS)
 
 
 def get_stock_summaries(symbols: list[str]) -> list[StockSummary]:
@@ -202,35 +215,35 @@ def get_stock_summaries(symbols: list[str]) -> list[StockSummary]:
     query = f"""
         WITH ranked AS (
             SELECT
-                o.symbol,
-                s.company_name,
-                o.trade_date,
-                o.close_price,
+                o.ticker,
+                COALESCE(s.company_name, o.ticker) AS company_name,
+                o.date,
+                o.close,
                 o.volume,
-                ROW_NUMBER() OVER (PARTITION BY o.symbol ORDER BY o.trade_date DESC) AS rn
-            FROM {settings.fq_ohlcv} o
-            JOIN {settings.fq_stocks} s USING (symbol)
-            WHERE o.symbol IN UNNEST(@symbols)
+                ROW_NUMBER() OVER (PARTITION BY o.ticker ORDER BY o.date DESC) AS rn
+            FROM {settings.fq_market_data} o
+            LEFT JOIN {settings.fq_ticker_metadata} s ON o.ticker = s.ticker
+            WHERE o.ticker IN UNNEST(@symbols)
         ),
         today AS (
-            SELECT symbol, company_name,
-                   close_price AS today_close,
-                   volume      AS today_volume
+            SELECT ticker, company_name,
+                   close  AS today_close,
+                   volume AS today_volume
             FROM ranked WHERE rn = 1
         ),
         yesterday AS (
-            SELECT symbol, close_price AS prev_close
+            SELECT ticker, close AS prev_close
             FROM ranked WHERE rn = 2
         )
         SELECT
-            t.symbol,
+            t.ticker,
             t.company_name,
             t.today_close,
             t.today_volume,
             COALESCE(y.prev_close, t.today_close) AS prev_close
         FROM today t
-        LEFT JOIN yesterday y USING (symbol)
-        ORDER BY t.symbol
+        LEFT JOIN yesterday y USING (ticker)
+        ORDER BY t.ticker
     """
 
     job_config = bigquery.QueryJobConfig(
