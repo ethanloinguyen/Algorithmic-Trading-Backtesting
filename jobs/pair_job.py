@@ -28,6 +28,7 @@ import sys
 import uuid
 from datetime import date, datetime
 from typing import List, Tuple
+from src.bq_io import read_residuals_for_window, write_pair_results_raw, write_dataframe, log_pipeline_run
 
 import numpy as np
 import pandas as pd
@@ -139,6 +140,8 @@ def run_pair_job(
     all_results = []
     tier3_count = 0
     total_pairs_processed = 0
+    total_rows_written = 0
+    BATCH_SIZE = 500  # Flush to BQ every 500 pairs
 
     for ticker_i, ticker_j in my_pairs:
         rows = process_pair(
@@ -152,24 +155,33 @@ def run_pair_job(
         all_results.extend(rows)
         total_pairs_processed += 1
 
-        # Log progress every 1000 pairs
         if total_pairs_processed % 1000 == 0:
             logger.info(f"  Progress: {total_pairs_processed:,}/{len(my_pairs):,} pairs")
+
+        # Flush to BQ every BATCH_SIZE pairs
+        if total_pairs_processed % BATCH_SIZE == 0 and all_results:
+            batch_df = pd.DataFrame(all_results)
+            batch_df["window_start"] = window_start
+            write_dataframe(batch_df, "pair_results_raw")
+            total_rows_written += len(batch_df)
+            logger.info(f"  Flushed {len(batch_df):,} rows (total written: {total_rows_written:,})")
+            all_results = []
 
     # ── Budget guard check ─────────────────────────────────────────────────
     check_budget_guard(tier3_count, total_pairs_processed)
 
-    # ── Write results ──────────────────────────────────────────────────────
+    # ── Write any remaining results ────────────────────────────────────────
     if all_results:
-        result_df = pd.DataFrame(all_results)
-        result_df["window_start"] = window_start
-
-        # Write to BQ (appends — each partition writes its subset)
-        from src.bq_io import write_dataframe
-        write_dataframe(result_df, "pair_results_raw")
-        logger.info(f"Wrote {len(result_df):,} rows to pair_results_raw")
-    else:
+        batch_df = pd.DataFrame(all_results)
+        batch_df["window_start"] = window_start
+        write_dataframe(batch_df, "pair_results_raw")
+        total_rows_written += len(batch_df)
+        logger.info(f"  Flushed final {len(batch_df):,} rows (total written: {total_rows_written:,})")
+    
+    if total_rows_written == 0:
         logger.warning("No results produced by this partition.")
+    else:
+        logger.info(f"Wrote {total_rows_written:,} total rows to pair_results_raw")
 
     # ── Log run metadata ──────────────────────────────────────────────────
     duration = (datetime.now() - start_time).total_seconds()

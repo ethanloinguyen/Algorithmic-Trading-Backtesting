@@ -7,9 +7,10 @@ main:
           - region: "us-central1"
           - bq_dataset: "output_results"
           - run_id: '${sys.get_env("GOOGLE_CLOUD_WORKFLOW_EXECUTION_ID")}'
-          - window_end_dt: "2024-12-31"
-          - window_start_dt: "2010-01-01"
+          - window_end_dt: '${default(map.get(args, "window_end"), "2025-01-01")}'
+          - window_start_dt: '${default(map.get(args, "window_start"), "2025-12-31")}'
           - num_partitions: 50
+          - project_number: "276748096156"
 
     - log_start:
         call: sys.log
@@ -45,8 +46,8 @@ main:
         args:
           project_id: '${project_id}'
           region: '${region}'
-          # JUST the name, no "projects/..." prefix
-          execution_name: '${residuals_execution.metadata.name}' 
+          execution_name: '${residuals_execution.metadata.name}'
+          project_number: '${project_number}' 
         result: residuals_result
     - check_residuals:
         switch:
@@ -70,29 +71,42 @@ main:
             in: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49]
             steps:
               - run_pair_job:
-                  call: googleapis.run.v1.namespaces.jobs.run
-                  args:
-                    name: '${"namespaces/" + project_id + "/jobs/pair-job"}'
-                    location: '${region}'
-                    body:
-                      overrides:
-                        containerOverrides:
-                          - env:
-                              - name: WINDOW_START
-                                value: '${window_start_dt}'
-                              - name: WINDOW_END
-                                value: '${window_end_dt}'
-                              - name: PARTITION_ID
-                                value: '${string(partition_id)}'
-                              - name: NUM_PARTITIONS
-                                value: '${string(num_partitions)}'
-                              - name: RUN_ID
-                                value: '${run_id}'
-                              - name: GCP_PROJECT_ID
-                                value: '${project_id}'
-                              - name: BQ_DATASET
-                                value: '${bq_dataset}'
-                  result: pair_execution
+                  try:
+                    call: googleapis.run.v1.namespaces.jobs.run
+                    args:
+                      name: '${"namespaces/" + project_id + "/jobs/pair-job"}'
+                      location: '${region}'
+                      connector_params:
+                        timeout: 7200
+                      body:
+                        overrides:
+                          taskCount: 1
+                          containerOverrides:
+                            - env:
+                                - name: WINDOW_START
+                                  value: '${window_start_dt}'
+                                - name: WINDOW_END
+                                  value: '${window_end_dt}'
+                                - name: PARTITION_ID
+                                  value: '${string(partition_id)}'
+                                - name: NUM_PARTITIONS
+                                  value: '${string(num_partitions)}'
+                                - name: RUN_ID
+                                  value: '${run_id}'
+                                - name: GCP_PROJECT_ID
+                                  value: '${project_id}'
+                                - name: BQ_DATASET
+                                  value: '${bq_dataset}'
+                    result: pair_execution
+                  except:
+                    as: e
+                    steps:
+                      - handle_timeout:
+                          switch:
+                            - condition: '${e.tags != null and "TimeoutError" in e.tags}'
+                              next: continue
+                      - reraise_if_not_timeout:
+                          raise: '${e}'
 
     - log_pairs_done:
         call: sys.log
@@ -128,8 +142,8 @@ main:
         args:
           project_id: '${project_id}'
           region: '${region}'
-          # JUST the name
           execution_name: '${aggregation_execution.metadata.name}'
+          project_number: '${project_number}'
         result: aggregation_result
 
     - check_aggregation:
@@ -156,14 +170,12 @@ main:
 
 
 wait_for_job:
-  params: [project_id, region, execution_name]
+  params: [project_id, region, execution_name, project_number]
   steps:
     - poll_loop:
         call: googleapis.run.v1.namespaces.executions.get
         args:
-          # This specific format tells the connector exactly how to 
-          # build the URL correctly without double-prefixing.
-          name: '${"namespaces/" + project_id + "/executions/" + execution_name}'
+          name: '${"namespaces/" + project_number + "/executions/" + execution_name}'
           location: '${region}'
         result: execution_response
     - check_status:

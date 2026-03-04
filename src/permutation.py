@@ -90,11 +90,40 @@ def adaptive_permutation_test(
 
     if rng is None:
         rng = np.random.default_rng()
-
     if observed_dcor is None or np.isnan(observed_dcor):
         return 1.0, 0
 
-    exceed_count = 0
+    # Pre-align y once (fixed across all permutations)
+    y_follow = y[lag:]
+    n = len(x) - lag
+
+    def run_batch(n_perms: int) -> np.ndarray:
+        """Generate n_perms block-shuffled dCor values as a numpy array."""
+        null_dcors = np.empty(n_perms)
+        for i in range(n_perms):
+            x_perm = block_shuffle(x, block_size, rng)
+            null_dcors[i] = dcor_at_lag(x_perm, y, lag) or 0.0
+        return null_dcors
+
+    # Tier 1
+    null1 = run_batch(tier1_n)
+    exceed1 = np.sum(null1 >= observed_dcor)
+    p1 = (exceed1 + 1) / (tier1_n + 1)
+    if p1 > tier1_cutoff:
+        return float(p1), tier1_n
+
+    # Tier 2
+    null2 = run_batch(tier2_n - tier1_n)
+    exceed2 = exceed1 + np.sum(null2 >= observed_dcor)
+    p2 = (exceed2 + 1) / (tier2_n + 1)
+    if p2 > tier2_cutoff:
+        return float(p2), tier2_n
+
+    # Tier 3
+    null3 = run_batch(tier3_n - tier2_n)
+    exceed3 = exceed2 + np.sum(null3 >= observed_dcor)
+    p3 = (exceed3 + 1) / (tier3_n + 1)
+    return float(p3), tier3_n
 
     # ── TIER 1: 100 permutations ──────────────────────────────────────────
     for _ in range(tier1_n):
