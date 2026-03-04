@@ -42,3 +42,14 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Frontend build output and dependencies
+Frontend/.next/
+Frontend/node_modules/
+Frontend/next-env.d.ts
+
+# Backend secrets - NEVER commit this
+backend/secrets/
+
+# Backend dependencies
+backend/.venv/
