@@ -1,0 +1,17 @@
+# backend/run.py
+"""
+Development entry point.
+Run with:  python run.py
+Or directly:  uvicorn app.main:app --reload --host 0.0.0.0 --port 4000
+"""
+import uvicorn
+from app.core.config import get_settings
+
+if __name__ == "__main__":
+    settings = get_settings()
+    uvicorn.run(
+        "app.main:app",
+        host=settings.host,
+        port=settings.port,
+        reload=True,
+    )
