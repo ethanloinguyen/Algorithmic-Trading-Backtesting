@@ -1,9 +1,10 @@
 // frontend/src/app/dashboard/profile/page.tsx
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Sidebar from "@/components/ui/Sidebar";
 import StockModal from "@/components/ui/StockModal";
 import { Star, User } from "lucide-react";
+import { StarredProvider, useStarred } from "@/components/ui/StarredContext";
 
 interface StockInfo {
   symbol: string;
@@ -14,25 +15,20 @@ interface StockInfo {
   positive: boolean;
 }
 
-// Mock starred stocks — in a real app these would come from user state / API
-const defaultStarred: StockInfo[] = [
-  { symbol: "AAPL", name: "Apple Inc.", price: "$189.84", change: "+1.25%", volume: "52.3M", positive: true },
-  { symbol: "NVDA", name: "NVIDIA Corp.", price: "$878.36", change: "+1.76%", volume: "41.2M", positive: true },
-  { symbol: "MSFT", name: "Microsoft Corp.", price: "$425.22", change: "-0.74%", volume: "18.7M", positive: false },
-];
-
-export default function ProfilePage() {
-  const [starred, setStarred] = useState<StockInfo[]>(defaultStarred);
+function ProfileContent() {
+  const { starred, savedSymbols, toggleStar, refreshStarred } = useStarred();
   const [modalStock, setModalStock] = useState<StockInfo | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
 
-  const unstar = (symbol: string) => {
-    setStarred(prev => prev.filter(s => s.symbol !== symbol));
-  };
+  // Refresh prices from API every time the profile page is opened
+  useEffect(() => {
+    setRefreshing(true);
+    refreshStarred().finally(() => setRefreshing(false));
+  }, []);
 
   return (
     <div className="min-h-screen" style={{ background: "hsl(213, 27%, 7%)" }}>
       <Sidebar />
-
       <main className="pt-14">
         <div className="max-w-7xl mx-auto px-6 py-6">
 
@@ -56,12 +52,24 @@ export default function ProfilePage() {
             style={{ background: "hsl(215, 25%, 11%)", border: "1px solid hsl(215, 20%, 18%)" }}
           >
             {/* Table header bar */}
-            <div className="flex items-center justify-between px-6 py-4" style={{ borderBottom: "1px solid hsl(215, 20%, 16%)" }}>
+            <div
+              className="flex items-center justify-between px-6 py-4"
+              style={{ borderBottom: "1px solid hsl(215, 20%, 16%)" }}
+            >
               <div className="flex items-center gap-2">
                 <Star className="w-4 h-4" style={{ fill: "#facc15", color: "#facc15" }} />
                 <h2 className="text-base font-semibold" style={{ color: "hsl(210, 40%, 92%)" }}>Saved Stocks</h2>
+                {refreshing && (
+                  <div
+                    className="w-3 h-3 rounded-full border border-t-transparent animate-spin ml-1"
+                    style={{ borderColor: "hsl(217, 91%, 60%)", borderTopColor: "transparent" }}
+                  />
+                )}
               </div>
-              <span className="text-xs px-2 py-0.5 rounded-full" style={{ background: "hsl(215, 25%, 16%)", color: "hsl(215, 15%, 55%)" }}>
+              <span
+                className="text-xs px-2 py-0.5 rounded-full"
+                style={{ background: "hsl(215, 25%, 16%)", color: "hsl(215, 15%, 55%)" }}
+              >
                 {starred.length} {starred.length === 1 ? "stock" : "stocks"}
               </span>
             </div>
@@ -70,7 +78,9 @@ export default function ProfilePage() {
               <div className="flex flex-col items-center justify-center py-16 gap-3">
                 <Star className="w-10 h-10" style={{ color: "hsl(215, 15%, 30%)" }} />
                 <p className="text-sm font-medium" style={{ color: "hsl(215, 15%, 50%)" }}>No starred stocks yet</p>
-                <p className="text-xs" style={{ color: "hsl(215, 15%, 38%)" }}>Click the ★ next to any stock on the dashboard to save it here.</p>
+                <p className="text-xs" style={{ color: "hsl(215, 15%, 38%)" }}>
+                  Click the ★ next to any stock on the dashboard to save it here.
+                </p>
               </div>
             ) : (
               <>
@@ -109,7 +119,7 @@ export default function ProfilePage() {
                     </span>
                     <span className="text-sm text-right" style={{ color: "hsl(215, 15%, 55%)" }}>{stock.volume}</span>
                     <button
-                      onClick={e => { e.stopPropagation(); unstar(stock.symbol); }}
+                      onClick={e => { e.stopPropagation(); toggleStar(stock); }}
                       className="flex items-center justify-center transition-all hover:scale-110"
                       aria-label="Unstar"
                     >
@@ -125,5 +135,15 @@ export default function ProfilePage() {
 
       <StockModal stock={modalStock} onClose={() => setModalStock(null)} />
     </div>
+  );
+}
+
+// Wrap in its own StarredProvider so the profile page works
+// independently when navigated to directly
+export default function ProfilePage() {
+  return (
+    <StarredProvider>
+      <ProfileContent />
+    </StarredProvider>
   );
 }

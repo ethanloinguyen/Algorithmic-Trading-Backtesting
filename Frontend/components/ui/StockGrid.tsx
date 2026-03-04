@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { Star } from "lucide-react";
 import StockModal from "./StockModal";
+import { useStarred } from "@/components/ui/StarredContext";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
 
@@ -13,11 +14,6 @@ interface StockInfo {
   change: string;
   volume: string;
   positive: boolean;
-}
-
-interface StockGridProps {
-  savedSymbols?: Set<string>;
-  onSaveToggle?: (stock: StockInfo) => void;
 }
 
 function SkeletonRow() {
@@ -44,14 +40,13 @@ function SkeletonGainerRow() {
   );
 }
 
-export default function StockGrid({ savedSymbols, onSaveToggle }: StockGridProps) {
+export default function StockGrid() {
   const [modalStock, setModalStock] = useState<StockInfo | null>(null);
-  const [localSaved, setLocalSaved] = useState<Set<string>>(new Set());
   const [stocks, setStocks] = useState<StockInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const saved = savedSymbols ?? localSaved;
+  const { savedSymbols, toggleStar } = useStarred();
 
   useEffect(() => {
     async function fetchStocks() {
@@ -72,20 +67,11 @@ export default function StockGrid({ savedSymbols, onSaveToggle }: StockGridProps
     fetchStocks();
   }, []);
 
-  const toggleSave = (e: React.MouseEvent, stock: StockInfo) => {
+  const handleStarClick = (e: React.MouseEvent, stock: StockInfo) => {
     e.stopPropagation();
-    if (onSaveToggle) {
-      onSaveToggle(stock);
-    } else {
-      setLocalSaved(prev => {
-        const next = new Set(prev);
-        next.has(stock.symbol) ? next.delete(stock.symbol) : next.add(stock.symbol);
-        return next;
-      });
-    }
+    toggleStar(stock);
   };
 
-  // Derive top gainers/losers from live data
   const sorted = [...stocks].sort((a, b) => {
     const aVal = parseFloat(a.change.replace("%", "").replace("+", ""));
     const bVal = parseFloat(b.change.replace("%", "").replace("+", ""));
@@ -105,8 +91,6 @@ export default function StockGrid({ savedSymbols, onSaveToggle }: StockGridProps
           <div className="px-6 py-4">
             <h2 className="text-base font-semibold" style={{ color: "hsl(210, 40%, 92%)" }}>Featured Stocks</h2>
           </div>
-
-          {/* Table Header */}
           <div
             className="grid px-6 pb-2 text-xs font-medium"
             style={{ gridTemplateColumns: "1fr 1fr 1fr 1fr 32px", color: "hsl(215, 15%, 50%)" }}
@@ -117,17 +101,11 @@ export default function StockGrid({ savedSymbols, onSaveToggle }: StockGridProps
             <span className="text-right">Volume</span>
             <span />
           </div>
-
-          {/* Rows */}
           <div>
             {loading
               ? Array.from({ length: 8 }).map((_, i) => <SkeletonRow key={i} />)
               : error
-              ? (
-                <div className="px-6 py-8 text-center text-sm" style={{ color: "hsl(0, 84%, 60%)" }}>
-                  {error}
-                </div>
-              )
+              ? <div className="px-6 py-8 text-center text-sm" style={{ color: "hsl(0, 84%, 60%)" }}>{error}</div>
               : stocks.map((stock) => (
                 <div
                   key={stock.symbol}
@@ -145,11 +123,11 @@ export default function StockGrid({ savedSymbols, onSaveToggle }: StockGridProps
                   <span className="text-sm font-medium text-right" style={{ color: stock.positive ? "hsl(142, 71%, 45%)" : "hsl(0, 84%, 60%)" }}>{stock.change}</span>
                   <span className="text-sm text-right" style={{ color: "hsl(215, 15%, 55%)" }}>{stock.volume}</span>
                   <button
-                    onClick={e => toggleSave(e, stock)}
+                    onClick={e => handleStarClick(e, stock)}
                     className="flex items-center justify-center transition-all hover:scale-110"
-                    aria-label={saved.has(stock.symbol) ? "Unsave" : "Save"}
+                    aria-label={savedSymbols.has(stock.symbol) ? "Unsave" : "Save"}
                   >
-                    <Star className="w-3.5 h-3.5" style={{ fill: saved.has(stock.symbol) ? "#facc15" : "none", color: saved.has(stock.symbol) ? "#facc15" : "hsl(215, 15%, 40%)" }} />
+                    <Star className="w-3.5 h-3.5" style={{ fill: savedSymbols.has(stock.symbol) ? "#facc15" : "none", color: savedSymbols.has(stock.symbol) ? "#facc15" : "hsl(215, 15%, 40%)" }} />
                   </button>
                 </div>
               ))
@@ -157,7 +135,7 @@ export default function StockGrid({ savedSymbols, onSaveToggle }: StockGridProps
           </div>
         </div>
 
-        {/* Right column: Top Gainers + Top Losers */}
+        {/* Right column */}
         <div className="w-72 flex flex-col gap-4">
           {/* Top Gainers */}
           <div className="rounded-xl p-5 flex-1" style={{ background: "hsl(215, 25%, 11%)", border: "1px solid hsl(215, 20%, 18%)" }}>
@@ -178,12 +156,8 @@ export default function StockGrid({ savedSymbols, onSaveToggle }: StockGridProps
                   >
                     <div className="flex items-center gap-2">
                       <span className="text-sm font-medium" style={{ color: "hsl(210, 40%, 85%)" }}>{s.symbol}</span>
-                      <button
-                        onClick={e => toggleSave(e, s)}
-                        className="transition-all hover:scale-110"
-                        aria-label={saved.has(s.symbol) ? "Unsave" : "Save"}
-                      >
-                        <Star className="w-3 h-3" style={{ fill: saved.has(s.symbol) ? "#facc15" : "none", color: saved.has(s.symbol) ? "#facc15" : "hsl(215, 15%, 40%)" }} />
+                      <button onClick={e => handleStarClick(e, s)} className="transition-all hover:scale-110">
+                        <Star className="w-3 h-3" style={{ fill: savedSymbols.has(s.symbol) ? "#facc15" : "none", color: savedSymbols.has(s.symbol) ? "#facc15" : "hsl(215, 15%, 40%)" }} />
                       </button>
                     </div>
                     <span className="text-sm font-semibold" style={{ color: "hsl(142, 71%, 45%)" }}>{s.change}</span>
@@ -212,12 +186,8 @@ export default function StockGrid({ savedSymbols, onSaveToggle }: StockGridProps
                   >
                     <div className="flex items-center gap-2">
                       <span className="text-sm font-medium" style={{ color: "hsl(210, 40%, 85%)" }}>{s.symbol}</span>
-                      <button
-                        onClick={e => toggleSave(e, s)}
-                        className="transition-all hover:scale-110"
-                        aria-label={saved.has(s.symbol) ? "Unsave" : "Save"}
-                      >
-                        <Star className="w-3 h-3" style={{ fill: saved.has(s.symbol) ? "#facc15" : "none", color: saved.has(s.symbol) ? "#facc15" : "hsl(215, 15%, 40%)" }} />
+                      <button onClick={e => handleStarClick(e, s)} className="transition-all hover:scale-110">
+                        <Star className="w-3 h-3" style={{ fill: savedSymbols.has(s.symbol) ? "#facc15" : "none", color: savedSymbols.has(s.symbol) ? "#facc15" : "hsl(215, 15%, 40%)" }} />
                       </button>
                     </div>
                     <span className="text-sm font-semibold" style={{ color: "hsl(0, 84%, 60%)" }}>{s.change}</span>
