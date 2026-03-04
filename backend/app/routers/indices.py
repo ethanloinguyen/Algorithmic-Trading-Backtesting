@@ -1,7 +1,7 @@
 # backend/app/routers/indices.py
 from fastapi import APIRouter
 from app.models.stock import IndexListResponse
-from app.services.bigquery_service import get_index_summaries
+from app.services.bigquery_services import get_index_summaries
 
 router = APIRouter(prefix="/api/indices", tags=["indices"])
 

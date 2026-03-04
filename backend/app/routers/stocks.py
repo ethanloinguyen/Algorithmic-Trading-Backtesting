@@ -9,7 +9,7 @@ from app.models.stock import (
     StockListResponse,
     TimeRange,
 )
-from app.services.bigquery_service import (
+from app.services.bigquery_services import (
     get_all_stock_summaries,
     get_ohlcv,
     get_stock_summaries,
