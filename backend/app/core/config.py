@@ -9,9 +9,9 @@ class Settings(BaseSettings):
     # Google Cloud
     google_application_credentials: str = "./secrets/gcp-service-account.json"
     gcp_project_id: str
-    bq_dataset: str = "stock_data"
-    bq_ohlcv_table: str = "ohlcv_daily"
-    bq_stocks_table: str = "stocks"
+    bq_dataset: str = "output_results"
+    bq_ohlcv_table: str = "market_data"
+    bq_stocks_table: str = "ticker_metadata"
 
     # Server
     host: str = "0.0.0.0"
@@ -25,12 +25,12 @@ class Settings(BaseSettings):
         return [o.strip() for o in self.allowed_origins.split(",")]
 
     @property
-    def fq_ohlcv(self) -> str:
+    def fq_market_data(self) -> str:
         """Fully-qualified BigQuery table: `project.dataset.table`"""
         return f"`{self.gcp_project_id}.{self.bq_dataset}.{self.bq_ohlcv_table}`"
 
     @property
-    def fq_stocks(self) -> str:
+    def fq_ticker_metadata(self) -> str:
         return f"`{self.gcp_project_id}.{self.bq_dataset}.{self.bq_stocks_table}`"
 
 
