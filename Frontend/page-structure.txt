@@ -1,0 +1,46 @@
+stock-dashboard/
+├── app/                          # Next.js frontend (already exists)
+├── components/                   # React components (already exists)
+├── lib/
+│   └── firebase/
+│       ├── config.ts            # Firebase configuration
+│       ├── auth.ts              # Firebase Auth helper functions
+│       ├── firestore.ts         # Firestore helper functions
+│       └── bigquery.ts          # BigQuery helper functions
+├── functions/                   # Firebase Cloud Functions
+│   ├── src/
+│   │   ├── index.ts            # Main entry point
+│   │   ├── scheduledJobs/
+│   │   │   └── dailyStockSync.ts    # Daily stock data sync job
+│   │   ├── tiingo/
+│   │   │   ├── client.ts           # Tiingo API client
+│   │   │   ├── fetchStockData.ts   # Fetch stock data functions
+│   │   │   └── russell3000.ts      # Russell 3000 ticker management
+│   │   ├── bigquery/
+│   │   │   ├── schema.ts           # BigQuery table schemas
+│   │   │   ├── stockData.ts        # Stock data operations
+│   │   │   └── cleanup.ts          # Data cleanup functions
+│   │   └── utils/
+│   │       ├── date.ts             # Date utility functions
+│   │       └── logger.ts           # Logging utilities
+│   ├── package.json
+│   ├── tsconfig.json
+│   └── .env.local
+├── api/                         # Next.js API routes
+│   └── app/api/
+│       ├── stocks/
+│       │   ├── route.ts            # GET /api/stocks - List stocks
+│       │   └── [symbol]/
+│       │       └── route.ts        # GET /api/stocks/[symbol] - Stock details
+│       ├── user/
+│       │   ├── saved/
+│       │   │   └── route.ts        # User's saved stocks
+│       │   └── profile/
+│       │       └── route.ts        # User profile
+│       └── auth/
+│           └── session/
+│               └── route.ts        # Auth session management
+├── .env.local                   # Environment variables
+├── firebase.json                # Firebase configuration
+├── .firebaserc                  # Firebase project config
+└── firestore.rules              # Firestore security rules
