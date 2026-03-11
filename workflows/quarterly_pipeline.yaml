@@ -7,8 +7,8 @@ main:
           - region: "us-central1"
           - bq_dataset: "output_results"
           - run_id: '${sys.get_env("GOOGLE_CLOUD_WORKFLOW_EXECUTION_ID")}'
-          - window_end_dt: '${default(map.get(args, "window_end"), "2025-01-01")}'
-          - window_start_dt: '${default(map.get(args, "window_start"), "2025-12-31")}'
+          - window_end_dt: '${default(map.get(args, "window_end"), "2025-12-31")}'
+          - window_start_dt: '${default(map.get(args, "window_start"), "2025-01-01")}'
           - num_partitions: 50
           - project_number: "276748096156"
 

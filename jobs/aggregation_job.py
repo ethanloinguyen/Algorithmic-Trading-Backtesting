@@ -183,7 +183,7 @@ def run_aggregation_job(
         client = get_client()
         metadata_query = f"""
             SELECT ticker, sector, industry
-            FROM `capstone-487001.yfinance_stocks_data.ticker_metadata`
+            FROM `capstone-487001.output_results.ticker_metadata`
         """
         metadata_df = client.query(metadata_query).to_dataframe()
         sector_map = dict(zip(metadata_df["ticker"], metadata_df["sector"]))
