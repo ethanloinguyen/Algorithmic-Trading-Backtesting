@@ -1,21 +1,15 @@
-// frontend/src/lib/firebase.ts
+// Frontend/src/app/lib/firebase.ts
 import { initializeApp, getApps, getApp } from "firebase/app";
 import { getAuth } from "firebase/auth";
-import { getFirestore } from "firebase/firestore";
+import { getFirestore, enableIndexedDbPersistence } from "firebase/firestore";
 
-// ---------------------------------------------------------------------------
-// Paste your Firebase project config values from:
-// Firebase Console → Project Settings → Your apps → Web app → SDK setup
-// Then add each value to your .env.local file (see below).
-// ---------------------------------------------------------------------------
-// .env.local entries needed:
+// .env.local entries required:
 //   NEXT_PUBLIC_FIREBASE_API_KEY=
 //   NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=
 //   NEXT_PUBLIC_FIREBASE_PROJECT_ID=
 //   NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=
 //   NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=
 //   NEXT_PUBLIC_FIREBASE_APP_ID=
-// ---------------------------------------------------------------------------
 
 const firebaseConfig = {
   apiKey:            process.env.NEXT_PUBLIC_FIREBASE_API_KEY!,
@@ -26,8 +20,23 @@ const firebaseConfig = {
   appId:             process.env.NEXT_PUBLIC_FIREBASE_APP_ID!,
 };
 
-// Prevent re-initializing on hot reload in Next.js dev mode
-const app  = getApps().length ? getApp() : initializeApp(firebaseConfig);
+const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
 
 export const auth = getAuth(app);
 export const db   = getFirestore(app);
+
+// Enable offline persistence (IndexedDB) so cached data survives page refreshes.
+// This is what makes Firestore act as a local cache — reads are served from
+// IndexedDB when online data hasn't changed, and the app works offline too.
+// Wrapped in try/catch because it throws if called more than once (HMR).
+if (typeof window !== "undefined") {
+  enableIndexedDbPersistence(db).catch((err) => {
+    if (err.code === "failed-precondition") {
+      // Multiple tabs open — persistence only works in one tab at a time.
+      console.warn("Firestore persistence unavailable: multiple tabs open.");
+    } else if (err.code === "unimplemented") {
+      // Browser doesn't support IndexedDB.
+      console.warn("Firestore persistence not supported in this browser.");
+    }
+  });
+}

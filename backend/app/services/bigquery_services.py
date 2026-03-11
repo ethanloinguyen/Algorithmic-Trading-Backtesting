@@ -1,4 +1,4 @@
-# backend/app/services/bigquery_service.py
+# backend/app/services/bigquery_services.py
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -74,14 +74,18 @@ def get_ohlcv(symbol: str, range_: TimeRange) -> list[OHLCVCandle]:
     """
     Fetch OHLCV candles for a single symbol over the requested time range.
 
-    Expected BigQuery table schema (ohlcv_daily):
-        symbol        STRING
-        trade_date    DATE (or DATETIME for intraday)
-        open_price    FLOAT64
-        high_price    FLOAT64
-        low_price     FLOAT64
-        close_price   FLOAT64
-        volume        INT64
+    Expected BigQuery table schema for market_data:
+        ticker      STRING
+        date        DATE        ← DATE type, not DATETIME
+        open        FLOAT64
+        high        FLOAT64
+        low         FLOAT64
+        close       FLOAT64
+        volume      INT64
+
+    NOTE: Uses DATE_SUB + CURRENT_DATE() (not DATETIME_SUB) because the
+    `date` column is type DATE. If your table uses DATETIME, switch to
+    DATETIME_SUB(CURRENT_DATETIME(), INTERVAL @days DAY).
     """
     client   = get_bq_client()
     settings = get_settings()
@@ -98,7 +102,7 @@ def get_ohlcv(symbol: str, range_: TimeRange) -> list[OHLCVCandle]:
         FROM {settings.fq_market_data}
         WHERE
             ticker = @symbol
-            AND date >= DATETIME_SUB(CURRENT_DATETIME(), INTERVAL @days DAY)
+            AND date >= DATE_SUB(CURRENT_DATE(), INTERVAL @days DAY)
         ORDER BY date ASC
     """
 
@@ -147,55 +151,9 @@ def _summaries_from_query(rows) -> list[StockSummary]:
 
 
 def get_all_stock_summaries() -> list[StockSummary]:
-    # """
-    # Fetch the latest price, change, and volume for every stock in the database.
-    # Uses a window function to grab the two most recent trading days per symbol
-    # so we can compute day-over-day percentage change.
-    # Used to populate the Featured Stocks table.
-    # """
-    # client   = get_bq_client()
-    # settings = get_settings()
-
-    # query = f"""
-    #     WITH ranked AS (
-    #         SELECT
-    #             o.ticker,
-    #             COALESCE(s.company_name, o.ticker) AS company_name,
-    #             o.date,
-    #             o.close,
-    #             o.volume,
-    #             ROW_NUMBER() OVER (PARTITION BY o.ticker ORDER BY o.date DESC) AS rn
-    #         FROM {settings.fq_market_data} o
-    #         LEFT JOIN {settings.fq_ticker_metadata} s ON o.ticker = s.ticker
-    #     ),
-    #     today AS (
-    #         SELECT ticker, company_name,
-    #                close  AS today_close,
-    #                volume AS today_volume
-    #         FROM ranked WHERE rn = 1
-    #     ),
-    #     yesterday AS (
-    #         SELECT ticker, close AS prev_close
-    #         FROM ranked WHERE rn = 2
-    #     )
-    #     SELECT
-    #         t.ticker,
-    #         t.company_name,
-    #         t.today_close,
-    #         t.today_volume,
-    #         COALESCE(y.prev_close, t.today_close) AS prev_close
-    #     FROM today t
-    #     LEFT JOIN yesterday y USING (ticker)
-    #     ORDER BY t.ticker
-    #     LIMIT 15
-    # """
-
-    # rows = client.query(query).result()
-    # return _summaries_from_query(rows)
-
     """
     Fetch the latest price, change, and volume for a curated list
-    of popular stocks. Used to populate the Featured Stocks table.
+    of popular stocks. Used to populate the Watchlist table.
     """
     return get_stock_summaries(FEATURED_TICKERS)
 
@@ -204,6 +162,11 @@ def get_stock_summaries(symbols: list[str]) -> list[StockSummary]:
     """
     Fetch summaries for a specific list of symbols.
     Used by the profile page to refresh starred-stock prices.
+
+    Expected BigQuery table schemas:
+      market_data:     ticker STRING, date DATE, open FLOAT64, high FLOAT64,
+                       low FLOAT64, close FLOAT64, volume INT64
+      ticker_metadata: ticker STRING, company_name STRING
     """
     if not symbols:
         return []
@@ -211,7 +174,6 @@ def get_stock_summaries(symbols: list[str]) -> list[StockSummary]:
     client   = get_bq_client()
     settings = get_settings()
 
-    # BigQuery parameterized ARRAY queries
     query = f"""
         WITH ranked AS (
             SELECT
@@ -259,22 +221,18 @@ def get_stock_summaries(symbols: list[str]) -> list[StockSummary]:
 def get_index_summaries() -> list[IndexSummary]:
     """
     Fetch the latest data for SPX, IXIC, and DJI.
-    These are expected to exist as rows in the stocks + ohlcv tables.
+    These are expected to exist as tickers in the market_data table.
     """
     summaries = get_stock_summaries(list(INDEX_META.keys()))
 
     results: list[IndexSummary] = []
     for s in summaries:
-        # Strip the "$" and commas to get the raw numeric display value
         raw_value = s.price.lstrip("$").replace(",", "")
-        # Split "+1.25%" into change amount and pct — for indices the
-        # change field already contains the pct; raw point change comes
-        # from the price delta which we approximate here
         results.append(IndexSummary(
             symbol   = s.symbol,
             name     = INDEX_META.get(s.symbol, s.name),
             value    = raw_value,
-            change   = s.change.split("(")[0].strip() if "(" in s.change else s.change,
+            change   = s.change,
             pct      = s.change,
             price    = s.price,
             positive = s.positive,
