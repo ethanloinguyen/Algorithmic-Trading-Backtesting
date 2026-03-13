@@ -1,0 +1,25 @@
+# Core scientific computing
+numpy
+pandas
+scipy
+scikit-learn
+networkx
+
+# Google Cloud (BigQuery only — no Cloud Run / Workflows needed locally)
+google-cloud-bigquery
+google-cloud-bigquery-storage
+google-cloud-storage
+db-dtypes
+pandas-gbq
+pyarrow
+
+# Web / API
+fastapi
+uvicorn
+requests
+
+# Config & utilities
+pyyaml
+
+# Testing
+pytest

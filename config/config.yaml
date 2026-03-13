@@ -1,0 +1,143 @@
+# ============================================================
+# QUANT LEAD-LAG PIPELINE — MASTER CONFIGURATION
+# ============================================================
+# All parameters are configurable here. No hardcoding in code.
+
+# ── Universe ─────────────────────────────────────────────────
+universe:
+  start_date: "2010-01-01"
+  end_date: "2025-12-31"
+  min_continuous_years: 2          # Min years of continuous data
+  min_trading_day_coverage: 0.95   # 95% of expected trading days
+  min_median_dollar_volume: 250_000_000   # $5M median daily dollar volume
+  min_market_cap: 10_000_000_000           # $300M market cap
+  # Adjust above thresholds here if filtered universe is too small
+
+# ── Rolling Window ────────────────────────────────────────────
+windows:
+  window_days: 252        # 1 trading year
+  step_days: 63           # 3-month step
+  min_obs_for_dcor: 100   # Minimum observations to run dCor
+
+# ── Residualization ───────────────────────────────────────────
+residuals:
+  factor_model: "3factor"   # Options: "3factor" | "5factor"
+  # FF factors fetched from Kenneth French data library
+  ff_cache_path: "capstone-bucket-487001"
+
+# ── Lags ─────────────────────────────────────────────────────
+lags:
+  lag_list: [1, 2, 3, 4, 5]   # Days to test
+  # Best significant lag kept per pair for directed edge
+
+# ── Permutation Testing ───────────────────────────────────────
+permutation:
+  tier1_n: 100          # Initial permutations
+  tier1_cutoff: 0.20    # Stop if p > 0.20 (clearly null)
+  tier2_n: 500          # Extend to 500 if p <= 0.20
+  tier2_cutoff: 0.10    # Stop if p > 0.10 after 500
+  tier3_n: 1000         # Extend to 1000 if p <= 0.10
+  block_size: 5         # Block size for block permutation (weekly)
+  # Budget guard
+  max_tier3_fraction: 0.10   # Alert if >10% of pairs hit 1000 perms
+
+# ── FDR Control ───────────────────────────────────────────────
+fdr:
+  alpha: 0.05           # Benjamini-Hochberg FDR level
+
+# ── Trading Strategy ──────────────────────────────────────────
+strategy:
+  zscore_lookback_days: 60    # Rolling window for z-score normalization
+  zscore_threshold: 1.0       # |z| > threshold triggers trade
+  hold_days: 1                # Hold B for 1 day after signal
+  transaction_cost_bps: 10    # Round-trip cost in basis points (10 bps)
+  # Shows both gross and net Sharpe; regression target = net Sharpe
+
+# ── OOS Validation ────────────────────────────────────────────
+oos:
+  primary_metric: "net_sharpe"         # "net_sharpe" | "oos_dcor" | "directional_accuracy"
+  secondary_metric: "oos_dcor"
+  annualization_factor: 252
+  risk_free_rate: 0.0                  # Zero for cleanliness
+  sharpe_winsorize_pct: [5, 95]        # Winsorize for signal strength normalization
+  # Rolling forward validation
+  rolling_val_train_years: 1
+  rolling_val_test_months: 3
+  # Secondary robustness check
+  long_val_train_years: 5
+  long_val_test_years: 1
+
+# ── β Weight Refit Schedule ───────────────────────────────────
+model:
+  refit_schedule: "quarterly"          # quarterly | semiannual | annual
+  refit_months: [1, 4, 7, 10]         # Jan, Apr, Jul, Oct
+  bootstrap_n: 1000                    # Bootstrap iterations for CI
+  stability_features: ["mean_dcor", "variance_dcor", "frequency", "half_life", "sharpness"]
+
+# ── Half-Life Estimation ──────────────────────────────────────
+half_life:
+  min_r2_for_stable: 0.30    # Below this R², flag pair as unstable
+  max_half_life_days: 252    # Cap at 1 year
+
+# ── Sharpness ────────────────────────────────────────────────
+sharpness:
+  method: "entropy"    # "ratio" | "entropy" — entropy is more rigorous
+
+# ── Monte Carlo ───────────────────────────────────────────────
+monte_carlo:
+  n_simulations: 1000
+  block_size: 21        # ~1 month blocks for residual bootstrap
+  confidence_levels: [0.05, 0.25, 0.75, 0.95]
+
+# ── Synthetic Health Check ────────────────────────────────────
+synthetic:
+  random_seed: 42
+  n_planted_pairs: 50
+  n_null_pairs: 450
+  planted_lag: 2
+  planted_noise_std: 1.0
+  volatility_clustering: true
+  # Alert thresholds
+  min_tpr: 0.70         # True positive rate must stay above this
+  max_fpr: 0.10         # False positive rate must stay below this
+
+# ── Cloud Run / Compute ───────────────────────────────────────
+compute:
+  partition_count: 50              # Number of parallel Cloud Run jobs
+  max_cloud_run_cpu_hours: 20      # Budget guard alert threshold
+  cloud_run_memory: "4Gi"
+  cloud_run_cpu: 2
+  cloud_run_timeout: 3600          # seconds
+
+# ── GCP Infrastructure ────────────────────────────────────────
+gcp:
+  project_id: "capstone-487001"
+  region: "us-central1"
+  bq_dataset: "output_results_local"
+  # Read-only source tables (market_data, ticker_metadata). Never written by this pipeline.
+  source_dataset: "yfinance_stocks_data"
+  gcs_bucket: "capstone-bucket-487001"
+  pubsub_topic: "pipeline-trigger"
+  cloud_run_service_account: "jt-capstone@capstone-487001.iam.gserviceaccount.com"
+
+# ── BigQuery Table Names ──────────────────────────────────────
+tables:
+  market_data: "market_data"              # Raw OHLCV (existing)
+  ticker_metadata: "ticker_metadata"      # Sector, market cap, etc.
+  ff_factors: "ff_factors"               # Fama-French factors
+  filtered_universe: "filtered_universe" # Quality-filtered tickers
+  rolling_residuals: "rolling_residuals"
+  pair_results_raw: "pair_results_raw"
+  pair_results_filtered: "pair_results_filtered"
+  stability_metrics: "stability_metrics"
+  oos_strategy_returns: "oos_strategy_returns"
+  model_weights: "model_weights"
+  final_network: "final_network"
+  synthetic_health_log: "synthetic_health_log"
+  pipeline_run_log: "pipeline_run_log"
+
+# ── API ───────────────────────────────────────────────────────
+api:
+  default_top_n: 100
+  max_top_n: 1000
+  cache_ttl_seconds: 3600
