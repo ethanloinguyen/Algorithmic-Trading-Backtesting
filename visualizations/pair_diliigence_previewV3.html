@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lead-Lag Hypothesis Lab</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/prop-types@15.8.1/prop-types.min.js"></script>
+    <script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body class="bg-slate-50 min-h-screen font-sans text-slate-900">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { 
+            LineChart, Line, BarChart, Bar, XAxis, YAxis, 
+            CartesianGrid, Tooltip, ResponsiveContainer, 
+            Cell, ReferenceLine, ReferenceDot 
+        } = window.Recharts;
+        const { useState, useMemo } = React;
+
+        // --- MOCK DATA ---
+        const generateMockData = () => {
+            return Array.from({ length: 40 }, (_, i) => {
+                const base = 100 + Math.sin(i / 2) * 10;
+                return {
+                    t: i,
+                    rawL: base + (Math.random() - 0.5) * 2,
+                    rawF: i >= 3 ? (100 + Math.sin((i-3) / 2) * 10) + (Math.random() - 0.5) * 2 : 100,
+                    resL: Math.sin(i/2) + (Math.random() - 0.5) * 0.5,
+                    resF: i >= 3 ? Math.sin((i-3)/2) + (Math.random() - 0.5) * 0.5 : 0
+                };
+            });
+        };
+
+        const lagScores = [
+            { lag: 1, score: 0.08 },
+            { lag: 2, score: 0.15 },
+            { lag: 3, score: 0.42 }, 
+            { lag: 4, score: 0.22 },
+            { lag: 5, score: 0.11 },
+        ];
+
+        function App() {
+            const [showResiduals, setShowResiduals] = useState(true);
+            const [selectedLag, setSelectedLag] = useState(3);
+            const [activeIdx, setActiveIdx] = useState(null);
+            
+            const data = useMemo(() => generateMockData(), []);
+
+            if (!window.Recharts) return <div className="p-10 text-center font-bold">Loading Libraries...</div>;
+
+            const handleMouseMove = (e) => {
+                if (e && e.activeTooltipIndex !== undefined) {
+                    setActiveIdx(e.activeTooltipIndex);
+                }
+            };
+
+            const leaderKey = showResiduals ? "resL" : "rawL";
+            const followerKey = showResiduals ? "resF" : "rawF";
+            const predictionIdx = activeIdx !== null ? activeIdx + selectedLag : null;
+            const hasPrediction = predictionIdx !== null && predictionIdx < data.length;
+
+            return (
+                <div className="max-w-6xl mx-auto p-4 md:p-10 space-y-6">
+                    {/* Header Section */}
+                    <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 flex flex-col md:flex-row justify-between items-center gap-6">
+                        <div>
+                            <h1 className="text-xl font-black tracking-tight">Lag Alignment Lab</h1>
+                            <p className="text-slate-400 text-[10px] font-bold uppercase tracking-widest mt-1">Manual Lag Override Mode</p>
+                        </div>
+                        
+                        <div className="flex items-end gap-5 bg-slate-50 p-3 rounded-xl border border-slate-100">
+                            <div className="flex flex-col gap-1.5">
+                                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">
+                                    Test Lag (Days)
+                                </label>
+                                <div className="flex gap-1">
+                                    {[1, 2, 3, 4, 5].map(l => (
+                                        <button 
+                                            key={l}
+                                            onClick={() => setSelectedLag(l)}
+                                            className={`w-10 h-10 rounded-lg text-sm font-bold transition-all ${
+                                                selectedLag === l 
+                                                ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-200' 
+                                                : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-100'
+                                            }`}
+                                        >
+                                            {l}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                            <button 
+                                onClick={() => setShowResiduals(!showResiduals)}
+                                className="h-10 px-4 text-[10px] font-bold uppercase bg-white border border-slate-200 rounded-lg hover:border-indigo-300 transition-colors"
+                            >
+                                {showResiduals ? 'View Raw Data' : 'View Residuals'}
+                            </button>
+                        </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+                        {/* Main Time Series Chart */}
+                        <div className="lg:col-span-3 bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+                            <div className="h-[450px]">
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <LineChart data={data} onMouseMove={handleMouseMove} onMouseLeave={() => setActiveIdx(null)}>
+                                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                                        
+                                        <XAxis 
+                                            dataKey="t" 
+                                            height={40}
+                                            axisLine={false} 
+                                            tickLine={false} 
+                                            tick={{fill: '#94a3b8', fontSize: 10, fontWeight: 500}} 
+                                            minTickGap={20}
+                                            label={{ 
+                                                value: 'TIME (DAYS)', 
+                                                position: 'insideBottom', 
+                                                offset: -5, 
+                                                fill: '#94a3b8', 
+                                                fontSize: 10, 
+                                                fontWeight: 'bold',
+                                                letterSpacing: '0.05em'
+                                            }}
+                                        />
+                                        <YAxis 
+                                            domain={['auto', 'auto']} 
+                                            axisLine={false} 
+                                            tickLine={false} 
+                                            tick={{fill: '#94a3b8', fontSize: 10}} 
+                                        />
+                                        <Tooltip content={() => null} />
+                                        
+                                        <Line type="monotone" dataKey={leaderKey} stroke="#6366f1" strokeWidth={3} dot={false} isAnimationActive={false} />
+                                        <Line type="monotone" dataKey={followerKey} stroke="#10b981" strokeWidth={3} dot={false} isAnimationActive={false} />
+
+                                        {activeIdx !== null && (
+                                            <ReferenceLine 
+                                                x={data[activeIdx].t} 
+                                                stroke="#6366f1" 
+                                                strokeDasharray="4 4" 
+                                                label={{ 
+                                                    position: 'insideTopLeft', 
+                                                    value: `Day ${data[activeIdx].t}`, 
+                                                    fill: '#6366f1', 
+                                                    fontSize: 12, 
+                                                    fontWeight: 'bold' 
+                                                }}
+                                            />
+                                        )}
+
+                                        {hasPrediction && (
+                                            <>
+                                                <ReferenceLine x={data[predictionIdx].t} stroke="#10b981" strokeDasharray="4 4" />
+                                                <ReferenceDot 
+                                                    x={data[predictionIdx].t} 
+                                                    y={data[predictionIdx][followerKey]} 
+                                                    r={6} fill="#10b981" stroke="#fff" strokeWidth={3} 
+                                                />
+                                                <ReferenceLine 
+                                                    segment={[
+                                                        { x: data[activeIdx].t, y: showResiduals ? 1.8 : 115 }, 
+                                                        { x: data[predictionIdx].t, y: showResiduals ? 1.8 : 115 }
+                                                    ]} 
+                                                    stroke="#cbd5e1" 
+                                                    label={{ position: 'top', value: `${selectedLag}d Lag`, fill: '#64748b', fontSize: 10, fontWeight: 'bold' }} 
+                                                />
+                                            </>
+                                        )}
+                                    </LineChart>
+                                </ResponsiveContainer>
+                            </div>
+                        </div>
+
+                        {/* Sidebar */}
+                        <div className="space-y-6">
+                            <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+                                <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-4 text-center">Correlation Strength</h3>
+                                <div className="h-52">
+                                    <ResponsiveContainer>
+                                        {/* FIX: Increased bottom margin to make room for the new X-axis */}
+                                        <BarChart data={lagScores} layout="vertical" margin={{ left: 10, bottom: 20, right: 10 }}>
+                                            
+                                            {/* FIX: Revealed X-axis, added styling and label */}
+                                            <XAxis 
+                                                type="number" 
+                                                domain={[0, 'auto']}
+                                                axisLine={false}
+                                                tickLine={false}
+                                                tick={{fill: '#94a3b8', fontSize: 10}}
+                                                label={{ 
+                                                    value: 'dCor STRENGTH', 
+                                                    position: 'insideBottom', 
+                                                    offset: -15, 
+                                                    fill: '#94a3b8', 
+                                                    fontSize: 9, 
+                                                    fontWeight: 'bold',
+                                                    letterSpacing: '0.05em'
+                                                }}
+                                            />
+                                            
+                                            <YAxis 
+                                                dataKey="lag" 
+                                                type="category" 
+                                                width={40}
+                                                axisLine={false}
+                                                tickLine={false}
+                                                tick={{fill: '#64748b', fontSize: 12, fontWeight: 'bold'}}
+                                                label={{ 
+                                                    value: 'LAG', 
+                                                    angle: -90, 
+                                                    position: 'insideLeft', 
+                                                    offset: -10,
+                                                    fill: '#94a3b8', 
+                                                    fontSize: 10, 
+                                                    fontWeight: 'bold',
+                                                    letterSpacing: '0.05em'
+                                                }}
+                                            />
+                                            
+                                            <Bar dataKey="score" radius={[0, 4, 4, 0]} onClick={(d) => d && setSelectedLag(d.lag)}>
+                                                {lagScores.map((entry, index) => (
+                                                    <Cell 
+                                                        key={`cell-${index}`} 
+                                                        cursor="pointer"
+                                                        fill={entry.lag === selectedLag ? '#6366f1' : '#94a3b8'} 
+                                                    />
+                                                ))}
+                                            </Bar>
+                                        </BarChart>
+                                    </ResponsiveContainer>
+                                </div>
+                            </div>
+                            
+                            <div className="bg-indigo-600 p-6 rounded-2xl text-white shadow-lg shadow-indigo-100">
+                                <p className="text-sm font-medium leading-relaxed">
+                                    <strong>Manual Mode:</strong> Adjust the lag to see how the follower's "green dot" reacts to the leader's "blue line" move.
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
