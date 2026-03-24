@@ -38,6 +38,11 @@ permutation:
   tier2_cutoff: 0.10    # Stop if p > 0.10 after 500
   tier3_n: 1000         # Extend to 1000 if p <= 0.10
   block_size: 5         # Block size for block permutation (weekly)
+  # Tier 0 pre-screen: skip permutation entirely if observed dCor is below
+  # this threshold at every lag. For n≈247 observations the expected dCor
+  # under independence is ~1/√n ≈ 0.064, so 0.05 is safely below the null
+  # mean — such pairs would stop at Tier 1 with p > 0.5 regardless.
+  tier0_dcor_threshold: 0.05
   # Budget guard
   max_tier3_fraction: 0.10   # Alert if >10% of pairs hit 1000 perms
 
@@ -91,18 +96,27 @@ monte_carlo:
 
 # ── Synthetic Health Check ────────────────────────────────────
 synthetic:
+  enabled: true         # Set false to skip entirely (or use --skip-synthetic)
   random_seed: 42
   n_planted_pairs: 50
   n_null_pairs: 450
   planted_lag: 2
   planted_noise_std: 1.0
   volatility_clustering: true
+  # Permutation budget for the health check. The check only needs enough
+  # precision to distinguish TPR/FPR — 200 perms gives p-value resolution
+  # of ~±0.02, sufficient. The main pipeline (tier3_n=1000) is unaffected.
+  permutation_n: 200
   # Alert thresholds
   min_tpr: 0.70         # True positive rate must stay above this
   max_fpr: 0.10         # False positive rate must stay below this
 
 # ── Cloud Run / Compute ───────────────────────────────────────
 compute:
+  # For multi-VM scaling: set partition_count = total_cores × 2 so that
+  # load imbalance (some partitions hit Tier 3 more) is absorbed across
+  # multiple partitions per worker. E.g., 96 cores → partition_count: 192.
+  # Locally pass --workers N matching available cores on the machine.
   partition_count: 50              # Number of parallel Cloud Run jobs
   max_cloud_run_cpu_hours: 20      # Budget guard alert threshold
   cloud_run_memory: "4Gi"

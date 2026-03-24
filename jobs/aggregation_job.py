@@ -87,6 +87,7 @@ def run_aggregation_job(
     window_end: date,
     run_id: str,
     is_monthly_update: bool = True,
+    run_synthetic: bool = True,
 ) -> None:
     """
     Full aggregation pipeline.
@@ -96,6 +97,8 @@ def run_aggregation_job(
     window_start, window_end : the new window just computed
     run_id : unique identifier for this pipeline run
     is_monthly_update : if True, skip historical recomputation
+    run_synthetic : if False, skip the synthetic health check (Step 11).
+                    Overridden to False when synthetic.enabled=false in config.
     """
     cfg = get_config()
     start_time = datetime.now()
@@ -256,9 +259,13 @@ def run_aggregation_job(
             logger.info(f"  Monte Carlo complete for top pairs")
 
         # ── Step 11: Synthetic health check ───────────────────────────────
-        logger.info("Step 11: Running synthetic health check...")
-        health_result = run_synthetic_health_check()
-        logger.info(f"  Health check: {health_result['status']}")
+        synthetic_enabled = cfg.get("synthetic", {}).get("enabled", True)
+        if run_synthetic and synthetic_enabled:
+            logger.info("Step 11: Running synthetic health check...")
+            health_result = run_synthetic_health_check()
+            logger.info(f"  Health check: {health_result['status']}")
+        else:
+            logger.info("Step 11: Synthetic health check skipped.")
 
     except Exception as e:
         logger.error(f"Aggregation job failed: {e}", exc_info=True)

@@ -4,6 +4,7 @@ pandas
 scipy
 scikit-learn
 networkx
+numba
 
 # Google Cloud (BigQuery only — no Cloud Run / Workflows needed locally)
 google-cloud-bigquery

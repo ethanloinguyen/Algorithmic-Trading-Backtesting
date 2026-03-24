@@ -189,6 +189,7 @@ def run_step_aggregation(
     window_end: date,
     run_id: str,
     is_monthly_update: bool = False,
+    run_synthetic: bool = True,
 ) -> bool:
     """Run full aggregation: FDR, OOS eval, stability, model, network, Monte Carlo, health check."""
     from jobs.aggregation_job import run_aggregation_job
@@ -200,6 +201,7 @@ def run_step_aggregation(
             window_end=window_end,
             run_id=run_id,
             is_monthly_update=is_monthly_update,
+            run_synthetic=run_synthetic,
         )
         logger.info("[AGGREGATION] Done")
         return True
@@ -218,6 +220,7 @@ def run_full_pipeline(
     num_workers: int = 1,
     num_partitions: int = None,
     is_monthly_update: bool = False,
+    run_synthetic: bool = True,
 ) -> bool:
     """
     Run the complete pipeline for one window.
@@ -249,7 +252,7 @@ def run_full_pipeline(
             logger.warning("Some pair partitions failed — continuing to aggregation anyway.")
 
     if step in ("all", "aggregation", "pairs+agg"):
-        ok = run_step_aggregation(window_start, window_end, run_id, is_monthly_update)
+        ok = run_step_aggregation(window_start, window_end, run_id, is_monthly_update, run_synthetic)
 
     elapsed = (datetime.now() - start_time).total_seconds()
     logger.info(
@@ -266,6 +269,7 @@ def run_backfill(
     num_workers: int = 1,
     start_date: date = None,
     end_date: date = None,
+    run_synthetic: bool = True,
 ) -> None:
     """
     Run the pipeline for ALL historical windows sequentially.
@@ -286,6 +290,7 @@ def run_backfill(
             step=step,
             num_workers=num_workers,
             is_monthly_update=False,
+            run_synthetic=run_synthetic,
         )
         if not success:
             failed_windows.append((ws, we))
@@ -298,7 +303,7 @@ def run_backfill(
 
 # ── Quarterly Batch Mode ──────────────────────────────────────────────────────
 
-def run_quarterly_batch(year: int, step: str = "all", num_workers: int = 1) -> None:
+def run_quarterly_batch(year: int, step: str = "all", num_workers: int = 1, run_synthetic: bool = True) -> None:
     """
     Run the pipeline for all windows whose window_start falls in a given year.
     Equivalent to quarterly_batches.sh but runs locally.
@@ -309,7 +314,7 @@ def run_quarterly_batch(year: int, step: str = "all", num_workers: int = 1) -> N
     logger.info(f"QUARTERLY BATCH: year={year}, {len(year_windows)} windows")
     for ws, we in year_windows:
         run_id = f"quarterly_{ws.strftime('%Y%m%d')}_{str(uuid.uuid4())[:6]}"
-        run_full_pipeline(ws, we, run_id, step=step, num_workers=num_workers, is_monthly_update=False)
+        run_full_pipeline(ws, we, run_id, step=step, num_workers=num_workers, is_monthly_update=False, run_synthetic=run_synthetic)
 
 
 # ── Setup Mode ────────────────────────────────────────────────────────────────
@@ -373,6 +378,15 @@ def parse_args():
         help="Flag as monthly update (skips quarterly refit logic)",
     )
     parser.add_argument(
+        "--skip-synthetic",
+        action="store_true",
+        help=(
+            "Skip the synthetic health check (Step 11 of aggregation). "
+            "Recommended for backfill runs and development iterations — "
+            "saves ~2-3 min per window. Run a dedicated monthly check instead."
+        ),
+    )
+    parser.add_argument(
         "--run-id",
         type=str,
         default=None,
@@ -428,6 +442,7 @@ def main():
             num_workers=args.workers,
             num_partitions=args.partitions,
             is_monthly_update=args.monthly,
+            run_synthetic=not args.skip_synthetic,
         )
 
     elif args.mode == "latest":
@@ -441,6 +456,7 @@ def main():
             num_workers=args.workers,
             num_partitions=args.partitions,
             is_monthly_update=True,
+            run_synthetic=not args.skip_synthetic,
         )
 
     elif args.mode == "backfill":
@@ -449,6 +465,7 @@ def main():
             num_workers=args.workers,
             start_date=args.backfill_start,
             end_date=args.backfill_end,
+            run_synthetic=not args.skip_synthetic,
         )
 
     elif args.mode == "quarterly":
@@ -459,6 +476,7 @@ def main():
             year=args.year,
             step=args.step,
             num_workers=args.workers,
+            run_synthetic=not args.skip_synthetic,
         )
 
 

@@ -158,12 +158,16 @@ def run_synthetic_health_check() -> Dict:
     lags = get_config()["lags"]["lag_list"]
     rng = np.random.default_rng(seed + 1)  # Separate seed for permutation RNG
 
+    # Use a reduced permutation budget for the health check — enough precision
+    # to evaluate TPR/FPR without burning the full main-pipeline budget.
+    max_perms = cfg.get("permutation_n", 200)
+
     # ── Compute dCor + permutation for all pairs ───────────────────────────
     pair_results = []
     for (ti, tj) in all_pairs:
         x = series[ti]
         y = series[tj]
-        lag_results = test_pair_all_lags(x, y, lags, rng=rng)
+        lag_results = test_pair_all_lags(x, y, lags, rng=rng, max_permutations=max_perms)
 
         # Keep best lag
         best_lag = max(lag_results.keys(), key=lambda l: lag_results[l]["dcor"] or 0.0)
