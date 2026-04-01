@@ -15,7 +15,7 @@ This package lets you run the full pipeline locally while writing all results to
 | Scheduling | Cloud Scheduler | Cron / run manually |
 | **Output (BigQuery)** | **Same** | **Same — identical BQ tables** |
 
-The BigQuery output is 100% identical. Once you've run the local pipeline, the FastAPI backend and frontend will work exactly as they would with Cloud Run output.
+The BigQuery output is 100% identical. Once the local pipeline is run, the FastAPI backend and frontend will work exactly as they would with Cloud Run output.
 
 ---
 
@@ -163,20 +163,44 @@ python run_local.py --mode quarterly --year 2022 --workers 4
 ### Pair computation is the bottleneck
 With ~800 tickers, you have ~320K pairs × 5 lags × adaptive permutation.
 
-| Workers | Estimated time per window |
-|---|---|
-| 1 | ~8–12 hours |
-| 4 | ~2–3 hours |
-| 8 | ~1–1.5 hours |
-| 16 | ~45 min |
+| Workers | Partitions | Estimated time per window |
+|---|---|---|
+| 1 | 1 | ~8–12 hours |
+| 4 | 16 | ~2–3 hours |
+| 8 | 32 | ~1–1.5 hours |
+| 16 | 64 | ~45 min |
+| 90 | 360 | ~6–8 min (paw VM) |
 
-Set `--workers` to your CPU core count minus 1:
+Set `--workers` to your CPU core count minus a few, and `--partitions` to 4× workers for better load balancing:
 ```bash
 # Check your core count
 python3 -c "import os; print(os.cpu_count())"
 
 # Use 7 workers on an 8-core machine
-python run_local.py --window-start 2022-01-01 --window-end 2022-12-31 --workers 7
+python run_local.py --window-start 2022-01-01 --window-end 2022-12-31 --workers 7 --partitions 28
+
+# On the paw VM (96 CPUs)
+python run_local.py --window-start 2022-01-01 --window-end 2022-12-31 --workers 90 --partitions 360 --log-dir /mnt/data1/logs
+```
+
+### Running on `paw` (UCD IDAV VM — 96 CPUs, 376 GB RAM)
+
+See [VM_MIGRATION.md](VM_MIGRATION.md) for full details. Quick start:
+
+```bash
+# Clone to the large NVMe partition — /home is nearly full
+cd /mnt/data1
+git clone <repo-url> trading && cd trading
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+
+# Full backfill with 90 workers
+python run_local.py \
+  --mode backfill \
+  --workers 90 \
+  --partitions 360 \
+  --skip-synthetic \
+  --log-dir /mnt/data1/logs
 ```
 
 ### Reducing the universe size (for testing)

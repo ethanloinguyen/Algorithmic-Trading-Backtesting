@@ -37,12 +37,22 @@ Usage examples:
 
 import argparse
 import logging
+import multiprocessing
 import os
 import sys
 import uuid
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import date, datetime
 from typing import List, Optional, Tuple
+
+# Prevent thread oversubscription when running many worker processes.
+# Each worker uses Numba JIT + NumPy (MKL/OpenBLAS); without capping these,
+# each worker spawns its own thread pool, causing CPU contention on high-core VMs.
+# Set before any imports that could trigger Numba or BLAS initialisation.
+# These propagate to subprocesses automatically via os.environ inheritance.
+os.environ.setdefault("NUMBA_NUM_THREADS", "1")
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("MKL_NUM_THREADS", "1")
 
 # ── Ensure project root is on path ────────────────────────────────────────────
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -62,11 +72,10 @@ _log_fmt = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 _stream_handler = logging.StreamHandler(sys.stdout)
 _stream_handler.setFormatter(logging.Formatter(_log_fmt))
 
-_log_file = os.path.join(PROJECT_ROOT, f"pipeline_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
-_file_handler = logging.FileHandler(_log_file, encoding="utf-8")
-_file_handler.setFormatter(logging.Formatter(_log_fmt))
-
-logging.basicConfig(level=logging.INFO, handlers=[_stream_handler, _file_handler])
+# File handler is added in main() after --log-dir is parsed so the log lands
+# in the user-specified directory (important on VMs where the home partition
+# may be nearly full — use --log-dir /mnt/data1/logs on paw).
+logging.basicConfig(level=logging.INFO, handlers=[_stream_handler])
 logger = logging.getLogger(__name__)
 
 
@@ -364,13 +373,29 @@ def parse_args():
         "--workers",
         type=int,
         default=1,
-        help="Number of local parallel worker processes for pair computation (default: 1)",
+        help=(
+            "Number of local parallel worker processes for pair computation (default: 1). "
+            "On the paw VM (96 CPUs) use --workers 90 --partitions 360."
+        ),
     )
     parser.add_argument(
         "--partitions",
         type=int,
         default=None,
-        help="Number of logical pair partitions (default: same as --workers)",
+        help=(
+            "Number of logical pair partitions (default: same as --workers). "
+            "Set higher than --workers for better load balancing, e.g. 4x workers."
+        ),
+    )
+    parser.add_argument(
+        "--log-dir",
+        type=str,
+        default=None,
+        help=(
+            "Directory for the timestamped pipeline log file "
+            "(default: project root). On paw use --log-dir /mnt/data1/logs "
+            "to avoid filling /home."
+        ),
     )
     parser.add_argument(
         "--monthly",
@@ -416,6 +441,15 @@ def parse_args():
 
 def main():
     args = parse_args()
+
+    # ── File log handler (deferred so --log-dir is respected) ─────────────────
+    log_dir = args.log_dir if args.log_dir else PROJECT_ROOT
+    os.makedirs(log_dir, exist_ok=True)
+    _log_file = os.path.join(log_dir, f"pipeline_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
+    _file_handler = logging.FileHandler(_log_file, encoding="utf-8")
+    _file_handler.setFormatter(logging.Formatter(_log_fmt))
+    logging.getLogger().addHandler(_file_handler)
+    logger.info(f"Logging to: {_log_file}")
 
     # Load config
     load_config(args.config)
@@ -481,4 +515,10 @@ def main():
 
 
 if __name__ == "__main__":
+    # Use fork on Linux/macOS: workers inherit the parent's memory space instantly,
+    # avoiding repeated module imports and Numba JIT recompilation per process.
+    # This is the Linux default but setting it explicitly guards against future
+    # Python version changes and documents the intent.
+    if sys.platform != "win32":
+        multiprocessing.set_start_method("fork", force=True)
     main()
