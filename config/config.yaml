@@ -9,8 +9,8 @@ universe:
   end_date: "2025-12-31"
   min_continuous_years: 2          # Min years of continuous data
   min_trading_day_coverage: 0.95   # 95% of expected trading days
-  min_median_dollar_volume: 250_000_000   # $5M median daily dollar volume
-  min_market_cap: 10_000_000_000           # $300M market cap
+  min_median_dollar_volume: 5_000_000   # $5M median daily dollar volume
+  min_market_cap: 300_000_000           # $300M market cap
   # Adjust above thresholds here if filtered universe is too small
 
 # ── Rolling Window ────────────────────────────────────────────
@@ -127,7 +127,7 @@ compute:
 gcp:
   project_id: "capstone-487001"
   region: "us-central1"
-  bq_dataset: "output_results_local"
+  bq_dataset: "output_results"
   # Read-only source tables (market_data, ticker_metadata). Never written by this pipeline.
   source_dataset: "yfinance_stocks_data"
   gcs_bucket: "capstone-bucket-487001"
