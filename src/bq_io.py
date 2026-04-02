@@ -22,7 +22,7 @@ from typing import Dict, List, Optional
 import pandas as pd
 from google.cloud import bigquery
 from google.cloud.exceptions import NotFound
-from google.api_core.exceptions import ResourceExhausted
+from google.api_core.exceptions import GoogleAPICallError, ResourceExhausted
 
 from src.config_loader import get_config, get_gcp_project, get_bq_dataset
 
@@ -144,8 +144,20 @@ def write_dataframe(
             job.result()
             logger.info(f"Wrote {len(df):,} rows to {table_id} ({write_disposition})")
             return
-        except ResourceExhausted as e:
-            if attempt == _WRITE_MAX_ATTEMPTS:
+        except GoogleAPICallError as e:
+            # BQ rate-limit errors can surface as ResourceExhausted (HTTP 429),
+            # or as a job-level rateLimitExceeded reason (HTTP 403) when the
+            # "too many partition update operations" limit is hit.  Both carry
+            # the same remedy: wait and retry.
+            err_str = str(e).lower()
+            is_rate_limit = (
+                isinstance(e, ResourceExhausted)
+                or getattr(e, "code", None) in (429, 403)
+                or "ratelimitexceeded" in err_str
+                or "too many" in err_str
+                or "quota" in err_str
+            )
+            if not is_rate_limit or attempt == _WRITE_MAX_ATTEMPTS:
                 logger.error(f"Failed to write to {table_id}: {e}")
                 raise
             jitter = random.uniform(0, delay * 0.5)
