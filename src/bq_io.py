@@ -14,12 +14,14 @@ should exist outside this file.
 """
 
 import logging
+import time
 from datetime import date, datetime
 from typing import Dict, List, Optional
 
 import pandas as pd
 from google.cloud import bigquery
 from google.cloud.exceptions import NotFound
+from google.api_core.exceptions import ResourceExhausted
 
 from src.config_loader import get_config, get_gcp_project, get_bq_dataset
 
@@ -88,6 +90,12 @@ def full_table(table_key: str) -> str:
 
 # ── Generic Write ─────────────────────────────────────────────────────────────
 
+# Maximum attempts and base delay for 429 rate-limit retries.
+# Waits: 5s, 10s, 20s, 40s between attempts (exponential backoff).
+_WRITE_MAX_ATTEMPTS = 5
+_WRITE_BASE_DELAY_S = 5
+
+
 def write_dataframe(
     df: pd.DataFrame,
     table_key: str,
@@ -95,7 +103,11 @@ def write_dataframe(
     schema: List[bigquery.SchemaField] = None,
 ) -> None:
     """
-    Write a pandas DataFrame to BigQuery.
+    Write a pandas DataFrame to BigQuery with exponential backoff retry.
+
+    Retries up to _WRITE_MAX_ATTEMPTS times on 429 ResourceExhausted errors,
+    which occur when too many workers write to the same partitioned table
+    simultaneously (BigQuery limit: ~50 partition updates per 10 seconds).
 
     Parameters
     ----------
@@ -122,13 +134,26 @@ def write_dataframe(
         schema=schema if schema else [],
     )
 
-    try:
-        job = client.load_table_from_dataframe(df, table_id, job_config=job_config)
-        job.result()  # Wait for completion
-        logger.info(f"Wrote {len(df):,} rows to {table_id} ({write_disposition})")
-    except Exception as e:
-        logger.error(f"Failed to write to {table_id}: {e}")
-        raise
+    delay = _WRITE_BASE_DELAY_S
+    for attempt in range(1, _WRITE_MAX_ATTEMPTS + 1):
+        try:
+            job = client.load_table_from_dataframe(df, table_id, job_config=job_config)
+            job.result()
+            logger.info(f"Wrote {len(df):,} rows to {table_id} ({write_disposition})")
+            return
+        except ResourceExhausted as e:
+            if attempt == _WRITE_MAX_ATTEMPTS:
+                logger.error(f"Failed to write to {table_id}: {e}")
+                raise
+            logger.warning(
+                f"BQ rate limit hit writing to {table_id} "
+                f"(attempt {attempt}/{_WRITE_MAX_ATTEMPTS}), retrying in {delay}s..."
+            )
+            time.sleep(delay)
+            delay *= 2
+        except Exception as e:
+            logger.error(f"Failed to write to {table_id}: {e}")
+            raise
 
 
 # ── Residuals ─────────────────────────────────────────────────────────────────
