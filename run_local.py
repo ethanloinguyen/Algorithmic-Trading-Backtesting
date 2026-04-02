@@ -122,8 +122,12 @@ def _run_partition(args: tuple) -> Tuple[int, bool, str]:
     window_start, window_end, partition_id, num_partitions, run_id = args
 
     # Re-import in subprocess (each process needs its own state)
-    import sys, os
+    import sys, os, random, time
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+    # Stagger startup so workers don't all finish computing at the same instant
+    # and simultaneously flood BQ with writes. Cap at 10s to limit added latency.
+    time.sleep(random.uniform(0, min(partition_id * 0.1, 10.0)))
 
     from src.config_loader import load_config
     load_config(os.path.join(os.path.dirname(os.path.abspath(__file__)), "config", "config.yaml"))

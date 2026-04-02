@@ -14,6 +14,7 @@ should exist outside this file.
 """
 
 import logging
+import random
 import time
 from datetime import date, datetime
 from typing import Dict, List, Optional
@@ -91,8 +92,10 @@ def full_table(table_key: str) -> str:
 # ── Generic Write ─────────────────────────────────────────────────────────────
 
 # Maximum attempts and base delay for 429 rate-limit retries.
-# Waits: 5s, 10s, 20s, 40s between attempts (exponential backoff).
-_WRITE_MAX_ATTEMPTS = 5
+# Base waits: 5s, 10s, 20s, 40s, 80s (exponential backoff + random jitter).
+# Jitter spreads retrying workers so they don't all retry in lock-step
+# when many workers hit the rate limit simultaneously (common with 90 workers).
+_WRITE_MAX_ATTEMPTS = 6
 _WRITE_BASE_DELAY_S = 5
 
 
@@ -145,11 +148,12 @@ def write_dataframe(
             if attempt == _WRITE_MAX_ATTEMPTS:
                 logger.error(f"Failed to write to {table_id}: {e}")
                 raise
+            jitter = random.uniform(0, delay * 0.5)
             logger.warning(
                 f"BQ rate limit hit writing to {table_id} "
-                f"(attempt {attempt}/{_WRITE_MAX_ATTEMPTS}), retrying in {delay}s..."
+                f"(attempt {attempt}/{_WRITE_MAX_ATTEMPTS}), retrying in {delay + jitter:.1f}s..."
             )
-            time.sleep(delay)
+            time.sleep(delay + jitter)
             delay *= 2
         except Exception as e:
             logger.error(f"Failed to write to {table_id}: {e}")
