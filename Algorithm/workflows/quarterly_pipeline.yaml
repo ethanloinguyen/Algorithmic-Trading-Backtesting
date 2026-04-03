@@ -1,0 +1,191 @@
+main:
+  params: [args]
+  steps:
+    - compute_dates:
+        assign:
+          - project_id: "capstone-487001"
+          - region: "us-central1"
+          - bq_dataset: "output_results"
+          - run_id: '${sys.get_env("GOOGLE_CLOUD_WORKFLOW_EXECUTION_ID")}'
+          - window_end_dt: '${default(map.get(args, "window_end"), "2025-12-31")}'
+          - window_start_dt: '${default(map.get(args, "window_start"), "2025-01-01")}'
+          - num_partitions: 50
+          - project_number: "276748096156"
+
+    - log_start:
+        call: sys.log
+        args:
+          text: '${"Pipeline starting. Window " + window_start_dt + " -> " + window_end_dt + " run_id=" + run_id}'
+          severity: INFO
+
+    - run_residuals:
+        call: googleapis.run.v1.namespaces.jobs.run
+        args:
+          name: '${"namespaces/" + project_id + "/jobs/residuals-job"}'
+          location: '${region}'
+          body:
+            overrides:
+              containerOverrides:
+                - env:
+                    - name: WINDOW_START
+                      value: '${window_start_dt}'
+                    - name: WINDOW_END
+                      value: '${window_end_dt}'
+                    - name: RUN_ID
+                      value: '${run_id}'
+                    - name: ONLY_LATEST
+                      value: "true"
+                    - name: GCP_PROJECT_ID
+                      value: '${project_id}'
+                    - name: BQ_DATASET
+                      value: '${bq_dataset}'
+        result: residuals_execution
+
+    - wait_for_residuals:
+        call: wait_for_job
+        args:
+          project_id: '${project_id}'
+          region: '${region}'
+          execution_name: '${residuals_execution.metadata.name}'
+          project_number: '${project_number}' 
+        result: residuals_result
+    - check_residuals:
+        switch:
+          - condition: '${residuals_result != "SUCCEEDED"}'
+            next: fail_residuals
+        next: log_residuals_done
+
+    - fail_residuals:
+        raise: '${"Residuals job failed with status: " + residuals_result}'
+
+    - log_residuals_done:
+        call: sys.log
+        args:
+          text: "Residuals job complete. Starting pair jobs..."
+          severity: INFO
+
+    - launch_pair_jobs:
+        parallel:
+          for:
+            value: partition_id
+            in: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49]
+            steps:
+              - run_pair_job:
+                  try:
+                    call: googleapis.run.v1.namespaces.jobs.run
+                    args:
+                      name: '${"namespaces/" + project_id + "/jobs/pair-job"}'
+                      location: '${region}'
+                      connector_params:
+                        timeout: 7200
+                      body:
+                        overrides:
+                          taskCount: 1
+                          containerOverrides:
+                            - env:
+                                - name: WINDOW_START
+                                  value: '${window_start_dt}'
+                                - name: WINDOW_END
+                                  value: '${window_end_dt}'
+                                - name: PARTITION_ID
+                                  value: '${string(partition_id)}'
+                                - name: NUM_PARTITIONS
+                                  value: '${string(num_partitions)}'
+                                - name: RUN_ID
+                                  value: '${run_id}'
+                                - name: GCP_PROJECT_ID
+                                  value: '${project_id}'
+                                - name: BQ_DATASET
+                                  value: '${bq_dataset}'
+                    result: pair_execution
+                  except:
+                    as: e
+                    steps:
+                      - handle_timeout:
+                          switch:
+                            - condition: '${e.tags != null and "TimeoutError" in e.tags}'
+                              next: continue
+                      - reraise_if_not_timeout:
+                          raise: '${e}'
+
+    - log_pairs_done:
+        call: sys.log
+        args:
+          text: "All pair jobs complete. Starting aggregation..."
+          severity: INFO
+
+    - run_aggregation:
+        call: googleapis.run.v1.namespaces.jobs.run
+        args:
+          name: '${"namespaces/" + project_id + "/jobs/aggregation-job"}'
+          location: '${region}'
+          body:
+            overrides:
+              containerOverrides:
+                - env:
+                    - name: WINDOW_START
+                      value: '${window_start_dt}'
+                    - name: WINDOW_END
+                      value: '${window_end_dt}'
+                    - name: RUN_ID
+                      value: '${run_id}'
+                    - name: IS_MONTHLY_UPDATE
+                      value: "false"
+                    - name: GCP_PROJECT_ID
+                      value: '${project_id}'
+                    - name: BQ_DATASET
+                      value: '${bq_dataset}'
+        result: aggregation_execution
+
+    - wait_for_aggregation:
+        call: wait_for_job
+        args:
+          project_id: '${project_id}'
+          region: '${region}'
+          execution_name: '${aggregation_execution.metadata.name}'
+          project_number: '${project_number}'
+        result: aggregation_result
+
+    - check_aggregation:
+        switch:
+          - condition: '${aggregation_result != "SUCCEEDED"}'
+            next: fail_aggregation
+        next: log_complete
+
+    - fail_aggregation:
+        raise: '${"Aggregation job failed with status: " + aggregation_result}'
+
+    - log_complete:
+        call: sys.log
+        args:
+          text: '${"Pipeline complete. run_id=" + run_id}'
+          severity: INFO
+
+    - return_result:
+        return:
+          status: "COMPLETE"
+          run_id: '${run_id}'
+          window_start: '${window_start_dt}'
+          window_end: '${window_end_dt}'
+
+
+wait_for_job:
+  params: [project_id, region, execution_name, project_number]
+  steps:
+    - poll_loop:
+        call: googleapis.run.v1.namespaces.executions.get
+        args:
+          name: '${"namespaces/" + project_number + "/executions/" + execution_name}'
+          location: '${region}'
+        result: execution_response
+    - check_status:
+        switch:
+          - condition: '${execution_response.status.conditions[0].status == "True"}'
+            return: "SUCCEEDED"
+          - condition: '${execution_response.status.conditions[0].status == "False"}'
+            return: "FAILED"
+    - wait_and_retry:
+        call: sys.sleep
+        args:
+          seconds: 30
+        next: poll_loop

@@ -1,0 +1,16 @@
+numpy
+pandas
+scipy
+scikit-learn
+networkx
+google-cloud-bigquery
+google-cloud-bigquery-storage
+google-cloud-storage
+fastapi
+uvicorn
+requests
+db-dtypes
+pandas-gbq
+pytest
+pyyaml
+pyarrow

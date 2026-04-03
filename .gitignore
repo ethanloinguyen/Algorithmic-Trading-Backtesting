@@ -16,6 +16,14 @@ venv/
 dist/
 build/
 
+# Node/Next.js
+Frontend/.next/
+Frontend/node_modules/
+Frontend/next-env.d.ts
+
+# Secrets
+backend/secrets/
+
 # Data files
 sp500_data/
 *.csv
@@ -42,14 +50,3 @@ Thumbs.db
 
 # Logs
 *.log
-
-# Frontend build output and dependencies
-Frontend/.next/
-Frontend/node_modules/
-Frontend/next-env.d.ts
-
-# Backend secrets - NEVER commit this
-backend/secrets/
-
-# Backend dependencies
-backend/.venv/
