@@ -1,7 +1,7 @@
 // frontend/src/app/dashboard/saved.tsx
 "use client";
 import Sidebar from "@/components/ui/Sidebar";
-import { useAuth } from "@/context/AuthContext";
+import { useAuth } from "@/src/app/context/AuthContext"
 import { Star, Loader2 } from "lucide-react";
 
 export default function SavedStocksPage() {
