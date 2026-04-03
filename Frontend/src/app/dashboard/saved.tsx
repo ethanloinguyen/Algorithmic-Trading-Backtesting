@@ -1,4 +1,4 @@
-// frontend/src/app/dashboard/saved/page.tsx
+// frontend/src/app/dashboard/saved.tsx
 "use client";
 import Sidebar from "@/components/ui/Sidebar";
 import { useAuth } from "@/context/AuthContext";
