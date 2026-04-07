@@ -1,3 +1,4 @@
+// frontend/src/app/dashboard/home.tsx
 "use client";
 import { useState } from "react";
 import Sidebar from "@/components/ui/Sidebar";

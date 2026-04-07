@@ -1,46 +1,144 @@
-stock-dashboard/
-├── app/                          # Next.js frontend (already exists)
-├── components/                   # React components (already exists)
-├── lib/
-│   └── firebase/
-│       ├── config.ts            # Firebase configuration
-│       ├── auth.ts              # Firebase Auth helper functions
-│       ├── firestore.ts         # Firestore helper functions
-│       └── bigquery.ts          # BigQuery helper functions
-├── functions/                   # Firebase Cloud Functions
-│   ├── src/
-│   │   ├── index.ts            # Main entry point
-│   │   ├── scheduledJobs/
-│   │   │   └── dailyStockSync.ts    # Daily stock data sync job
-│   │   ├── tiingo/
-│   │   │   ├── client.ts           # Tiingo API client
-│   │   │   ├── fetchStockData.ts   # Fetch stock data functions
-│   │   │   └── russell3000.ts      # Russell 3000 ticker management
-│   │   ├── bigquery/
-│   │   │   ├── schema.ts           # BigQuery table schemas
-│   │   │   ├── stockData.ts        # Stock data operations
-│   │   │   └── cleanup.ts          # Data cleanup functions
-│   │   └── utils/
-│   │       ├── date.ts             # Date utility functions
-│   │       └── logger.ts           # Logging utilities
-│   ├── package.json
-│   ├── tsconfig.json
-│   └── .env.local
-├── api/                         # Next.js API routes
-│   └── app/api/
-│       ├── stocks/
-│       │   ├── route.ts            # GET /api/stocks - List stocks
-│       │   └── [symbol]/
-│       │       └── route.ts        # GET /api/stocks/[symbol] - Stock details
-│       ├── user/
-│       │   ├── saved/
-│       │   │   └── route.ts        # User's saved stocks
-│       │   └── profile/
-│       │       └── route.ts        # User profile
-│       └── auth/
-│           └── session/
-│               └── route.ts        # Auth session management
-├── .env.local                   # Environment variables
-├── firebase.json                # Firebase configuration
-├── .firebaserc                  # Firebase project config
-└── firestore.rules              # Firestore security rules
+LagLens — Actual Project Structure
+====================================
+Last updated: 2025-Q2
+ 
+repo/
+├── .gitignore
+│
+├── Algorithm/                          ← Pipeline (separate, not connected to frontend/backend yet)
+│   ├── Dockerfile
+│   ├── config/
+│   │   └── config.yaml                 ← All pipeline parameters (GCP project, BQ dataset, thresholds)
+│   ├── src/                            ← Core pipeline modules
+│   │   ├── config_loader.py
+│   │   ├── bq_io.py                    ← Single source of truth for all BQ reads/writes
+│   │   ├── bq_schema.py                ← Table schema definitions + creation
+│   │   ├── universe.py
+│   │   ├── windows.py
+│   │   ├── residuals.py
+│   │   ├── dcor_engine.py
+│   │   ├── permutation.py
+│   │   ├── fdr.py
+│   │   ├── stability.py
+│   │   ├── oos_model.py
+│   │   ├── bootstrap.py
+│   │   ├── network.py
+│   │   ├── monte_carlo.py
+│   │   ├── synthetic.py
+│   │   └── README.md
+│   ├── jobs/
+│   │   ├── pair_job.py                 ← Cloud Run parallel worker (50 tasks)
+│   │   └── aggregation_job.py          ← Cloud Run aggregation orchestrator
+│   ├── api/
+│   │   └── main.py                     ← Algorithm's own FastAPI (pairs, network, charts endpoints)
+│   │                                     NOTE: not yet connected to Frontend
+│   ├── workflows/
+│   │   ├── quarterly_pipeline.yaml
+│   │   └── monthly_pipeline.yaml       ← Cloud Workflows definition
+│   ├── scripts/
+│   │   ├── setup.py
+│   │   ├── deploy.sh
+│   │   └── ingest_ticker_metadata.py
+│   └── tests/
+│       └── test_core.py
+│
+├── backend/                            ← FastAPI backend serving OHLCV + stock data to Frontend
+│   ├── run.py                          ← Dev entrypoint: `python run.py` (port 4000)
+│   ├── requirements.txt                ← fastapi, uvicorn, google-cloud-bigquery, pydantic, pandas
+│   ├── .env                            ← GCP_PROJECT_ID, BQ_DATASET, ALLOWED_ORIGINS (gitignored)
+│   ├── secrets/
+│   │   └── gcp-service-account.json    ← GCP credentials (gitignored)
+│   └── app/
+│       ├── main.py                     ← App factory, CORS, router registration
+│       ├── core/
+│       │   ├── config.py               ← Pydantic Settings (reads .env)
+│       │   └── bigquery.py             ← Singleton BQ client
+│       ├── routers/
+│       │   ├── stocks.py               ← GET /api/stocks, /api/stocks/summaries, /api/stocks/{symbol}/ohlcv
+│       │   ├── indices.py              ← GET /api/indices
+│       │   └── portfolio.py            ← POST /api/portfolio/analyze  [TO ADD]
+│       ├── models/
+│       │   ├── stock.py                ← StockSummary, OHLCVCandle, IndexSummary, TimeRange
+│       │   └── portfolio.py            ← PortfolioAnalysisResponse, OverlapResult, Recommendation  [TO ADD]
+│       └── services/
+│           ├── bigquery_services.py    ← get_ohlcv(), get_stock_summaries(), get_index_summaries()
+│           ├── portfolio_service.py    ← run_portfolio_analysis() — mock or BQ switch  [TO ADD]
+│           ├── portfolio_engine.py     ← analyze_portfolio_overlap(), get_recommendations()  [TO ADD]
+│           └── mock_final_network.py   ← Mock final_network data (used until BQ is backfilled)  [TO ADD]
+│
+└── Frontend/                           ← Next.js 16 app (React 19, TypeScript, Tailwind)
+    ├── next.config.ts
+    ├── tsconfig.json                   ← baseUrl: ".", paths: { "@/*": ["./*"] }
+    ├── tailwind.config.ts
+    ├── components.json                 ← shadcn/ui config — lib alias: "@/src/app/lib"
+    ├── eslint.config.mjs
+    ├── middleware.ts                   ← Route protection: /dashboard/* requires ll_authed cookie
+    │
+    ├── src/
+    │   └── app/                        ← Next.js App Router root
+    │       ├── layout.tsx              ← Root layout — wraps everything in <AuthProvider>
+    │       ├── page.tsx                ← Login page (route: "/")
+    │       ├── globals.css
+    │       │
+    │       ├── create-account/
+    │       │   └── page.tsx            ← Create account page (route: "/create-account")
+    │       │
+    │       ├── context/
+    │       │   └── AuthContext.tsx     ← Firebase Auth + Firestore saved stocks context
+    │       │
+    │       ├── lib/
+    │       │   ├── api.ts              ← All fetch calls to backend (BASE = NEXT_PUBLIC_API_URL)
+    │       │   ├── firebase.ts         ← Firebase app + auth + db exports
+    │       │   ├── stockCache.ts       ← Firestore caching layer (summaries TTL 5min, OHLCV 10min)
+    │       │   └── utils.ts            ← cn() helper (clsx + tailwind-merge)
+    │       │
+    │       └── dashboard/              ← All protected routes (guarded by middleware.ts)
+    │           ├── page.tsx            ← Main dashboard (route: "/dashboard")
+    │           │                         Renders: Sidebar + SectorFilter + StockGrid
+    │           ├── home.tsx            ← ⚠️ OLD DRAFT — white theme, hamburger sidebar. DELETE.
+    │           ├── saved.tsx           ← Saved stocks page stub (route would be /dashboard/saved
+    │           │                         if renamed to saved/page.tsx). Import path has a bug:
+    │           │                         uses @/context/AuthContext instead of @/src/app/context/AuthContext
+    │           ├── analysis/
+    │           │   └── page.tsx        ← Analysis page (route: "/dashboard/analysis") — mock charts
+    │           ├── profile/
+    │           │   └── page.tsx        ← Profile + saved stocks (route: "/dashboard/profile")
+    │           └── diversify/          ← Portfolio diversification tool  [TO ADD]
+    │               └── page.tsx        ← (route: "/dashboard/diversify")
+    │
+    └── components/
+        └── ui/
+            ├── Sidebar.tsx             ← Top navbar — links to /dashboard, /analysis, /heatmap
+            │                             NOTE: /heatmap route does not have a page.tsx yet
+            ├── SectorFilter.tsx        ← Index cards (SPX, IXIC, DJI) + sector filter buttons
+            ├── StockGrid.tsx           ← Watchlist table + Gainers/Losers (fetches from backend)
+            ├── StockModal.tsx          ← OHLCV chart modal (fetches from backend on open)
+            ├── StarredContext.tsx      ← Local starred state (separate from Firestore savedStocks)
+            ├── AuthForm.tsx            ← Login form
+            ├── button.tsx              ← shadcn Button
+            ├── card.tsx                ← shadcn Card
+            └── input.tsx              ← shadcn Input
+
+── How to Run Locally ───────────────────────────────────────────────────────────
+ 
+Backend:
+    cd backend
+    pip install -r requirements.txt
+    python run.py              # http://localhost:4000
+    # Docs at http://localhost:4000/docs
+ 
+Frontend:
+    cd Frontend
+    npm install
+    npm run dev                # http://localhost:3000
+ 
+ 
+── Known Issues / TODOs ────────────────────────────────────────────────────────
+ 
+1. /dashboard/heatmap has a nav link in Sidebar but no page.tsx yet
+2. home.tsx should be deleted (old draft, wrong theme)
+3. saved.tsx has broken import (@/context/AuthContext → @/src/app/context/AuthContext)
+   and is not a routable page until renamed to saved/page.tsx
+4. portfolio endpoint (POST /api/portfolio/analyze) not yet added to backend
+5. BQ final_network table empty — portfolio engine uses mock data until backfilled
+6. USE_MOCK_DATA env var in backend/.env controls mock vs real BQ data
