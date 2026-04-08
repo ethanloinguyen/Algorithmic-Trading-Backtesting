@@ -20,6 +20,9 @@ class Settings(BaseSettings):
     # CORS — comma-separated origins
     allowed_origins: str = "http://localhost:3000"
 
+    # Portfolio diversification — use mock data until BQ final_network is populated
+    use_mock_data: bool = True
+
     @property
     def origins_list(self) -> list[str]:
         return [o.strip() for o in self.allowed_origins.split(",")]
