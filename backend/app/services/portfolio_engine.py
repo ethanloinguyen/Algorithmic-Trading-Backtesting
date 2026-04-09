@@ -2,6 +2,10 @@
 """
 Core scoring logic for the portfolio diversification tool.
 No FastAPI or BQ imports — pure pandas + dataclasses.
+
+Two recommendation groups:
+    signal_recommendations       — stocks with detected lead-lag relationships to holdings
+    independent_recommendations  — stocks with ZERO detected relationships (pure diversification)
 """
 from __future__ import annotations
 from dataclasses import dataclass
@@ -30,6 +34,7 @@ class OverlapResult:
 
 @dataclass
 class Recommendation:
+    """Group A — signal-connected stock."""
     ticker:                     str
     sector:                     str
     centrality:                 float
@@ -38,12 +43,21 @@ class Recommendation:
     best_relationship_strength: float
     mean_relationship_strength: float
     related_holdings:           list
-    direction:                  str
+    direction:                  str   # "leads_your_holdings" | "follows_your_holdings" | "both"
     signal_score:               float
     centrality_score:           float
     sector_diversity_score:     float
     coverage_score:             float
     reasoning:                  str
+
+
+@dataclass
+class IndependentRecommendation:
+    """Group B — stock with zero detected relationship to any holding."""
+    ticker:     str
+    sector:     str
+    centrality: float
+    reasoning:  str
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -80,8 +94,8 @@ def _interpretation(row: pd.Series) -> str:
     )
 
 
-def _rec_reasoning(ticker, related, direction, sector, signal_score,
-                   sector_diversity_score, n) -> str:
+def _signal_reasoning(ticker, related, direction, sector, signal_score,
+                      sector_diversity_score, n) -> str:
     holdings_str = ", ".join(related[:3])
     if len(related) > 3:
         holdings_str += f" and {len(related) - 3} more"
@@ -97,6 +111,17 @@ def _rec_reasoning(ticker, related, direction, sector, signal_score,
     return (
         f"{ticker} ({sector}) statistically {dir_phrase} with a mean signal "
         f"strength of {round(signal_score, 1)}/100 across {n} of your holdings.{diversity_note}"
+    )
+
+
+def _independent_reasoning(ticker: str, sector: str, centrality: float) -> str:
+    centrality_pct = int(round(centrality * 100))
+    return (
+        f"{ticker} ({sector}) has no detected lead-lag relationship with any of your "
+        f"holdings across 15 years of analysis, making it a source of genuinely "
+        f"independent exposure. It sits in the top {centrality_pct}% of stocks by "
+        f"market centrality, meaning it still carries real informational weight in "
+        f"the broader market network despite being unrelated to your current holdings."
     )
 
 
@@ -121,12 +146,15 @@ def analyze_portfolio_overlap(
     results = []
     for _, row in sub.iterrows():
         results.append(OverlapResult(
-            ticker_leader=row["ticker_i"],    ticker_follower=row["ticker_j"],
-            best_lag=int(row["best_lag"]),    signal_strength=round(float(row["signal_strength"]), 1),
+            ticker_leader=row["ticker_i"],
+            ticker_follower=row["ticker_j"],
+            best_lag=int(row["best_lag"]),
+            signal_strength=round(float(row["signal_strength"]), 1),
             mean_dcor=round(float(row["mean_dcor"]), 4),
             oos_sharpe_net=round(float(row["oos_sharpe_net"]), 3),
             predicted_sharpe=round(float(row["predicted_sharpe"]), 3),
-            sector_leader=row["sector_i"],    sector_follower=row["sector_j"],
+            sector_leader=row["sector_i"],
+            sector_follower=row["sector_j"],
             frequency=round(float(row["frequency"]), 3),
             half_life=round(float(row["half_life"]), 1),
             sharpness=round(float(row["sharpness"]), 3),
@@ -135,9 +163,9 @@ def analyze_portfolio_overlap(
     return results
 
 
-# ── Function 2: Recommendation engine ────────────────────────────────────────
+# ── Function 2: Signal-connected recommendations ──────────────────────────────
 
-def get_recommendations(
+def get_signal_recommendations(
     user_tickers: list,
     network_df: pd.DataFrame,
     top_n: int = 10,
@@ -151,9 +179,9 @@ def get_recommendations(
     if not tickers:
         return []
 
-    meta = get_ticker_metadata(network_df)
+    meta        = get_ticker_metadata(network_df)
     sector_dist = _sector_distribution(list(tickers), meta)
-    total = len(tickers)
+    total       = len(tickers)
 
     involves = network_df["ticker_i"].isin(tickers) | network_df["ticker_j"].isin(tickers)
     filtered = network_df[involves & (network_df["signal_strength"] >= min_signal_strength)].copy()
@@ -162,8 +190,9 @@ def get_recommendations(
 
     candidates: dict = {}
     for _, row in filtered.iterrows():
-        ti, tj = row["ticker_i"], row["ticker_j"]
-        ti_in, tj_in = ti in tickers, tj in tickers
+        ti, tj   = row["ticker_i"], row["ticker_j"]
+        ti_in    = ti in tickers
+        tj_in    = tj in tickers
         if ti_in and tj_in:
             continue
         if ti_in and not tj_in:
@@ -174,17 +203,19 @@ def get_recommendations(
             continue
 
         if cand not in candidates:
-            candidates[cand] = {"signal_strengths":[],"related_holdings":[],"directions":[],"centrality":0.0,"sector":"Unknown"}
-
+            candidates[cand] = {
+                "signal_strengths": [], "related_holdings": [],
+                "directions": [], "centrality": 0.0, "sector": "Unknown",
+            }
         candidates[cand]["signal_strengths"].append(float(row["signal_strength"]))
         candidates[cand]["related_holdings"].append(holding)
         candidates[cand]["directions"].append(direction)
         if cand == ti:
             candidates[cand]["centrality"] = max(candidates[cand]["centrality"], float(row["centrality_i"]))
-            candidates[cand]["sector"] = row["sector_i"]
+            candidates[cand]["sector"]     = row["sector_i"]
         else:
             candidates[cand]["centrality"] = max(candidates[cand]["centrality"], float(row["centrality_j"]))
-            candidates[cand]["sector"] = row["sector_j"]
+            candidates[cand]["sector"]     = row["sector_j"]
 
     if not candidates:
         return []
@@ -199,16 +230,16 @@ def get_recommendations(
         sector  = data["sector"]
         n_conn  = len(set(related))
 
-        signal_score          = float(np.mean(sigs))
-        centrality_score      = (data["centrality"] / max_centrality) * 100.0
-        coverage_score        = (n_conn / max_coverage) * 100.0
-        sector_frac           = sector_dist.get(sector, 0) / total if total else 0
+        signal_score           = float(np.mean(sigs))
+        centrality_score       = (data["centrality"] / max_centrality) * 100.0
+        coverage_score         = (n_conn / max_coverage) * 100.0
+        sector_frac            = sector_dist.get(sector, 0) / total if total else 0
         sector_diversity_score = max(0.0, (1.0 - sector_frac) * 100.0)
 
         composite = (
-            signal_weight          * signal_score +
-            centrality_weight      * centrality_score +
-            coverage_weight        * coverage_score +
+            signal_weight           * signal_score +
+            centrality_weight       * centrality_score +
+            coverage_weight         * coverage_score +
             sector_diversity_weight * sector_diversity_score
         )
 
@@ -228,9 +259,58 @@ def get_recommendations(
             centrality_score=round(centrality_score, 1),
             sector_diversity_score=round(sector_diversity_score, 1),
             coverage_score=round(coverage_score, 1),
-            reasoning=_rec_reasoning(ticker, related, direction, sector,
-                                     signal_score, sector_diversity_score, n_conn),
+            reasoning=_signal_reasoning(ticker, related, direction, sector,
+                                        signal_score, sector_diversity_score, n_conn),
         ))
 
     recs.sort(key=lambda r: r.composite_score, reverse=True)
     return recs[:top_n]
+
+
+# ── Function 3: Truly independent recommendations ─────────────────────────────
+
+def get_independent_recommendations(
+    user_tickers: list,
+    network_df: pd.DataFrame,
+    top_n: int = 10,
+) -> list[IndependentRecommendation]:
+    """
+    Group B: stocks in our universe with ZERO detected lead-lag relationships
+    to any of the user's holdings. Pure diversification picks.
+    Ranked by centrality so the most market-relevant independents surface first.
+    """
+    tickers = set(_normalize_tickers(user_tickers))
+    if not tickers:
+        return []
+
+    meta      = get_ticker_metadata(network_df)
+    universe  = set(meta.index.tolist())
+    candidates = universe - tickers
+
+    # All tickers that appear in any relationship with user holdings
+    involves_user = (
+        network_df["ticker_i"].isin(tickers) | network_df["ticker_j"].isin(tickers)
+    )
+    related_df = network_df[involves_user]
+    connected  = set(related_df["ticker_i"].tolist() + related_df["ticker_j"].tolist())
+    connected -= tickers
+
+    truly_independent = candidates - connected
+    if not truly_independent:
+        return []
+
+    results = []
+    for ticker in truly_independent:
+        if ticker not in meta.index:
+            continue
+        row  = meta.loc[ticker]
+        cent = float(row["centrality"])
+        results.append(IndependentRecommendation(
+            ticker=ticker,
+            sector=row["sector"],
+            centrality=round(cent, 4),
+            reasoning=_independent_reasoning(ticker, row["sector"], cent),
+        ))
+
+    results.sort(key=lambda r: r.centrality, reverse=True)
+    return results[:top_n]

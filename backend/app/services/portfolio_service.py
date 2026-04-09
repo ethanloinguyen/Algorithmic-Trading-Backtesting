@@ -1,8 +1,4 @@
 # backend/app/services/portfolio_service.py
-"""
-Data source switch: mock data while BQ is being backfilled,
-real BQ query once USE_MOCK_DATA=false in backend/.env
-"""
 from __future__ import annotations
 import os
 import pandas as pd
@@ -30,16 +26,27 @@ def get_final_network() -> pd.DataFrame:
     return _get_network_mock() if _USE_MOCK else _get_network_bq()
 
 
-def run_portfolio_analysis(tickers: list[str], top_n: int = 10, min_signal: float = 55.0) -> dict:
+def run_portfolio_analysis(
+    tickers: list[str],
+    top_n: int = 10,
+    min_signal: float = 55.0,
+) -> dict:
     from app.services.portfolio_engine import (
-        analyze_portfolio_overlap, get_recommendations,
-        _normalize_tickers, get_ticker_metadata,
+        _normalize_tickers,
+        get_ticker_metadata,
+        analyze_portfolio_overlap,
+        get_signal_recommendations,
+        get_independent_recommendations,
     )
     from dataclasses import asdict
 
     normalized = _normalize_tickers(tickers)
     if not normalized:
-        return {"tickers_analyzed":[],"unknown_tickers":[],"overlaps":[],"recommendations":[]}
+        return {
+            "tickers_analyzed": [], "unknown_tickers": [],
+            "overlaps": [], "signal_recommendations": [],
+            "independent_recommendations": [],
+        }
 
     df   = get_final_network()
     meta = get_ticker_metadata(df)
@@ -47,12 +54,10 @@ def run_portfolio_analysis(tickers: list[str], top_n: int = 10, min_signal: floa
     known   = [t for t in normalized if t in meta.index]
     unknown = [t for t in normalized if t not in meta.index]
 
-    overlaps = analyze_portfolio_overlap(normalized, df)
-    recs     = get_recommendations(normalized, df, top_n=top_n, min_signal_strength=min_signal)
-
     return {
-        "tickers_analyzed": known,
-        "unknown_tickers":  unknown,
-        "overlaps":         [asdict(o) for o in overlaps],
-        "recommendations":  [asdict(r) for r in recs],
+        "tickers_analyzed":            known,
+        "unknown_tickers":             unknown,
+        "overlaps":                    [asdict(o) for o in analyze_portfolio_overlap(normalized, df)],
+        "signal_recommendations":      [asdict(r) for r in get_signal_recommendations(normalized, df, top_n=top_n, min_signal_strength=min_signal)],
+        "independent_recommendations": [asdict(r) for r in get_independent_recommendations(normalized, df, top_n=top_n)],
     }
