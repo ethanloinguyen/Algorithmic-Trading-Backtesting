@@ -243,10 +243,21 @@ def run_oos_evaluation_for_window(
         if oos_returns.empty:
             continue
 
+        # Compute dCor on OOS-period residuals (residuals already in memory)
+        oos_common = resid_pivot.loc[
+            [d for d in resid_pivot.index if oos_start <= d <= oos_end],
+            [ti, tj]
+        ].dropna()
+        pair_oos_dcor = (
+            dcor_at_lag(oos_common[ti].values, oos_common[tj].values, lag)
+            if len(oos_common) >= 20 else None
+        )
+
         oos_returns["ticker_i"] = ti
         oos_returns["ticker_j"] = tj
         oos_returns["lag"] = lag
         oos_returns["window_start"] = window_start
+        oos_returns["oos_dcor"] = pair_oos_dcor
         all_records.append(oos_returns)
 
     if not all_records:
@@ -269,7 +280,7 @@ def compute_global_oos_sharpe() -> pd.DataFrame:
     Returns
     -------
     DataFrame with: ticker_i, ticker_j, oos_sharpe_net, oos_sharpe_gross,
-                    n_oos_days, best_lag
+                    n_oos_days, best_lag, oos_dcor
     """
     logger.info("Computing global OOS Sharpe per pair...")
     all_returns = read_oos_strategy_returns()
@@ -277,6 +288,8 @@ def compute_global_oos_sharpe() -> pd.DataFrame:
     if all_returns.empty:
         logger.warning("No OOS strategy returns found.")
         return pd.DataFrame()
+
+    has_dcor = "oos_dcor" in all_returns.columns
 
     results = []
     for (ti, tj), group in all_returns.groupby(["ticker_i", "ticker_j"]):
@@ -295,6 +308,13 @@ def compute_global_oos_sharpe() -> pd.DataFrame:
         sharpe_gross = compute_sharpe(gross_returns)
         best_lag = int(group["lag"].mode().iloc[0])
 
+        # Aggregate per-window oos_dcor values (one value per window_start)
+        oos_dcor_val = None
+        if has_dcor:
+            per_window = group.groupby("window_start")["oos_dcor"].first().dropna()
+            if len(per_window) > 0:
+                oos_dcor_val = float(per_window.mean())
+
         results.append({
             "ticker_i": ti,
             "ticker_j": tj,
@@ -302,6 +322,7 @@ def compute_global_oos_sharpe() -> pd.DataFrame:
             "oos_sharpe_gross": sharpe_gross,
             "n_oos_days": n_days,
             "best_lag": best_lag,
+            "oos_dcor": oos_dcor_val,
         })
 
     df = pd.DataFrame(results)

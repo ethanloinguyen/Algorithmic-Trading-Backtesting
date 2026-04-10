@@ -249,6 +249,7 @@ def _run_oos_window(args: tuple) -> Tuple[date, bool, int, str]:
         from datetime import timedelta
         from src.bq_io import get_client, full_table, write_dataframe
         from src.config_loader import get_config
+        from src.dcor_engine import dcor_at_lag
         from src.oos_model import compute_strategy_returns
         from src.windows import get_oos_window_for
 
@@ -315,10 +316,21 @@ def _run_oos_window(args: tuple) -> Tuple[date, bool, int, str]:
             if oos_returns.empty:
                 continue
 
+            # Compute dCor on OOS-period residuals (already in memory)
+            oos_common = resid_pivot.loc[
+                [d for d in resid_pivot.index if oos_start <= d <= oos_end],
+                [ti, tj]
+            ].dropna()
+            pair_oos_dcor = (
+                dcor_at_lag(oos_common[ti].values, oos_common[tj].values, lag)
+                if len(oos_common) >= 20 else None
+            )
+
             oos_returns["ticker_i"]     = ti
             oos_returns["ticker_j"]     = tj
             oos_returns["lag"]          = lag
             oos_returns["window_start"] = window_start
+            oos_returns["oos_dcor"]     = pair_oos_dcor
             all_records.append(oos_returns)
 
         if not all_records:
@@ -486,9 +498,12 @@ def run_step_finalize(dry_run: bool = False) -> bool:
     stability_df["predicted_sharpe"] = predicted_sharpe.values
     stability_df["signal_strength"]  = signal_strength.values
 
-    # ── Merge OOS Sharpe into stability ───────────────────────────────────
+    # ── Merge OOS Sharpe + dCor into stability ────────────────────────────
+    sharpe_cols = ["ticker_i", "ticker_j", "oos_sharpe_net"]
+    if "oos_dcor" in global_sharpe_df.columns:
+        sharpe_cols.append("oos_dcor")
     final_df = stability_df.merge(
-        global_sharpe_df[["ticker_i", "ticker_j", "oos_sharpe_net"]],
+        global_sharpe_df[sharpe_cols],
         on=["ticker_i", "ticker_j"],
         how="left",
     )
@@ -504,7 +519,8 @@ def run_step_finalize(dry_run: bool = False) -> bool:
     final_df["sector_i"]  = final_df["ticker_i"].map(sector_map).fillna("Unknown")
     final_df["sector_j"]  = final_df["ticker_j"].map(sector_map).fillna("Unknown")
     final_df["as_of_date"]= date.today()
-    final_df["oos_dcor"]  = None
+    if "oos_dcor" not in final_df.columns:
+        final_df["oos_dcor"] = None
     final_df["rank"]      = (
         final_df["signal_strength"].rank(ascending=False, method="first").astype(int)
     )
