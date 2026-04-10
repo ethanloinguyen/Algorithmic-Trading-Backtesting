@@ -243,21 +243,10 @@ def run_oos_evaluation_for_window(
         if oos_returns.empty:
             continue
 
-        # Compute dCor on OOS-period residuals (residuals already in memory)
-        oos_common = resid_pivot.loc[
-            [d for d in resid_pivot.index if oos_start <= d <= oos_end],
-            [ti, tj]
-        ].dropna()
-        pair_oos_dcor = (
-            dcor_at_lag(oos_common[ti].values, oos_common[tj].values, lag)
-            if len(oos_common) >= 20 else None
-        )
-
         oos_returns["ticker_i"] = ti
         oos_returns["ticker_j"] = tj
         oos_returns["lag"] = lag
         oos_returns["window_start"] = window_start
-        oos_returns["oos_dcor"] = pair_oos_dcor
         all_records.append(oos_returns)
 
     if not all_records:
@@ -289,42 +278,105 @@ def compute_global_oos_sharpe() -> pd.DataFrame:
         logger.warning("No OOS strategy returns found.")
         return pd.DataFrame()
 
-    has_dcor = "oos_dcor" in all_returns.columns
-
     results = []
     for (ti, tj), group in all_returns.groupby(["ticker_i", "ticker_j"]):
         group = group.sort_values("oos_date")
 
-        # Concatenate all OOS days across windows
         net_returns = group["strategy_return_net"].values
         gross_returns = group["strategy_return_gross"].values
         n_days = len(net_returns)
 
-        # Only compute if enough data
         if n_days < 30:
             continue
-
-        sharpe_net = compute_sharpe(net_returns)
-        sharpe_gross = compute_sharpe(gross_returns)
-        best_lag = int(group["lag"].mode().iloc[0])
-
-        # Aggregate per-window oos_dcor values (one value per window_start)
-        oos_dcor_val = None
-        if has_dcor:
-            per_window = group.groupby("window_start")["oos_dcor"].first().dropna()
-            if len(per_window) > 0:
-                oos_dcor_val = float(per_window.mean())
 
         results.append({
             "ticker_i": ti,
             "ticker_j": tj,
-            "oos_sharpe_net": sharpe_net,
-            "oos_sharpe_gross": sharpe_gross,
+            "oos_sharpe_net": compute_sharpe(net_returns),
+            "oos_sharpe_gross": compute_sharpe(gross_returns),
             "n_oos_days": n_days,
-            "best_lag": best_lag,
-            "oos_dcor": oos_dcor_val,
+            "best_lag": int(group["lag"].mode().iloc[0]),
         })
 
     df = pd.DataFrame(results)
     logger.info(f"Global OOS Sharpe computed for {len(df):,} pairs")
+    return df
+
+
+def compute_global_oos_dcor(pairs_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Compute OOS dCor for each pair by loading residuals from rolling_residuals
+    and measuring distance correlation on the OOS period at the best lag.
+
+    For each pair, dCor is computed per training window using that window's
+    residuals restricted to the OOS dates, then averaged across windows.
+
+    Parameters
+    ----------
+    pairs_df : DataFrame with ticker_i, ticker_j, best_lag (from global_sharpe_df)
+
+    Returns
+    -------
+    DataFrame with ticker_i, ticker_j, oos_dcor
+    """
+    if pairs_df.empty:
+        return pd.DataFrame(columns=["ticker_i", "ticker_j", "oos_dcor"])
+
+    from src.windows import get_oos_window_for
+
+    client = get_client()
+    all_tickers = list(set(
+        pairs_df["ticker_i"].tolist() + pairs_df["ticker_j"].tolist()
+    ))
+    ticker_list = ", ".join(f"'{t}'" for t in all_tickers)
+
+    logger.info(f"Loading OOS residuals for {len(all_tickers)} tickers across all windows...")
+    resid_df = client.query(f"""
+        SELECT ticker, DATE(date) AS date, residual, window_start
+        FROM `{full_table('rolling_residuals')}`
+        WHERE ticker IN ({ticker_list})
+        ORDER BY window_start, ticker, date
+    """).to_dataframe()
+
+    if resid_df.empty:
+        logger.warning("No residuals found for OOS dCor computation.")
+        return pd.DataFrame(columns=["ticker_i", "ticker_j", "oos_dcor"])
+
+    resid_df["date"] = pd.to_datetime(resid_df["date"]).dt.date
+    resid_df["window_start"] = pd.to_datetime(resid_df["window_start"]).dt.date
+
+    pair_lookup = {
+        (row["ticker_i"], row["ticker_j"]): int(row["best_lag"])
+        for _, row in pairs_df.iterrows()
+    }
+
+    dcor_by_pair: dict = {}
+    for window_start, wdf in resid_df.groupby("window_start"):
+        window_end = wdf["date"].max()
+        oos_start, oos_end = get_oos_window_for(window_end)
+
+        pivot = wdf.pivot(index="date", columns="ticker", values="residual")
+        oos_pivot = pivot.loc[
+            [d for d in pivot.index if oos_start <= d <= oos_end]
+        ]
+
+        for (ti, tj), lag in pair_lookup.items():
+            if ti not in oos_pivot.columns or tj not in oos_pivot.columns:
+                continue
+            common = oos_pivot[[ti, tj]].dropna()
+            if len(common) < 20:
+                continue
+            val = dcor_at_lag(common[ti].values, common[tj].values, lag)
+            if val is not None:
+                dcor_by_pair.setdefault((ti, tj), []).append(val)
+
+    results = [
+        {"ticker_i": ti, "ticker_j": tj, "oos_dcor": float(np.mean(vals))}
+        for (ti, tj), vals in dcor_by_pair.items()
+        if vals
+    ]
+    df = pd.DataFrame(results) if results else pd.DataFrame(
+        columns=["ticker_i", "ticker_j", "oos_dcor"]
+    )
+    logger.info(f"OOS dCor computed for {len(df):,} pairs")
     return df
