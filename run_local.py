@@ -25,6 +25,14 @@ Usage examples:
   # Run aggregation only (pairs already written to BQ)
   python run_local.py --window-start 2022-01-01 --window-end 2022-12-31 --step aggregation
 
+  # ── OOS RECOVERY ──────────────────────────────────────────────────────────
+  # Run OOS strategy returns for ALL historical windows (parallelized, skips
+  # windows already in oos_strategy_returns — safe to resume after interruption)
+  python run_local.py --mode backfill --step oos --workers 4
+
+  # Then run the model refit + final_network rebuild (single pass, not parallelized)
+  python run_local.py --mode latest --step finalize
+
   # Run just the one-time setup (create BQ tables, ingest FF factors, filter universe)
   python run_local.py --mode setup
 
@@ -43,7 +51,7 @@ import sys
 import uuid
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import date, datetime
-from typing import List, Optional, Tuple
+from typing import List, Optional, Set, Tuple
 
 # Prevent thread oversubscription when running many worker processes.
 # Each worker uses Numba JIT + NumPy (MKL/OpenBLAS); without capping these,
@@ -83,7 +91,7 @@ logger = logging.getLogger(__name__)
 
 def run_step_residuals(window_start: date, window_end: date, run_id: str) -> bool:
     """Compute FF residuals for a single window and write to BigQuery."""
-    from src.residuals import compute_residuals_for_window, run_residuals_pipeline
+    from src.residuals import compute_residuals_for_window
     from src.universe import get_valid_tickers
     from src.bq_io import write_residuals
 
@@ -195,6 +203,345 @@ def run_step_pairs(
     return len(failed) == 0
 
 
+# ── Step: OOS (per window, parallelizable) ────────────────────────────────────
+
+def _get_already_computed_oos_windows() -> Set[date]:
+    """
+    Return set of window_start dates already written to oos_strategy_returns.
+    Used to skip windows on resume.
+    """
+    from src.bq_io import get_client, full_table
+    import pandas as pd
+    try:
+        client = get_client()
+        df = client.query(
+            f"SELECT DISTINCT window_start FROM `{full_table('oos_strategy_returns')}`"
+        ).to_dataframe()
+        done = set(pd.to_datetime(df["window_start"]).dt.date.tolist())
+        logger.info(f"  {len(done)} windows already in oos_strategy_returns — will skip")
+        return done
+    except Exception:
+        return set()
+
+
+def _run_oos_window(args: tuple) -> Tuple[date, bool, int, str]:
+    """
+    Worker function: compute OOS strategy returns for one window.
+    Runs in a separate process. Returns (window_start, success, n_records, error).
+
+    KEY FIX vs original aggregation_job.py:
+    The original queried rolling_residuals filtered by window_start, but OOS
+    dates fall AFTER window_end so they aren't stored under that window_start.
+    This version queries by date range across ALL windows and takes the most
+    recent residual per (ticker, date) — no lookahead bias since we always
+    take the most recently computed residual for each date.
+    """
+    window_start, window_end, _ = args
+
+    import sys, os
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+    from src.config_loader import load_config
+    load_config(os.path.join(os.path.dirname(os.path.abspath(__file__)), "config", "config.yaml"))
+
+    try:
+        import pandas as pd
+        from datetime import timedelta
+        from src.bq_io import get_client, full_table, write_dataframe
+        from src.config_loader import get_config
+        from src.oos_model import compute_strategy_returns
+        from src.windows import get_oos_window_for
+
+        cfg      = get_config()["strategy"]
+        lookback = cfg["zscore_lookback_days"]
+
+        oos_start, oos_end = get_oos_window_for(window_end)
+
+        # ── Load significant pairs from pair_results_filtered ─────────────
+        client = get_client()
+        sig_df = client.query(f"""
+            SELECT ticker_i, ticker_j, best_lag AS lag
+            FROM `{full_table('pair_results_filtered')}`
+            WHERE window_start = '{window_start}'
+              AND significant = TRUE
+        """).to_dataframe()
+
+        if sig_df.empty:
+            return window_start, True, 0, "no significant pairs"
+
+        all_tickers  = list(set(sig_df["ticker_i"].tolist() + sig_df["ticker_j"].tolist()))
+        ticker_list  = ", ".join(f"'{t}'" for t in all_tickers)
+        extended_start = oos_start - timedelta(days=lookback * 2)
+
+        # ── Fixed residual query: date range across all windows ───────────
+        resid_df = client.query(f"""
+            WITH ranked AS (
+                SELECT
+                    ticker,
+                    DATE(date) AS date,
+                    residual,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY ticker, DATE(date)
+                        ORDER BY window_start DESC
+                    ) AS rn
+                FROM `{full_table('rolling_residuals')}`
+                WHERE DATE(date) >= '{extended_start}'
+                  AND DATE(date) <= '{oos_end}'
+                  AND ticker IN ({ticker_list})
+            )
+            SELECT ticker, date, residual
+            FROM ranked
+            WHERE rn = 1
+            ORDER BY ticker, date
+        """).to_dataframe()
+
+        if resid_df.empty:
+            return window_start, True, 0, "no residuals for OOS period"
+
+        resid_df["date"] = pd.to_datetime(resid_df["date"]).dt.date
+        resid_pivot = resid_df.pivot(index="date", columns="ticker", values="residual")
+
+        all_records = []
+        for _, row in sig_df.iterrows():
+            ti, tj, lag = row["ticker_i"], row["ticker_j"], int(row["lag"])
+            if ti not in resid_pivot.columns or tj not in resid_pivot.columns:
+                continue
+
+            oos_returns = compute_strategy_returns(
+                resid_pivot[ti].dropna(),
+                resid_pivot[tj].dropna(),
+                lag, oos_start, oos_end,
+            )
+            if oos_returns.empty:
+                continue
+
+            oos_returns["ticker_i"]     = ti
+            oos_returns["ticker_j"]     = tj
+            oos_returns["lag"]          = lag
+            oos_returns["window_start"] = window_start
+            all_records.append(oos_returns)
+
+        if not all_records:
+            return window_start, True, 0, "strategy returned no records"
+
+        result = pd.concat(all_records, ignore_index=True)
+        write_dataframe(result, "oos_strategy_returns", write_disposition="WRITE_APPEND")
+        return window_start, True, len(result), ""
+
+    except Exception as e:
+        return window_start, False, 0, str(e)
+
+
+def run_step_oos(
+    windows: List[Tuple[date, date]],
+    num_workers: int = 1,
+    skip_done: bool = True,
+) -> bool:
+    """
+    Compute OOS strategy returns for a list of windows.
+    Parallelizes across windows (not within a window) using ProcessPoolExecutor.
+
+    skip_done : if True, windows already in oos_strategy_returns are skipped
+                automatically — safe to call on resume without --skip-oos flag.
+    """
+    if skip_done:
+        already_done = _get_already_computed_oos_windows()
+        to_compute = [(ws, we) for ws, we in windows if ws not in already_done]
+    else:
+        to_compute = windows
+
+    if not to_compute:
+        logger.info("[OOS] All windows already computed — nothing to do")
+        return True
+
+    logger.info(
+        f"[OOS] {len(to_compute)} windows to compute "
+        f"({len(windows) - len(to_compute)} already done) | "
+        f"{num_workers} workers"
+    )
+
+    run_id = f"oos_recovery_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    args_list = [(ws, we, run_id) for ws, we in to_compute]
+
+    total_records = 0
+    failed = []
+
+    if num_workers == 1:
+        for i, args in enumerate(args_list, 1):
+            ws, success, n, msg = _run_oos_window(args)
+            total_records += n
+            status = "✓" if success else "✗"
+            logger.info(
+                f"  [{i}/{len(args_list)}] {ws} {status} "
+                f"({n:,} records)" + (f" — {msg}" if msg else "")
+            )
+            if not success:
+                failed.append(ws)
+    else:
+        with ProcessPoolExecutor(max_workers=num_workers) as executor:
+            futures = {executor.submit(_run_oos_window, args): args[0] for args in args_list}
+            completed = 0
+            for future in as_completed(futures):
+                ws, success, n, msg = future.result()
+                completed += 1
+                total_records += n
+                status = "✓" if success else "✗"
+                logger.info(
+                    f"  [{completed}/{len(args_list)}] {ws} {status} "
+                    f"({n:,} records)" + (f" — {msg}" if msg else "")
+                )
+                if not success:
+                    failed.append(ws)
+
+    logger.info(
+        f"[OOS] Complete: {total_records:,} total records written | "
+        f"{len(failed)} windows failed"
+    )
+    if failed:
+        logger.warning(f"  Failed windows: {failed}")
+
+    return len(failed) == 0
+
+
+# ── Step: Finalize (model refit + final_network rebuild) ──────────────────────
+
+def run_step_finalize(dry_run: bool = False) -> bool:
+    """
+    Single-pass step that runs AFTER all OOS windows are complete:
+        1. Compute global OOS Sharpe per pair
+        2. Fit model weights (OLS + bootstrap CI)
+        3. Compute predicted_sharpe + signal_strength
+        4. Rebuild final_network with all columns populated
+        5. Recompute network centrality
+
+    Not parallelized — this is a single global pass over all pairs.
+    Typically completes in 10–20 minutes.
+    """
+    import pandas as pd
+    from src.bq_io import (
+        get_client, full_table, write_dataframe,
+        read_stability_metrics, read_oos_strategy_returns,
+        upsert_final_network,
+    )
+    from src.bootstrap import run_model_refit, compute_predicted_sharpe, compute_signal_strength
+    from src.network import run_network_pipeline
+    from src.oos_model import compute_sharpe
+
+    cfg = get_config()
+    logger.info("[FINALIZE] Starting model refit + final_network rebuild")
+
+    # ── Global OOS Sharpe ─────────────────────────────────────────────────
+    logger.info("[FINALIZE] Step 1: Computing global OOS Sharpe per pair...")
+    all_returns = read_oos_strategy_returns()
+    if all_returns.empty:
+        logger.error("[FINALIZE] oos_strategy_returns is empty — run OOS step first")
+        return False
+
+    results = []
+    for (ti, tj), group in all_returns.groupby(["ticker_i", "ticker_j"]):
+        group        = group.sort_values("oos_date")
+        net_ret      = group["strategy_return_net"].values
+        gross_ret    = group["strategy_return_gross"].values
+        if len(net_ret) < 30:
+            continue
+        results.append({
+            "ticker_i":         ti,
+            "ticker_j":         tj,
+            "oos_sharpe_net":   compute_sharpe(net_ret),
+            "oos_sharpe_gross": compute_sharpe(gross_ret),
+            "n_oos_days":       len(net_ret),
+            "best_lag":         int(group["lag"].mode().iloc[0]),
+        })
+
+    global_sharpe_df = pd.DataFrame(results)
+    logger.info(f"  Global OOS Sharpe computed for {len(global_sharpe_df):,} pairs")
+
+    # ── Stability metrics (already in BQ) ─────────────────────────────────
+    logger.info("[FINALIZE] Step 2: Loading stability metrics...")
+    stability_df = read_stability_metrics()
+    if stability_df.empty:
+        logger.error("[FINALIZE] stability_metrics is empty — cannot fit model")
+        return False
+    logger.info(f"  {len(stability_df):,} pairs in stability_metrics")
+
+    # ── Model refit ───────────────────────────────────────────────────────
+    logger.info("[FINALIZE] Step 3: Fitting model weights (OLS + bootstrap CI)...")
+    if dry_run:
+        logger.info("  [DRY RUN] Skipping write")
+        feature_weights = {f: 0.1 for f in ["mean_dcor","variance_dcor","frequency","half_life","sharpness"]}
+        feature_weights["intercept"] = 0.0
+    else:
+        _, feature_weights = run_model_refit(stability_df, global_sharpe_df)
+    logger.info(f"  Weights: {feature_weights}")
+
+    # ── Predicted Sharpe + Signal Strength ────────────────────────────────
+    logger.info("[FINALIZE] Step 4: Computing predicted_sharpe and signal_strength...")
+    predicted_sharpe = compute_predicted_sharpe(stability_df, feature_weights)
+    signal_strength  = compute_signal_strength(
+        predicted_sharpe,
+        lo_pct=cfg["oos"]["sharpe_winsorize_pct"][0],
+        hi_pct=cfg["oos"]["sharpe_winsorize_pct"][1],
+    )
+    stability_df = stability_df.copy()
+    stability_df["predicted_sharpe"] = predicted_sharpe.values
+    stability_df["signal_strength"]  = signal_strength.values
+
+    # ── Merge OOS Sharpe into stability ───────────────────────────────────
+    final_df = stability_df.merge(
+        global_sharpe_df[["ticker_i", "ticker_j", "oos_sharpe_net"]],
+        on=["ticker_i", "ticker_j"],
+        how="left",
+    )
+
+    # ── Sector info ───────────────────────────────────────────────────────
+    logger.info("[FINALIZE] Step 5: Adding sector info...")
+    client    = get_client()
+    meta_df   = client.query(
+        f"SELECT ticker, sector FROM `{full_table('ticker_metadata')}`"
+    ).to_dataframe()
+    sector_map = dict(zip(meta_df["ticker"], meta_df["sector"]))
+
+    final_df["sector_i"]  = final_df["ticker_i"].map(sector_map).fillna("Unknown")
+    final_df["sector_j"]  = final_df["ticker_j"].map(sector_map).fillna("Unknown")
+    final_df["as_of_date"]= date.today()
+    final_df["oos_dcor"]  = None
+    final_df["rank"]      = (
+        final_df["signal_strength"].rank(ascending=False, method="first").astype(int)
+    )
+
+    # ── Network centrality ────────────────────────────────────────────────
+    logger.info("[FINALIZE] Step 6: Computing network centrality...")
+    centrality_df, _ = run_network_pipeline(date.today())
+    if not centrality_df.empty:
+        cent_map = dict(zip(centrality_df["ticker"], centrality_df["eigenvector_centrality"]))
+        final_df["centrality_i"] = final_df["ticker_i"].map(cent_map).fillna(0.0)
+        final_df["centrality_j"] = final_df["ticker_j"].map(cent_map).fillna(0.0)
+    else:
+        logger.warning("  Centrality empty — centrality columns will be 0")
+        final_df["centrality_i"] = 0.0
+        final_df["centrality_j"] = 0.0
+
+    # ── Write final_network ───────────────────────────────────────────────
+    network_cols = [
+        "as_of_date","ticker_i","ticker_j","best_lag",
+        "mean_dcor","variance_dcor","frequency","half_life",
+        "sharpness","predicted_sharpe","signal_strength",
+        "oos_sharpe_net","oos_dcor","sector_i","sector_j",
+        "rank","centrality_i","centrality_j",
+    ]
+    available  = [c for c in network_cols if c in final_df.columns]
+    network_df = final_df[available].copy()
+
+    logger.info(f"[FINALIZE] Writing final_network: {len(network_df):,} pairs")
+    if not dry_run:
+        upsert_final_network(network_df)
+        logger.info("[FINALIZE] Done — final_network updated in BigQuery")
+    else:
+        logger.info("[FINALIZE] [DRY RUN] Would write final_network — skipping")
+
+    return True
+
+
 # ── Step: Aggregation ─────────────────────────────────────────────────────────
 
 def run_step_aggregation(
@@ -244,6 +591,8 @@ def run_full_pipeline(
         "pairs"       — pairs only (residuals must already exist in BQ)
         "aggregation" — aggregation only (pairs must already exist in BQ)
         "pairs+agg"   — pairs + aggregation (skip residuals)
+        "oos"         — OOS strategy returns for this single window
+        "finalize"    — model refit + final_network (single global pass)
     """
     logger.info("=" * 70)
     logger.info(f"PIPELINE START | window={window_start}→{window_end} | run_id={run_id}")
@@ -266,6 +615,12 @@ def run_full_pipeline(
 
     if step in ("all", "aggregation", "pairs+agg"):
         ok = run_step_aggregation(window_start, window_end, run_id, is_monthly_update, run_synthetic)
+
+    if step == "oos":
+        ok = run_step_oos([(window_start, window_end)], num_workers=1, skip_done=True)
+
+    if step == "finalize":
+        ok = run_step_finalize()
 
     elapsed = (datetime.now() - start_time).total_seconds()
     logger.info(
@@ -290,9 +645,23 @@ def run_backfill(
 
     This is the local equivalent of submitting batches of Cloud Run jobs.
     Expect this to take hours for a full historical backfill.
+
+    When step="oos": parallelizes ACROSS windows using num_workers.
+    When step="finalize": runs once as a single global pass (ignores num_workers).
+    All other steps: sequential per window, num_workers applies within each window.
     """
     windows = generate_rolling_windows(start_date, end_date)
     logger.info(f"BACKFILL: {len(windows)} windows to process (step={step})")
+
+    # OOS is special: parallelize across all windows at once
+    if step == "oos":
+        run_step_oos(windows, num_workers=num_workers, skip_done=True)
+        return
+
+    # Finalize is a single global pass — doesn't loop over windows
+    if step == "finalize":
+        run_step_finalize()
+        return
 
     failed_windows = []
     for i, (ws, we) in enumerate(windows):
@@ -321,10 +690,15 @@ def run_quarterly_batch(year: int, step: str = "all", num_workers: int = 1, run_
     Run the pipeline for all windows whose window_start falls in a given year.
     Equivalent to quarterly_batches.sh but runs locally.
     """
-    all_windows = generate_rolling_windows()
+    all_windows  = generate_rolling_windows()
     year_windows = [(ws, we) for ws, we in all_windows if ws.year == year]
 
     logger.info(f"QUARTERLY BATCH: year={year}, {len(year_windows)} windows")
+
+    if step == "oos":
+        run_step_oos(year_windows, num_workers=num_workers, skip_done=True)
+        return
+
     for ws, we in year_windows:
         run_id = f"quarterly_{ws.strftime('%Y%m%d')}_{str(uuid.uuid4())[:6]}"
         run_full_pipeline(ws, we, run_id, step=step, num_workers=num_workers, is_monthly_update=False, run_synthetic=run_synthetic)
@@ -368,9 +742,17 @@ def parse_args():
 
     parser.add_argument(
         "--step",
-        choices=["all", "residuals", "pairs", "aggregation", "pairs+agg"],
+        choices=["all", "residuals", "pairs", "aggregation", "pairs+agg", "oos", "finalize"],
         default="all",
-        help="Which pipeline step(s) to run (default: all)",
+        help=(
+            "all         — residuals → pairs → aggregation\n"
+            "residuals   — residuals only\n"
+            "pairs       — pairs only\n"
+            "aggregation — aggregation only\n"
+            "pairs+agg   — pairs + aggregation\n"
+            "oos         — OOS strategy returns (parallelized across windows)\n"
+            "finalize    — model refit + final_network rebuild (single global pass)"
+        ),
     )
 
     parser.add_argument(
@@ -379,7 +761,8 @@ def parse_args():
         default=1,
         help=(
             "Number of local parallel worker processes for pair computation (default: 1). "
-            "On the paw VM (96 CPUs) use --workers 90 --partitions 360."
+            "On the paw VM (96 CPUs) use --workers 90 --partitions 360. "
+            "For OOS step, workers run windows concurrently."
         ),
     )
     parser.add_argument(
