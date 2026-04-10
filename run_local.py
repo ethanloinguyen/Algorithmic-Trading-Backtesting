@@ -260,7 +260,7 @@ def _run_oos_window(args: tuple) -> Tuple[date, bool, int, str]:
         # ── Load significant pairs from pair_results_filtered ─────────────
         client = get_client()
         sig_df = client.query(f"""
-            SELECT ticker_i, ticker_j, best_lag AS lag
+            SELECT ticker_i, ticker_j, lag
             FROM `{full_table('pair_results_filtered')}`
             WHERE window_start = '{window_start}'
               AND significant = TRUE
