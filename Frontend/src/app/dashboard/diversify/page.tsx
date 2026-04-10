@@ -233,65 +233,12 @@ function OverlapCard({ overlap }: { overlap: OverlapResult }) {
   );
 }
 
-// ── Signal rec card (Group A) ─────────────────────────────────────────────────
-function SignalRecCard({ rec, rank, onHover, isHovered }: {
-  rec: Recommendation; rank: number;
-  onHover: (ticker: string | null) => void; isHovered: boolean;
-}) {
-  const [open, setOpen] = useState(false);
-  const color = RANK_COLORS[(rank - 1) % RANK_COLORS.length];
-  return (
-    <div className="rounded-xl overflow-hidden transition-all"
-      style={{ ...CARD, outline: isHovered ? `1px solid ${color}` : "none" }}
-      onMouseEnter={() => onHover(rec.ticker)}
-      onMouseLeave={() => onHover(null)}>
-      <div className="px-5 py-4 cursor-pointer" onClick={() => setOpen(o => !o)}
-        onMouseEnter={e => (e.currentTarget.style.background = CARD_H)}
-        onMouseLeave={e => (e.currentTarget.style.background = "transparent")}>
-        <div className="flex items-center gap-3">
-          <div className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 text-xs font-bold"
-            style={{ background: rank <= 3 ? `${color}25` : "hsl(215,25%,16%)", color: rank <= 3 ? color : TEXT_SEC }}>
-            {rank}
-          </div>
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-sm font-bold" style={{ color: TEXT_PRI }}>{rec.ticker}</span>
-              <SectorTag sector={rec.sector} />
-              <DirectionTag direction={rec.direction} />
-            </div>
-            <p className="text-xs mt-0.5 truncate" style={{ color: TEXT_SEC }}>
-              Connected to: {rec.related_holdings.join(", ")}
-            </p>
-          </div>
-          <div className="w-24 flex-shrink-0"><SignalBar score={rec.composite_score} /></div>
-          {open ? <ChevronUp className="w-4 h-4" style={{ color: TEXT_MUT }} /> : <ChevronDown className="w-4 h-4" style={{ color: TEXT_MUT }} />}
-        </div>
-      </div>
-      {open && (
-        <div className="px-5 pb-4" style={{ borderTop: `1px solid ${BORDER_D}` }}>
-          <p className="text-sm mt-3 leading-relaxed" style={{ color: TEXT_SEC }}>{rec.reasoning}</p>
-          <div className="mt-3 grid grid-cols-2 gap-x-6 gap-y-2">
-            {[
-              { label: "⚡ Signal Strength",    val: rec.signal_score },
-              { label: "🕸 Market Centrality",  val: rec.centrality_score },
-              { label: "🔗 Portfolio Coverage", val: rec.coverage_score },
-              { label: "🧭 Sector Diversity",   val: rec.sector_diversity_score },
-            ].map(({ label, val }) => (
-              <div key={label}>
-                <p className="text-xs mb-1" style={{ color: TEXT_SEC }}>{label}</p>
-                <SignalBar score={val} />
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
 
 // ── Independent rec card (Group B) ───────────────────────────────────────────
 function IndependentRecCard({ rec, rank }: { rec: IndependentRecommendation; rank: number }) {
   const [open, setOpen] = useState(false);
+  const pctCent = Math.round(rec.centrality_score);
+  const pctGap  = Math.round(rec.sector_gap_score);
   return (
     <div className="rounded-xl overflow-hidden" style={CARD}>
       <div className="px-5 py-4 cursor-pointer" onClick={() => setOpen(o => !o)}
@@ -310,9 +257,18 @@ function IndependentRecCard({ rec, rank }: { rec: IndependentRecommendation; ran
                 No overlap detected
               </span>
             </div>
-            <p className="text-xs mt-0.5" style={{ color: TEXT_SEC }}>
-              Centrality: {Math.round(rec.centrality * 100)}th percentile
-            </p>
+            {/* Two sub-scores inline */}
+            <div className="flex items-center gap-4 mt-1.5">
+              <span className="text-xs" style={{ color: TEXT_MUT }}>
+                🧭 Sector gap <span className="font-semibold" style={{ color: PURPLE }}>{pctGap}</span>
+              </span>
+              <span className="text-xs" style={{ color: TEXT_MUT }}>
+                🕸 Centrality <span className="font-semibold" style={{ color: TEXT_SEC }}>{pctCent}</span>
+              </span>
+              <span className="text-xs" style={{ color: TEXT_MUT }}>
+                Score <span className="font-semibold" style={{ color: PURPLE }}>{rec.composite_score.toFixed(0)}</span>
+              </span>
+            </div>
           </div>
           {open ? <ChevronUp className="w-4 h-4" style={{ color: TEXT_MUT }} /> : <ChevronDown className="w-4 h-4" style={{ color: TEXT_MUT }} />}
         </div>
@@ -320,6 +276,23 @@ function IndependentRecCard({ rec, rank }: { rec: IndependentRecommendation; ran
       {open && (
         <div className="px-5 pb-4" style={{ borderTop: `1px solid ${BORDER_D}` }}>
           <p className="text-sm mt-3 leading-relaxed" style={{ color: TEXT_SEC }}>{rec.reasoning}</p>
+          <div className="grid grid-cols-2 gap-3 mt-4">
+            {[
+              { label: "🧭 Sector Gap",     val: rec.sector_gap_score,  desc: "How underrepresented this sector is in your portfolio (70% of score)" },
+              { label: "🕸 Market Centrality",val: rec.centrality_score, desc: "How central this stock is in the market network (30% of score)" },
+            ].map(({ label, val, desc }) => (
+              <div key={label}>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs font-semibold" style={{ color: TEXT_PRI }}>{label}</span>
+                  <span className="text-xs font-bold" style={{ color: PURPLE }}>{Math.round(val)}/100</span>
+                </div>
+                <div className="h-1.5 rounded-full overflow-hidden mb-1" style={{ background: BORDER_D }}>
+                  <div className="h-full rounded-full" style={{ width: `${val}%`, background: PURPLE }} />
+                </div>
+                <p className="text-xs" style={{ color: TEXT_MUT }}>{desc}</p>
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </div>
@@ -339,7 +312,14 @@ export default function DiversifyPage() {
     signal_recommendations:      Recommendation[];
     independent_recommendations: IndependentRecommendation[];
   } | null>(null);
-  const [hoveredTicker, setHoveredTicker] = useState<string | null>(null);
+  // activeSpiderIdx is lifted from SpiderChart so it drives the sector donut preview.
+  // When the user selects a stock in the spider chart, the donut updates automatically.
+  const [activeSpiderIdx, setActiveSpiderIdx] = useState<number | null>(0);
+
+  // Derived: which ticker is selected in the spider chart
+  const hoveredTicker = activeSpiderIdx !== null
+    ? (result?.signal_recommendations[activeSpiderIdx]?.ticker ?? null)
+    : null;
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => { inputRef.current?.focus(); }, []);
@@ -381,14 +361,14 @@ export default function DiversifyPage() {
       ? [...tickers, ...inputVal.trim().toUpperCase().split(/[\s,]+/).filter(Boolean)]
       : tickers;
     if (!toAnalyze.length) return;
-    setLoading(true); setError(null); setResult(null); setHoveredTicker(null);
+    setLoading(true); setError(null); setResult(null); setActiveSpiderIdx(0);
     try { setResult(await analyzePortfolio(toAnalyze)); }
     catch (err) { setError(err instanceof Error ? err.message : "Something went wrong."); }
     finally { setLoading(false); }
   };
 
   const reset = () => {
-    setTickers([]); setInputVal(""); setResult(null); setError(null); setHoveredTicker(null);
+    setTickers([]); setInputVal(""); setResult(null); setError(null); setActiveSpiderIdx(null);
     setTimeout(() => inputRef.current?.focus(), 0);
   };
 
@@ -549,28 +529,22 @@ export default function DiversifyPage() {
                     subtitle="Stocks with detected lead-lag relationships to your holdings — click a ticker on the chart or in the list to explore its profile"
                   />
 
-                  {/* ── Row 1: Spider chart — full width ── */}
+                  {/* ── Row 1: Spider chart — full width, activeIdx lifted ── */}
                   <div className="mb-4">
-                    <SpiderChart recommendations={signalRecs} />
+                    <SpiderChart
+                      recommendations={signalRecs}
+                      activeIdx={activeSpiderIdx}
+                      onActiveChange={setActiveSpiderIdx}
+                    />
                   </div>
 
-                  {/* ── Row 2: Sector donut — full width ── */}
+                  {/* ── Row 2: Sector donut — driven by spider chart selection ── */}
                   <div className="mb-6">
                     <SectorDonut
                       currentSectors={currentSectors}
                       previewSector={hoveredRec?.sector ?? null}
                       previewTicker={hoveredRec?.ticker ?? null}
                     />
-                  </div>
-
-                  {/* ── Row 3: Recommendation list ── */}
-                  <div className="space-y-2">
-                    {signalRecs.map((rec, i) => (
-                      <SignalRecCard
-                        key={rec.ticker} rec={rec} rank={i + 1}
-                        onHover={setHoveredTicker} isHovered={hoveredTicker === rec.ticker}
-                      />
-                    ))}
                   </div>
                 </section>
               )}
@@ -581,8 +555,18 @@ export default function DiversifyPage() {
                   icon={<Unlink className="w-4 h-4" />}
                   label="Independent Recommendations" count={result.independent_recommendations.length}
                   color={PURPLE} dimColor={PURPLE_DIM}
-                  subtitle="Stocks with zero detected lead-lag relationships to your holdings — pure diversification, no shared signal exposure"
+                  subtitle="Stocks with zero detected lead-lag relationships to your holdings — ranked by sector gap (70%) and market centrality (30%)"
                 />
+
+                {/* One-line explanation of why no spider chart */}
+                {result.independent_recommendations.length > 0 && (
+                  <p className="text-xs mb-4 px-1 leading-relaxed" style={{ color: TEXT_MUT }}>
+                    These stocks have no detected relationship to your holdings, so signal strength
+                    and portfolio coverage are not applicable. They are ranked purely by how much
+                    new sector exposure they add and how central they are in the market network.
+                  </p>
+                )}
+
                 {result.independent_recommendations.length === 0 ? (
                   <div className="rounded-xl px-6 py-8 text-center" style={CARD}>
                     <p className="text-sm" style={{ color: TEXT_SEC }}>No independent stocks found.</p>

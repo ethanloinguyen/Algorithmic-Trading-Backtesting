@@ -1,6 +1,5 @@
 // Frontend/components/ui/SpiderChart.tsx
 "use client";
-import { useState } from "react";
 import type { Recommendation } from "@/src/app/lib/api";
 
 // ── Axes ──────────────────────────────────────────────────────────────────────
@@ -46,7 +45,7 @@ const N  = AXES.length;
 // To make chart bigger: increase R and VIEWBOX_W/VIEWBOX_H proportionally.
 // To push labels further out: increase LABEL_R and VIEWBOX_W/VIEWBOX_H.
 const CX = 290; const CY = 290; const R = 160;
-const LABEL_R   = 1.1;
+const LABEL_R   = 1.38;
 const VIEWBOX_W = 600;
 const VIEWBOX_H = 600;
 const TICK_LEVELS = [25, 50, 75, 100];
@@ -99,12 +98,15 @@ function DirectionBadge({ direction }: { direction: string }) {
 
 // ── Main component ────────────────────────────────────────────────────────────
 interface SpiderChartProps {
-  recommendations: Recommendation[];
+  recommendations:  Recommendation[];
+  activeIdx:        number | null;          // lifted — controlled by parent
+  onActiveChange:   (idx: number | null) => void;
 }
 
-export default function SpiderChart({ recommendations }: SpiderChartProps) {
+export default function SpiderChart({ recommendations, activeIdx, onActiveChange }: SpiderChartProps) {
   const recs = recommendations.slice(0, 10);
-  const [activeIdx, setActiveIdx] = useState<number | null>(0);
+  // Use parent-controlled activeIdx; setActiveIdx is an alias for onActiveChange
+  const setActiveIdx = onActiveChange;
 
   if (recs.length === 0) return null;
 

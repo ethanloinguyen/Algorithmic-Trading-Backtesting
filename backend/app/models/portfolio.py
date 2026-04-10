@@ -42,10 +42,13 @@ class Recommendation(BaseModel):
 
 class IndependentRecommendation(BaseModel):
     """Group B — stock with zero detected relationship to any of user's holdings."""
-    ticker:     str
-    sector:     str
-    centrality: float
-    reasoning:  str
+    ticker:            str
+    sector:            str
+    centrality:        float
+    composite_score:   float
+    sector_gap_score:  float
+    centrality_score:  float
+    reasoning:         str
 
 
 class PortfolioAnalysisResponse(BaseModel):

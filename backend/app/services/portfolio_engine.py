@@ -53,11 +53,17 @@ class Recommendation:
 
 @dataclass
 class IndependentRecommendation:
-    """Group B — stock with zero detected relationship to any holding."""
-    ticker:     str
-    sector:     str
-    centrality: float
-    reasoning:  str
+    """
+    Group B — stock with zero detected relationship to any holding.
+    Ranked by composite of sector gap (primary) and centrality (secondary).
+    """
+    ticker:            str
+    sector:            str
+    centrality:        float
+    composite_score:   float   # 0-100: 70% sector gap + 30% centrality
+    sector_gap_score:  float   # 100 if sector absent from portfolio, else scaled down
+    centrality_score:  float   # normalized 0-100
+    reasoning:         str
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -114,14 +120,25 @@ def _signal_reasoning(ticker, related, direction, sector, signal_score,
     )
 
 
-def _independent_reasoning(ticker: str, sector: str, centrality: float) -> str:
+def _independent_reasoning(
+    ticker: str, sector: str, centrality: float,
+    sector_gap_score: float, current_sectors: dict,
+) -> str:
     centrality_pct = int(round(centrality * 100))
+    sector_in_portfolio = sector in current_sectors
+    sector_note = (
+        f"{sector} is not currently represented in your portfolio, "
+        f"making it a direct sector gap fill."
+        if not sector_in_portfolio else
+        f"You already hold {current_sectors.get(sector, 0)} stock(s) in {sector}, "
+        f"but this adds further independent exposure within the sector."
+    )
     return (
         f"{ticker} ({sector}) has no detected lead-lag relationship with any of your "
-        f"holdings across 15 years of analysis, making it a source of genuinely "
-        f"independent exposure. It sits in the top {centrality_pct}% of stocks by "
-        f"market centrality, meaning it still carries real informational weight in "
-        f"the broader market network despite being unrelated to your current holdings."
+        f"holdings across 15 years of analysis — purely independent exposure. "
+        f"{sector_note} "
+        f"It ranks in the top {centrality_pct}% of stocks by market centrality, "
+        f"meaning it carries real informational weight in the broader market network."
     )
 
 
@@ -273,21 +290,36 @@ def get_independent_recommendations(
     user_tickers: list,
     network_df: pd.DataFrame,
     top_n: int = 10,
+    sector_gap_weight: float = 0.70,
+    centrality_weight: float = 0.30,
 ) -> list[IndependentRecommendation]:
     """
-    Group B: stocks in our universe with ZERO detected lead-lag relationships
-    to any of the user's holdings. Pure diversification picks.
-    Ranked by centrality so the most market-relevant independents surface first.
+    Group B: stocks with ZERO detected lead-lag relationships to any user holding.
+
+    Ranking composite (sector_gap_weight + centrality_weight must = 1.0):
+        composite = sector_gap_weight * sector_gap_score
+                  + centrality_weight * centrality_score
+
+    sector_gap_score:
+        100 if sector is completely absent from the portfolio.
+        Scales down proportionally as portfolio concentration in that sector increases.
+        Identical logic to sector_diversity_score in signal recommendations.
+
+    centrality_score:
+        Normalized 0-100 eigenvector centrality within the independent candidates.
+        Ensures high-centrality picks surface when sector gap scores are tied.
     """
     tickers = set(_normalize_tickers(user_tickers))
     if not tickers:
         return []
 
-    meta      = get_ticker_metadata(network_df)
-    universe  = set(meta.index.tolist())
-    candidates = universe - tickers
+    meta           = get_ticker_metadata(network_df)
+    universe       = set(meta.index.tolist())
+    candidates     = universe - tickers
+    sector_dist    = _sector_distribution(list(tickers), meta)
+    total_holdings = len(tickers)
 
-    # All tickers that appear in any relationship with user holdings
+    # Find all tickers connected to user holdings (signal-connected group)
     involves_user = (
         network_df["ticker_i"].isin(tickers) | network_df["ticker_j"].isin(tickers)
     )
@@ -299,18 +331,52 @@ def get_independent_recommendations(
     if not truly_independent:
         return []
 
-    results = []
+    # Build candidate list with raw centrality
+    raw = []
     for ticker in truly_independent:
         if ticker not in meta.index:
             continue
         row  = meta.loc[ticker]
-        cent = float(row["centrality"])
+        raw.append({
+            "ticker":     ticker,
+            "sector":     row["sector"],
+            "centrality": float(row["centrality"]),
+        })
+
+    if not raw:
+        return []
+
+    # Normalize centrality across independent candidates only (0-100)
+    max_cent = max(r["centrality"] for r in raw) or 1.0
+
+    results = []
+    for r in raw:
+        ticker     = r["ticker"]
+        sector     = r["sector"]
+        cent       = r["centrality"]
+
+        # Sector gap score: how underrepresented is this sector?
+        sector_frac      = sector_dist.get(sector, 0) / total_holdings if total_holdings else 0
+        sector_gap_score = max(0.0, (1.0 - sector_frac) * 100.0)
+
+        centrality_score = (cent / max_cent) * 100.0
+
+        composite = (
+            sector_gap_weight  * sector_gap_score +
+            centrality_weight  * centrality_score
+        )
+
         results.append(IndependentRecommendation(
             ticker=ticker,
-            sector=row["sector"],
+            sector=sector,
             centrality=round(cent, 4),
-            reasoning=_independent_reasoning(ticker, row["sector"], cent),
+            composite_score=round(composite, 2),
+            sector_gap_score=round(sector_gap_score, 1),
+            centrality_score=round(centrality_score, 1),
+            reasoning=_independent_reasoning(
+                ticker, sector, cent, sector_gap_score, sector_dist
+            ),
         ))
 
-    results.sort(key=lambda r: r.centrality, reverse=True)
+    results.sort(key=lambda r: r.composite_score, reverse=True)
     return results[:top_n]

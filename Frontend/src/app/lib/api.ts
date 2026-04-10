@@ -36,7 +36,13 @@ export interface Recommendation {
 
 /** Group B — stock with ZERO detected relationship to any of your holdings */
 export interface IndependentRecommendation {
-  ticker: string; sector: string; centrality: number; reasoning: string;
+  ticker:           string;
+  sector:           string;
+  centrality:       number;
+  composite_score:  number;   // 0-100: 70% sector gap + 30% centrality
+  sector_gap_score: number;
+  centrality_score: number;
+  reasoning:        string;
 }
 
 export interface PortfolioAnalysisResponse {
