@@ -308,8 +308,9 @@ def compute_global_oos_dcor(pairs_df: pd.DataFrame) -> pd.DataFrame:
     Compute OOS dCor for each pair by loading residuals from rolling_residuals
     and measuring distance correlation on the OOS period at the best lag.
 
-    For each pair, dCor is computed per training window using that window's
-    residuals restricted to the OOS dates, then averaged across windows.
+    OOS residuals live in the NEXT training window, not the current one, so we
+    query by date range (taking the most recent window_start per ticker-date),
+    then slice each OOS window out of the resulting timeline.
 
     Parameters
     ----------
@@ -322,7 +323,7 @@ def compute_global_oos_dcor(pairs_df: pd.DataFrame) -> pd.DataFrame:
     if pairs_df.empty:
         return pd.DataFrame(columns=["ticker_i", "ticker_j", "oos_dcor"])
 
-    from src.windows import get_oos_window_for
+    from src.windows import generate_rolling_windows
 
     client = get_client()
     all_tickers = list(set(
@@ -330,12 +331,26 @@ def compute_global_oos_dcor(pairs_df: pd.DataFrame) -> pd.DataFrame:
     ))
     ticker_list = ", ".join(f"'{t}'" for t in all_tickers)
 
-    logger.info(f"Loading OOS residuals for {len(all_tickers)} tickers across all windows...")
+    logger.info(f"Loading residuals for {len(all_tickers)} tickers (deduped by date)...")
+    # Use most-recent window_start per ticker-date — same logic as _run_oos_window.
+    # This produces a clean ticker→date→residual timeline that spans training + OOS.
     resid_df = client.query(f"""
-        SELECT ticker, DATE(date) AS date, residual, window_start
-        FROM `{full_table('rolling_residuals')}`
-        WHERE ticker IN ({ticker_list})
-        ORDER BY window_start, ticker, date
+        WITH ranked AS (
+            SELECT
+                ticker,
+                DATE(date) AS date,
+                residual,
+                ROW_NUMBER() OVER (
+                    PARTITION BY ticker, DATE(date)
+                    ORDER BY window_start DESC
+                ) AS rn
+            FROM `{full_table('rolling_residuals')}`
+            WHERE ticker IN ({ticker_list})
+        )
+        SELECT ticker, date, residual
+        FROM ranked
+        WHERE rn = 1
+        ORDER BY ticker, date
     """).to_dataframe()
 
     if resid_df.empty:
@@ -343,22 +358,24 @@ def compute_global_oos_dcor(pairs_df: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame(columns=["ticker_i", "ticker_j", "oos_dcor"])
 
     resid_df["date"] = pd.to_datetime(resid_df["date"]).dt.date
-    resid_df["window_start"] = pd.to_datetime(resid_df["window_start"]).dt.date
+    pivot = resid_df.pivot(index="date", columns="ticker", values="residual")
 
     pair_lookup = {
         (row["ticker_i"], row["ticker_j"]): int(row["best_lag"])
         for _, row in pairs_df.iterrows()
     }
 
+    # Iterate over each training window's OOS period and accumulate dCor per pair
+    windows = generate_rolling_windows()
     dcor_by_pair: dict = {}
-    for window_start, wdf in resid_df.groupby("window_start"):
-        window_end = wdf["date"].max()
+    for _, window_end in windows:
+        from src.windows import get_oos_window_for
         oos_start, oos_end = get_oos_window_for(window_end)
 
-        pivot = wdf.pivot(index="date", columns="ticker", values="residual")
-        oos_pivot = pivot.loc[
-            [d for d in pivot.index if oos_start <= d <= oos_end]
-        ]
+        oos_dates = [d for d in pivot.index if oos_start <= d <= oos_end]
+        if not oos_dates:
+            continue
+        oos_pivot = pivot.loc[oos_dates]
 
         for (ti, tj), lag in pair_lookup.items():
             if ti not in oos_pivot.columns or tj not in oos_pivot.columns:
