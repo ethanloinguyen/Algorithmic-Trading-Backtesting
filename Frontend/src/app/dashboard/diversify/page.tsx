@@ -4,8 +4,10 @@ import { useState, useRef, useEffect } from "react";
 import Sidebar from "@/components/ui/Sidebar";
 import SpiderChart from "@/components/ui/SpiderChart";
 import SectorDonut from "@/components/ui/SectorDonut";
+import StockModal, { type Stock } from "@/components/ui/StockModal";
 import {
   analyzePortfolio,
+  fetchStockSummaries,
   type OverlapResult,
   type Recommendation,
   type IndependentRecommendation,
@@ -13,7 +15,7 @@ import {
 import {
   AlertTriangle, TrendingUp, Plus, X,
   ChevronDown, ChevronUp, Loader2, Sparkles, ArrowRight,
-  ShieldAlert, BarChart3, Unlink, Info,
+  ShieldAlert, BarChart3, Unlink, Info, Zap, Globe, Link2, Layers,
 } from "lucide-react";
 
 // ── Design tokens ─────────────────────────────────────────────────────────────
@@ -50,30 +52,30 @@ const sc = (s: string) => SECTOR_COLORS[s] ?? TEXT_SEC;
 // ── Factor explanations ───────────────────────────────────────────────────────
 const FACTOR_EXPLANATIONS = [
   {
-    label: "Signal Strength", weight: "45%", color: BLUE, icon: "⚡",
+    label: "Signal Strength", weight: "45%", color: BLUE, Icon: Zap,
     what: "How statistically robust and economically meaningful the lead-lag relationship is between the candidate stock and your holdings.",
     how: "Combines distance correlation (dCor) at the optimal lag, the out-of-sample Sharpe ratio of a trading strategy built on the signal, and how consistently the relationship appeared across 15 years of rolling windows.",
     why: "A high signal score means the relationship is not a statistical fluke — it appeared reliably over time and was historically exploitable.",
   },
   {
-    label: "Market Centrality", weight: "20%", color: GREEN, icon: "🕸",
+    label: "Market Centrality", weight: "20%", color: GREEN, Icon: Globe,
     what: "How connected this stock is across the entire 2000-stock market network, not just to your holdings.",
     how: "Eigenvector centrality from the directed lead-lag network — stocks that lead many others across multiple sectors score higher.",
     why: "A high-centrality stock acts as a market barometer. Its movements carry predictive information about many other assets, making it more informationally valuable to hold.",
   },
   {
-    label: "Portfolio Coverage", weight: "15%", color: AMBER, icon: "🔗",
+    label: "Portfolio Coverage", weight: "15%", color: AMBER, Icon: Link2,
     what: "How many of your existing holdings this stock has a detected relationship with.",
     how: "Count of your holdings that appear in a significant lead-lag pair with this candidate, divided by the maximum coverage across all candidates.",
     why: "A stock that connects to four of your holdings is more efficient than one connecting to one — you gain informational coverage across more positions with a single addition.",
   },
   {
-    label: "Sector Diversity", weight: "20%", color: PURPLE, icon: "🧭",
+    label: "Sector Diversity", weight: "20%", color: PURPLE, Icon: Layers,
     what: "How much new sector exposure this stock adds relative to what you already own.",
     how: "A full bonus (100) if your portfolio has zero stocks in this sector. The bonus scales down proportionally as your sector concentration increases.",
     why: "Different sectors respond to different economic drivers. Adding an underrepresented sector reduces the risk that a single macro event affects your entire portfolio.",
   },
-] as const;
+];
 
 // ── Small helpers ─────────────────────────────────────────────────────────────
 function SignalBar({ score }: { score: number }) {
@@ -159,7 +161,7 @@ function FactorExplanations() {
               <div key={f.label} className="rounded-lg p-4"
                 style={{ background: "hsl(215,25%,9%)", border: `1px solid ${BORDER_D}` }}>
                 <div className="flex items-center gap-2 mb-2">
-                  <span className="text-base">{f.icon}</span>
+                  <f.Icon className="w-4 h-4 flex-shrink-0" style={{ color: f.color }} />
                   <span className="text-xs font-bold" style={{ color: f.color }}>{f.label}</span>
                   <span className="ml-auto text-xs px-1.5 py-0.5 rounded"
                     style={{ background: `${f.color}20`, color: f.color }}>
@@ -183,7 +185,11 @@ function FactorExplanations() {
 }
 
 // ── Overlap card ──────────────────────────────────────────────────────────────
-function OverlapCard({ overlap }: { overlap: OverlapResult }) {
+function OverlapCard({ overlap, companyNames, onTickerClick }: {
+  overlap: OverlapResult;
+  companyNames: Record<string, string>;
+  onTickerClick: (ticker: string) => void;
+}) {
   const [open, setOpen] = useState(false);
   const same = overlap.sector_leader === overlap.sector_follower;
   return (
@@ -193,9 +199,23 @@ function OverlapCard({ overlap }: { overlap: OverlapResult }) {
         onMouseLeave={e => (e.currentTarget.style.background = "transparent")}>
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2 flex-1 min-w-0">
-            <span className="text-sm font-bold" style={{ color: TEXT_PRI }}>{overlap.ticker_leader}</span>
+            <button className="text-sm font-bold hover:underline"
+              style={{ color: TEXT_PRI }}
+              onClick={e => { e.stopPropagation(); onTickerClick(overlap.ticker_leader); }}>
+              {overlap.ticker_leader}
+            </button>
+            {companyNames[overlap.ticker_leader] && (
+              <span className="text-xs" style={{ color: TEXT_MUT }}>{companyNames[overlap.ticker_leader]}</span>
+            )}
             <ArrowRight className="w-3.5 h-3.5 flex-shrink-0" style={{ color: AMBER }} />
-            <span className="text-sm font-bold" style={{ color: TEXT_PRI }}>{overlap.ticker_follower}</span>
+            <button className="text-sm font-bold hover:underline"
+              style={{ color: TEXT_PRI }}
+              onClick={e => { e.stopPropagation(); onTickerClick(overlap.ticker_follower); }}>
+              {overlap.ticker_follower}
+            </button>
+            {companyNames[overlap.ticker_follower] && (
+              <span className="text-xs" style={{ color: TEXT_MUT }}>{companyNames[overlap.ticker_follower]}</span>
+            )}
             <span className="text-xs ml-1" style={{ color: TEXT_MUT }}>lag {overlap.best_lag}d</span>
             {same && (
               <span className="text-xs px-2 py-0.5 rounded-full"
@@ -235,7 +255,11 @@ function OverlapCard({ overlap }: { overlap: OverlapResult }) {
 
 
 // ── Independent rec card (Group B) ───────────────────────────────────────────
-function IndependentRecCard({ rec, rank }: { rec: IndependentRecommendation; rank: number }) {
+function IndependentRecCard({ rec, rank, companyNames, onTickerClick }: {
+  rec: IndependentRecommendation; rank: number;
+  companyNames: Record<string, string>;
+  onTickerClick: (ticker: string) => void;
+}) {
   const [open, setOpen] = useState(false);
   const pctCent = Math.round(rec.centrality_score);
   const pctGap  = Math.round(rec.sector_gap_score);
@@ -251,7 +275,14 @@ function IndependentRecCard({ rec, rank }: { rec: IndependentRecommendation; ran
           </div>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-sm font-bold" style={{ color: TEXT_PRI }}>{rec.ticker}</span>
+              <button className="text-sm font-bold hover:underline"
+                style={{ color: TEXT_PRI }}
+                onClick={e => { e.stopPropagation(); onTickerClick(rec.ticker); }}>
+                {rec.ticker}
+              </button>
+              {companyNames[rec.ticker] && (
+                <span className="text-xs" style={{ color: TEXT_MUT }}>{companyNames[rec.ticker]}</span>
+              )}
               <SectorTag sector={rec.sector} />
               <span className="text-xs px-2 py-0.5 rounded-full" style={{ background: PURPLE_DIM, color: PURPLE }}>
                 No overlap detected
@@ -260,10 +291,10 @@ function IndependentRecCard({ rec, rank }: { rec: IndependentRecommendation; ran
             {/* Two sub-scores inline */}
             <div className="flex items-center gap-4 mt-1.5">
               <span className="text-xs" style={{ color: TEXT_MUT }}>
-                🧭 Sector gap <span className="font-semibold" style={{ color: PURPLE }}>{pctGap}</span>
+                <Layers className="w-3 h-3 inline mr-1" style={{ color: PURPLE }} />Sector gap <span className="font-semibold" style={{ color: PURPLE }}>{pctGap}</span>
               </span>
               <span className="text-xs" style={{ color: TEXT_MUT }}>
-                🕸 Centrality <span className="font-semibold" style={{ color: TEXT_SEC }}>{pctCent}</span>
+                <Globe className="w-3 h-3 inline mr-1" style={{ color: TEXT_SEC }} />Centrality <span className="font-semibold" style={{ color: TEXT_SEC }}>{pctCent}</span>
               </span>
               <span className="text-xs" style={{ color: TEXT_MUT }}>
                 Score <span className="font-semibold" style={{ color: PURPLE }}>{rec.composite_score.toFixed(0)}</span>
@@ -278,8 +309,8 @@ function IndependentRecCard({ rec, rank }: { rec: IndependentRecommendation; ran
           <p className="text-sm mt-3 leading-relaxed" style={{ color: TEXT_SEC }}>{rec.reasoning}</p>
           <div className="grid grid-cols-2 gap-3 mt-4">
             {[
-              { label: "🧭 Sector Gap",     val: rec.sector_gap_score,  desc: "How underrepresented this sector is in your portfolio (70% of score)" },
-              { label: "🕸 Market Centrality",val: rec.centrality_score, desc: "How central this stock is in the market network (30% of score)" },
+              { label: "Sector Gap",     val: rec.sector_gap_score,  desc: "How underrepresented this sector is in your portfolio (70% of score)" },
+              { label: "Market Centrality",val: rec.centrality_score, desc: "How central this stock is in the market network (30% of score)" },
             ].map(({ label, val, desc }) => (
               <div key={label}>
                 <div className="flex items-center justify-between mb-1">
@@ -313,8 +344,11 @@ export default function DiversifyPage() {
     independent_recommendations: IndependentRecommendation[];
   } | null>(null);
   // activeSpiderIdx is lifted from SpiderChart so it drives the sector donut preview.
-  // When the user selects a stock in the spider chart, the donut updates automatically.
   const [activeSpiderIdx, setActiveSpiderIdx] = useState<number | null>(0);
+  // Company names fetched after analysis for display alongside tickers
+  const [companyNames, setCompanyNames] = useState<Record<string, string>>({});
+  // OHLCV modal state
+  const [modalStock, setModalStock] = useState<Stock | null>(null);
 
   // Derived: which ticker is selected in the spider chart
   const hoveredTicker = activeSpiderIdx !== null
@@ -362,17 +396,48 @@ export default function DiversifyPage() {
       : tickers;
     if (!toAnalyze.length) return;
     setLoading(true); setError(null); setResult(null); setActiveSpiderIdx(0);
-    try { setResult(await analyzePortfolio(toAnalyze)); }
+    try {
+      const data = await analyzePortfolio(toAnalyze);
+      setResult(data);
+      // Fetch company names for all tickers involved (holdings + recommendations)
+      const allTickers = [
+        ...data.tickers_analyzed,
+        ...data.signal_recommendations.map(r => r.ticker),
+        ...data.independent_recommendations.map(r => r.ticker),
+      ];
+      const uniqueTickers = [...new Set(allTickers)];
+      if (uniqueTickers.length > 0) {
+        fetchStockSummaries(uniqueTickers)
+          .then(summaries => {
+            const names: Record<string, string> = {};
+            summaries.forEach(s => { names[s.symbol] = s.name; });
+            setCompanyNames(names);
+          })
+          .catch(() => {}); // non-critical — names just won't show
+      }
+    }
     catch (err) { setError(err instanceof Error ? err.message : "Something went wrong."); }
     finally { setLoading(false); }
   };
 
   const reset = () => {
-    setTickers([]); setInputVal(""); setResult(null); setError(null); setActiveSpiderIdx(null);
+    setTickers([]); setInputVal(""); setResult(null); setError(null); setActiveSpiderIdx(null); setCompanyNames({}); setModalStock(null);
     setTimeout(() => inputRef.current?.focus(), 0);
   };
 
   const hasResult  = result !== null;
+
+  // Opens OHLCV modal for a ticker — uses live price data if available
+  const handleTickerClick = (ticker: string) => {
+    setModalStock({
+      symbol:   ticker,
+      name:     companyNames[ticker] ?? ticker,
+      price:    "—",
+      change:   "—",
+      volume:   "—",
+      positive: true,
+    });
+  };
   const signalRecs = result?.signal_recommendations ?? [];
 
   return (
@@ -514,7 +579,7 @@ export default function DiversifyPage() {
                   </div>
                 ) : (
                   <div className="space-y-2">
-                    {result.overlaps.map((o, i) => <OverlapCard key={i} overlap={o} />)}
+                    {result.overlaps.map((o, i) => <OverlapCard key={i} overlap={o} companyNames={companyNames} onTickerClick={handleTickerClick} />)}
                   </div>
                 )}
               </section>
@@ -535,6 +600,8 @@ export default function DiversifyPage() {
                       recommendations={signalRecs}
                       activeIdx={activeSpiderIdx}
                       onActiveChange={setActiveSpiderIdx}
+                      onTickerClick={handleTickerClick}
+                      companyNames={companyNames}
                     />
                   </div>
 
@@ -574,7 +641,7 @@ export default function DiversifyPage() {
                 ) : (
                   <div className="space-y-2">
                     {result.independent_recommendations.map((rec, i) => (
-                      <IndependentRecCard key={rec.ticker} rec={rec} rank={i + 1} />
+                      <IndependentRecCard key={rec.ticker} rec={rec} rank={i + 1} companyNames={companyNames} onTickerClick={handleTickerClick} />
                     ))}
                   </div>
                 )}
@@ -599,6 +666,11 @@ export default function DiversifyPage() {
 
         </div>
       </main>
+
+      {/* OHLCV modal — opened when user clicks a ticker name */}
+      {modalStock && (
+        <StockModal stock={modalStock} onClose={() => setModalStock(null)} />
+      )}
     </div>
   );
 }

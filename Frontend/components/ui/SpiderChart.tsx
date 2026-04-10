@@ -1,5 +1,6 @@
 // Frontend/components/ui/SpiderChart.tsx
 "use client";
+import { Zap, Globe, Link2, Layers, ExternalLink } from "lucide-react";
 import type { Recommendation } from "@/src/app/lib/api";
 
 // ── Axes ──────────────────────────────────────────────────────────────────────
@@ -8,28 +9,28 @@ const AXES = [
     key:   "signal_score",
     label: "Signal Strength",
     short: "Signal",
-    icon:  "⚡",
+    Icon:  Zap,
     desc:  "How statistically robust and economically meaningful the lead-lag relationship is to your holdings.",
   },
   {
     key:   "centrality_score",
     label: "Market Centrality",
     short: "Centrality",
-    icon:  "🕸",
+    Icon:  Globe,
     desc:  "How connected this stock is across the entire 2000-stock market network.",
   },
   {
     key:   "coverage_score",
     label: "Portfolio Coverage",
     short: "Coverage",
-    icon:  "🔗",
+    Icon:  Link2,
     desc:  "How many of your existing holdings this stock has a detected relationship with.",
   },
   {
     key:   "sector_diversity_score",
     label: "Sector Diversity",
     short: "Diversity",
-    icon:  "🧭",
+    Icon:  Layers,
     desc:  "How much new sector exposure this stock adds relative to what you already own.",
   },
 ] as const;
@@ -99,11 +100,13 @@ function DirectionBadge({ direction }: { direction: string }) {
 // ── Main component ────────────────────────────────────────────────────────────
 interface SpiderChartProps {
   recommendations:  Recommendation[];
-  activeIdx:        number | null;          // lifted — controlled by parent
+  activeIdx:        number | null;
   onActiveChange:   (idx: number | null) => void;
+  onTickerClick?:   (ticker: string) => void;   // opens OHLCV modal
+  companyNames?:    Record<string, string>;      // ticker → company name
 }
 
-export default function SpiderChart({ recommendations, activeIdx, onActiveChange }: SpiderChartProps) {
+export default function SpiderChart({ recommendations, activeIdx, onActiveChange, onTickerClick, companyNames = {} }: SpiderChartProps) {
   const recs = recommendations.slice(0, 10);
   // Use parent-controlled activeIdx; setActiveIdx is an alias for onActiveChange
   const setActiveIdx = onActiveChange;
@@ -269,10 +272,20 @@ export default function SpiderChart({ recommendations, activeIdx, onActiveChange
             <div>
               {/* Stock header */}
               <div className="mb-4 pb-4" style={{ borderBottom: `1px solid ${BORDER_D}` }}>
-                <div className="flex items-center gap-2 mb-1.5">
-                  <span className="text-lg font-bold" style={{ color: activeColor }}>
-                    {activeRec.ticker}
-                  </span>
+                <div className="flex items-center gap-2 mb-0.5">
+                  {/* Clickable ticker — opens OHLCV modal */}
+                  <button
+                    onClick={() => onTickerClick?.(activeRec.ticker)}
+                    className="flex items-center gap-1.5 group"
+                    title="Click to view price chart"
+                  >
+                    <span className="text-lg font-bold group-hover:underline"
+                      style={{ color: activeColor }}>
+                      {activeRec.ticker}
+                    </span>
+                    <ExternalLink className="w-3.5 h-3.5 opacity-50 group-hover:opacity-100 transition-opacity"
+                      style={{ color: activeColor }} />
+                  </button>
                   <span className="text-xs px-2 py-0.5 rounded-full"
                     style={{ background: "hsl(215,25%,16%)", color: TEXT_SEC }}>
                     #{activeIdx + 1}
@@ -282,6 +295,12 @@ export default function SpiderChart({ recommendations, activeIdx, onActiveChange
                     {activeRec.sector}
                   </span>
                 </div>
+                {/* Company name */}
+                {companyNames[activeRec.ticker] && (
+                  <p className="text-xs mb-1" style={{ color: TEXT_SEC }}>
+                    {companyNames[activeRec.ticker]}
+                  </p>
+                )}
 
                 <div className="flex items-center gap-2 flex-wrap mb-2">
                   <DirectionBadge direction={activeRec.direction} />
@@ -325,7 +344,7 @@ export default function SpiderChart({ recommendations, activeIdx, onActiveChange
                       <div className="flex items-center justify-between mb-1">
                         <span className="text-xs font-semibold flex items-center gap-1.5"
                           style={{ color: TEXT_PRI }}>
-                          <span>{ax.icon}</span>
+                          <ax.Icon className="w-3.5 h-3.5 flex-shrink-0" style={{ color: barColor }} />
                           {ax.label}
                         </span>
                         <span className="text-sm font-bold tabular-nums"
