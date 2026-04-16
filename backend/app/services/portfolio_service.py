@@ -18,8 +18,39 @@ def _get_network_bq() -> pd.DataFrame:
     settings = get_settings()
     client   = get_bq_client()
     table    = f"`{settings.gcp_project_id}.{settings.bq_dataset}.final_network`"
-    query    = f"SELECT * FROM {table} WHERE as_of_date = (SELECT MAX(as_of_date) FROM {table})"
-    return client.query(query).to_dataframe()
+    # Explicit column list guards against missing centrality_i/j columns
+    # in older pipeline runs — fills them with 0.0 if absent via COALESCE
+    query = f"""
+        SELECT
+            as_of_date,
+            ticker_i,
+            ticker_j,
+            best_lag,
+            mean_dcor,
+            variance_dcor,
+            frequency,
+            half_life,
+            sharpness,
+            predicted_sharpe,
+            signal_strength,
+            oos_sharpe_net,
+            oos_dcor,
+            sector_i,
+            sector_j,
+            rank,
+            COALESCE(centrality_i, 0.0) AS centrality_i,
+            COALESCE(centrality_j, 0.0) AS centrality_j
+        FROM {table}
+        WHERE as_of_date = (SELECT MAX(as_of_date) FROM {table})
+    """
+    df = client.query(query).to_dataframe()
+    # Ensure numeric columns that may come back as object are cast correctly
+    for col in ["centrality_i", "centrality_j", "frequency", "half_life",
+                "signal_strength", "mean_dcor", "oos_sharpe_net", "predicted_sharpe",
+                "variance_dcor", "sharpness"]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
+    return df
 
 
 def get_final_network() -> pd.DataFrame:
@@ -37,6 +68,7 @@ def run_portfolio_analysis(
         analyze_portfolio_overlap,
         get_signal_recommendations,
         get_independent_recommendations,
+        get_holdings_sectors,
     )
     from dataclasses import asdict
 
@@ -46,6 +78,7 @@ def run_portfolio_analysis(
             "tickers_analyzed": [], "unknown_tickers": [],
             "overlaps": [], "signal_recommendations": [],
             "independent_recommendations": [],
+            "holdings_sectors": {},
         }
 
     df   = get_final_network()
@@ -60,4 +93,7 @@ def run_portfolio_analysis(
         "overlaps":                    [asdict(o) for o in analyze_portfolio_overlap(normalized, df)],
         "signal_recommendations":      [asdict(r) for r in get_signal_recommendations(normalized, df, top_n=top_n, min_signal_strength=min_signal)],
         "independent_recommendations": [asdict(r) for r in get_independent_recommendations(normalized, df, top_n=top_n)],
+        # Sector map for every known holding — used by frontend SectorDonut
+        # regardless of whether any overlaps exist
+        "holdings_sectors":            get_holdings_sectors(normalized, df),
     }
