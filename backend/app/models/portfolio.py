@@ -23,7 +23,7 @@ class OverlapResult(BaseModel):
 
 
 class Recommendation(BaseModel):
-    """Group A — stock with detected lead-lag connection to user's holdings."""
+    """Group A — stock with a detected lead-lag connection to user's holdings."""
     ticker:                     str
     sector:                     str
     centrality:                 float
@@ -37,6 +37,7 @@ class Recommendation(BaseModel):
     centrality_score:           float
     sector_diversity_score:     float
     coverage_score:             float
+    durability_score:           float   # normalized half-life 0-100
     reasoning:                  str
 
 
@@ -55,5 +56,6 @@ class PortfolioAnalysisResponse(BaseModel):
     tickers_analyzed:            list[str]
     unknown_tickers:             list[str]
     overlaps:                    list[OverlapResult]
-    signal_recommendations:      list[Recommendation]        # Group A
-    independent_recommendations: list[IndependentRecommendation]  # Group B
+    signal_recommendations:      list[Recommendation]
+    independent_recommendations: list[IndependentRecommendation]
+    holdings_sectors:            dict[str, str]   # {ticker: sector} for all known holdings

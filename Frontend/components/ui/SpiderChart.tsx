@@ -1,54 +1,58 @@
 // Frontend/components/ui/SpiderChart.tsx
 "use client";
-import { Zap, Globe, Link2, Layers, ExternalLink } from "lucide-react";
+import { Zap, Globe, Link2, Layers, Timer, BarChart2, ExternalLink } from "lucide-react";
 import type { Recommendation } from "@/src/app/lib/api";
 
-// ── Axes ──────────────────────────────────────────────────────────────────────
+// ── Axes — 5 factors, full label names ───────────────────────────────────────
 const AXES = [
   {
     key:   "signal_score",
     label: "Signal Strength",
-    short: "Signal",
+    short: "Signal",       // full word shown on chart
     Icon:  Zap,
-    desc:  "How statistically robust and economically meaningful the lead-lag relationship is to your holdings.",
+    desc:  "Frequency-weighted mean signal strength across connections to your holdings.",
   },
   {
     key:   "centrality_score",
     label: "Market Centrality",
-    short: "Centrality",
+    short: "Centrality",   // full word shown on chart
     Icon:  Globe,
     desc:  "How connected this stock is across the entire 2000-stock market network.",
   },
   {
     key:   "coverage_score",
     label: "Portfolio Coverage",
-    short: "Coverage",
+    short: "Coverage",     // full word shown on chart
     Icon:  Link2,
     desc:  "How many of your existing holdings this stock has a detected relationship with.",
   },
   {
     key:   "sector_diversity_score",
     label: "Sector Diversity",
-    short: "Diversity",
+    short: "Diversity",    // full word shown on chart
     Icon:  Layers,
     desc:  "How much new sector exposure this stock adds relative to what you already own.",
   },
+  {
+    key:   "durability_score",
+    label: "Signal Durability",
+    short: "Durability",   // full word shown on chart
+    Icon:  Timer,
+    desc:  "How long the lead-lag signal persists — normalized half-life (252-day cap).",
+  },
 ] as const;
 
-const N  = AXES.length;
-// ── Dimension guide — edit these to resize/reposition the chart ───────────────
-// CX, CY   : center of the chart within the SVG viewBox coordinate space
-// R         : radius of the outermost tick ring in viewBox units
-// LABEL_R   : how far beyond R to place axis labels (1.38 = 38% past the ring)
-// VIEWBOX_W : must satisfy: CX + LABEL_R*R + (longest label px) < VIEWBOX_W
-//             "Centrality" at fontSize 13 ≈ 75px → need 290 + 221 + 75 = 586 → use 600
-//             Increase VIEWBOX_W if right label is still clipped.
-// To make chart bigger: increase R and VIEWBOX_W/VIEWBOX_H proportionally.
-// To push labels further out: increase LABEL_R and VIEWBOX_W/VIEWBOX_H.
-const CX = 290; const CY = 290; const R = 160;
-const LABEL_R   = 1.38;
-const VIEWBOX_W = 600;
-const VIEWBOX_H = 600;
+const N = AXES.length;
+
+// ── Layout — larger chart to give the spider more room ───────────────────────
+// Increase R and VIEWBOX to make the chart itself bigger and more prominent.
+// LABEL_R controls how far labels sit outside the outer ring.
+const CX       = 320;
+const CY       = 320;
+const R        = 200;          // was 160 — larger polygon
+const LABEL_R  = 1.35;
+const VIEWBOX_W = 740;         // was 600
+const VIEWBOX_H = 700;         // was 600
 const TICK_LEVELS = [25, 50, 75, 100];
 
 export const RANK_COLORS = [
@@ -82,11 +86,11 @@ function polygonPoints(rec: Recommendation): string {
   }).join(" ");
 }
 
-// ── Direction label ───────────────────────────────────────────────────────────
+// ── Direction badge ───────────────────────────────────────────────────────────
 function DirectionBadge({ direction }: { direction: string }) {
-  const GREEN  = "hsl(142,71%,45%)";
-  const BLUE   = "hsl(217,91%,60%)";
-  const AMBER  = "hsl(38,92%,50%)";
+  const GREEN = "hsl(142,71%,45%)";
+  const BLUE  = "hsl(217,91%,60%)";
+  const AMBER = "hsl(38,92%,50%)";
   if (direction === "leads_your_holdings")
     return <span className="text-xs px-2 py-0.5 rounded-full"
       style={{ background: "hsla(142,71%,45%,0.15)", color: GREEN }}>Leads your stocks</span>;
@@ -102,18 +106,23 @@ interface SpiderChartProps {
   recommendations:  Recommendation[];
   activeIdx:        number | null;
   onActiveChange:   (idx: number | null) => void;
-  onTickerClick?:   (ticker: string) => void;   // opens OHLCV modal
-  companyNames?:    Record<string, string>;      // ticker → company name
+  onTickerClick?:   (ticker: string) => void;
+  companyNames?:    Record<string, string>;
 }
 
-export default function SpiderChart({ recommendations, activeIdx, onActiveChange, onTickerClick, companyNames = {} }: SpiderChartProps) {
-  const recs = recommendations.slice(0, 10);
-  // Use parent-controlled activeIdx; setActiveIdx is an alias for onActiveChange
+export default function SpiderChart({
+  recommendations,
+  activeIdx,
+  onActiveChange,
+  onTickerClick,
+  companyNames = {},
+}: SpiderChartProps) {
+  const recs        = recommendations.slice(0, 10);
   const setActiveIdx = onActiveChange;
 
   if (recs.length === 0) return null;
 
-  const activeRec = activeIdx !== null ? recs[activeIdx] : null;
+  const activeRec   = activeIdx !== null ? recs[activeIdx] : null;
   const activeColor = activeIdx !== null ? RANK_COLORS[activeIdx] : "hsl(215,15%,55%)";
 
   const TEXT_PRI = "hsl(210,40%,92%)";
@@ -133,11 +142,11 @@ export default function SpiderChart({ recommendations, activeIdx, onActiveChange
         </p>
       </div>
 
-      {/* Main body: chart+legend left, detail panel right */}
+      {/* Main body: larger chart+legend left, detail panel right */}
       <div className="flex gap-6 items-start">
 
-        {/* ── Left column: chart + ranked legend ── */}
-        <div className="flex-shrink-0" style={{ width: "400px" }}>
+        {/* ── Left column: wider to give chart more room ── */}
+        <div className="flex-shrink-0" style={{ width: "520px" }}>
           <svg viewBox={`0 0 ${VIEWBOX_W} ${VIEWBOX_H}`} width="100%" height="auto">
 
             {/* Tick ring polygons */}
@@ -152,12 +161,12 @@ export default function SpiderChart({ recommendations, activeIdx, onActiveChange
               );
             })}
 
-            {/* Tick value labels on top axis */}
+            {/* Tick value labels on first axis */}
             {TICK_LEVELS.map(pct => {
               const [x, y] = axisPoint(0, pct / 100);
               return (
                 <text key={pct} x={x + 5} y={y - 4}
-                  fontSize="9" fill="hsl(215,15%,38%)" textAnchor="start">
+                  fontSize="10" fill="hsl(215,15%,38%)" textAnchor="start">
                   {pct}
                 </text>
               );
@@ -172,12 +181,12 @@ export default function SpiderChart({ recommendations, activeIdx, onActiveChange
               );
             })}
 
-            {/* Axis labels */}
+            {/* Axis labels — full words now, sized for readability */}
             {AXES.map((ax, i) => {
               const [x, y] = axisPoint(i, LABEL_R);
-              // 0=top, 1=right, 2=bottom, 3=left
-              const anchor = i === 1 ? "start" : i === 3 ? "end" : "middle";
-              const dy = i === 0 ? -8 : i === 2 ? 18 : 5;
+              // For 5 axes, determine text anchor by x-position relative to center
+              const anchor = x < CX - 15 ? "end" : x > CX + 15 ? "start" : "middle";
+              const dy = y < CY - 15 ? -10 : y > CY + 15 ? 20 : 5;
               return (
                 <text key={ax.key} x={x} y={y + dy}
                   textAnchor={anchor} fontSize="14" fontWeight="700"
@@ -187,9 +196,9 @@ export default function SpiderChart({ recommendations, activeIdx, onActiveChange
               );
             })}
 
-            {/* Unselected polygons: stroke only, completely transparent fill */}
+            {/* Unselected polygons — transparent fill, colored stroke */}
             {recs.map((rec, i) => {
-              if (activeIdx === i) return null; // drawn separately on top
+              if (activeIdx === i) return null;
               return (
                 <polygon
                   key={rec.ticker}
@@ -204,7 +213,7 @@ export default function SpiderChart({ recommendations, activeIdx, onActiveChange
               );
             })}
 
-            {/* Selected polygon: filled at 80% opacity, bold stroke */}
+            {/* Selected polygon — filled + vertex dots */}
             {activeRec && activeIdx !== null && (
               <>
                 <polygon
@@ -215,13 +224,12 @@ export default function SpiderChart({ recommendations, activeIdx, onActiveChange
                   strokeWidth="2.5"
                   strokeOpacity="0.9"
                 />
-                {/* Vertex dots */}
                 {AXES.map((ax, i) => {
                   const val = activeRec[ax.key as keyof Recommendation] as number;
                   const pct = Math.min(100, Math.max(0, val)) / 100;
                   const [x, y] = axisPoint(i, pct);
                   return (
-                    <circle key={ax.key} cx={x} cy={y} r="4.5"
+                    <circle key={ax.key} cx={x} cy={y} r="5"
                       fill={activeColor} fillOpacity="0.95" />
                   );
                 })}
@@ -255,7 +263,14 @@ export default function SpiderChart({ recommendations, activeIdx, onActiveChange
                   </span>
                   <span className="w-2 h-2 rounded-full flex-shrink-0"
                     style={{ background: RANK_COLORS[i] }} />
-                  <span className="truncate">{rec.ticker}</span>
+                  {/* Ticker — clicking opens OHLCV modal without toggling selection */}
+                  <span
+                    className="truncate hover:underline cursor-pointer"
+                    onClick={e => { e.stopPropagation(); onTickerClick?.(rec.ticker); }}
+                    title={`View ${rec.ticker} price chart`}
+                  >
+                    {rec.ticker}
+                  </span>
                   <span className="ml-auto tabular-nums flex-shrink-0"
                     style={{ color: activeIdx === i ? RANK_COLORS[i] : "hsl(215,15%,38%)", fontSize: "10px" }}>
                     {rec.composite_score.toFixed(0)}
@@ -266,26 +281,16 @@ export default function SpiderChart({ recommendations, activeIdx, onActiveChange
           </div>
         </div>
 
-        {/* ── Right panel: factor breakdown ── */}
+        {/* ── Right panel: detail ── */}
         <div className="flex-1 min-w-0">
           {activeRec && activeIdx !== null ? (
             <div>
               {/* Stock header */}
               <div className="mb-4 pb-4" style={{ borderBottom: `1px solid ${BORDER_D}` }}>
-                <div className="flex items-center gap-2 mb-0.5">
-                  {/* Clickable ticker — opens OHLCV modal */}
-                  <button
-                    onClick={() => onTickerClick?.(activeRec.ticker)}
-                    className="flex items-center gap-1.5 group"
-                    title="Click to view price chart"
-                  >
-                    <span className="text-lg font-bold group-hover:underline"
-                      style={{ color: activeColor }}>
-                      {activeRec.ticker}
-                    </span>
-                    <ExternalLink className="w-3.5 h-3.5 opacity-50 group-hover:opacity-100 transition-opacity"
-                      style={{ color: activeColor }} />
-                  </button>
+                <div className="flex items-center gap-2 mb-0.5 flex-wrap">
+                  <span className="text-lg font-bold" style={{ color: activeColor }}>
+                    {activeRec.ticker}
+                  </span>
                   <span className="text-xs px-2 py-0.5 rounded-full"
                     style={{ background: "hsl(215,25%,16%)", color: TEXT_SEC }}>
                     #{activeIdx + 1}
@@ -295,12 +300,26 @@ export default function SpiderChart({ recommendations, activeIdx, onActiveChange
                     {activeRec.sector}
                   </span>
                 </div>
-                {/* Company name */}
+
                 {companyNames[activeRec.ticker] && (
                   <p className="text-xs mb-1" style={{ color: TEXT_SEC }}>
                     {companyNames[activeRec.ticker]}
                   </p>
                 )}
+
+                {/* Explicit "View Price Chart" button — always visible */}
+                <button
+                  onClick={() => onTickerClick?.(activeRec.ticker)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold mb-3 transition-all hover:opacity-80"
+                  style={{
+                    background: `${activeColor}18`,
+                    border:     `1px solid ${activeColor}50`,
+                    color:      activeColor,
+                  }}
+                >
+                  <BarChart2 className="w-3.5 h-3.5" />
+                  View Price Chart
+                </button>
 
                 <div className="flex items-center gap-2 flex-wrap mb-2">
                   <DirectionBadge direction={activeRec.direction} />
@@ -311,9 +330,10 @@ export default function SpiderChart({ recommendations, activeIdx, onActiveChange
                   <span style={{ color: TEXT_PRI }}>{activeRec.related_holdings.join(", ")}</span>
                 </p>
 
-                <div className="flex items-center gap-3 mt-2">
+                {/* Summary stat pills */}
+                <div className="flex items-center gap-3 mt-3 flex-wrap">
                   <div className="text-center">
-                    <p className="text-xs" style={{ color: TEXT_MUT }}>Composite Score</p>
+                    <p className="text-xs" style={{ color: TEXT_MUT }}>Composite</p>
                     <p className="text-xl font-bold" style={{ color: activeColor }}>
                       {activeRec.composite_score.toFixed(1)}
                     </p>
@@ -334,32 +354,29 @@ export default function SpiderChart({ recommendations, activeIdx, onActiveChange
                 </div>
               </div>
 
-              {/* Four factor bars with descriptions */}
+              {/* Five factor bars with descriptions */}
               <div className="space-y-4">
                 {AXES.map(ax => {
                   const val = activeRec[ax.key as keyof Recommendation] as number;
-                  const barColor = activeColor;
                   return (
                     <div key={ax.key}>
                       <div className="flex items-center justify-between mb-1">
                         <span className="text-xs font-semibold flex items-center gap-1.5"
                           style={{ color: TEXT_PRI }}>
-                          <ax.Icon className="w-3.5 h-3.5 flex-shrink-0" style={{ color: barColor }} />
+                          <ax.Icon className="w-3.5 h-3.5 flex-shrink-0" style={{ color: activeColor }} />
                           {ax.label}
                         </span>
                         <span className="text-sm font-bold tabular-nums"
-                          style={{ color: barColor }}>
+                          style={{ color: activeColor }}>
                           {Math.round(val)}
                           <span className="text-xs font-normal" style={{ color: TEXT_MUT }}>/100</span>
                         </span>
                       </div>
-                      {/* Bar */}
                       <div className="h-1.5 rounded-full overflow-hidden mb-1.5"
                         style={{ background: "hsl(215,20%,16%)" }}>
                         <div className="h-full rounded-full"
-                          style={{ width: `${val}%`, background: barColor }} />
+                          style={{ width: `${val}%`, background: activeColor }} />
                       </div>
-                      {/* Description */}
                       <p className="text-xs leading-relaxed" style={{ color: TEXT_MUT }}>
                         {ax.desc}
                       </p>
@@ -368,7 +385,7 @@ export default function SpiderChart({ recommendations, activeIdx, onActiveChange
                 })}
               </div>
 
-              {/* Plain-English reasoning */}
+              {/* Reasoning */}
               <div className="mt-4 pt-4 rounded-lg px-3 py-3"
                 style={{ background: "hsl(215,25%,9%)", border: `1px solid ${BORDER_D}` }}>
                 <p className="text-xs leading-relaxed" style={{ color: TEXT_SEC }}>

@@ -30,8 +30,12 @@ export interface Recommendation {
   n_portfolio_relationships: number; best_relationship_strength: number;
   mean_relationship_strength: number; related_holdings: string[];
   direction: "leads_your_holdings" | "follows_your_holdings" | "both";
-  signal_score: number; centrality_score: number;
-  sector_diversity_score: number; coverage_score: number; reasoning: string;
+  signal_score: number;
+  centrality_score: number;
+  sector_diversity_score: number;
+  coverage_score: number;
+  durability_score: number;   // normalized half-life 0-100
+  reasoning: string;
 }
 
 /** Group B — stock with ZERO detected relationship to any of your holdings */
@@ -39,7 +43,7 @@ export interface IndependentRecommendation {
   ticker:           string;
   sector:           string;
   centrality:       number;
-  composite_score:  number;   // 0-100: 70% sector gap + 30% centrality
+  composite_score:  number;
   sector_gap_score: number;
   centrality_score: number;
   reasoning:        string;
@@ -49,8 +53,10 @@ export interface PortfolioAnalysisResponse {
   tickers_analyzed:            string[];
   unknown_tickers:             string[];
   overlaps:                    OverlapResult[];
-  signal_recommendations:      Recommendation[];        // Group A
-  independent_recommendations: IndependentRecommendation[];  // Group B
+  signal_recommendations:      Recommendation[];
+  independent_recommendations: IndependentRecommendation[];
+  /** Sector for each known holding — always populated regardless of overlaps */
+  holdings_sectors:            Record<string, string>;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -69,18 +75,21 @@ export async function fetchAllStocks(): Promise<StockSummary[]> {
   const data = await apiFetch<{ data: StockSummary[] }>("/api/stocks");
   return data.data;
 }
+
 export async function fetchStockSummaries(symbols: string[]): Promise<StockSummary[]> {
   if (!symbols.length) return [];
   const q = symbols.map(s => s.toUpperCase()).join(",");
   const data = await apiFetch<{ data: StockSummary[] }>(`/api/stocks/summaries?symbols=${q}`);
   return data.data;
 }
+
 export async function fetchOHLCV(symbol: string, range: TimeRange): Promise<OHLCVCandle[]> {
   const data = await apiFetch<{ symbol: string; range: string; candles: OHLCVCandle[] }>(
     `/api/stocks/${encodeURIComponent(symbol.toUpperCase())}/ohlcv?range=${range}`
   );
   return data.candles;
 }
+
 export async function fetchIndices(): Promise<IndexSummary[]> {
   const data = await apiFetch<{ data: IndexSummary[] }>("/api/indices");
   return data.data;
