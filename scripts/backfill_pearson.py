@@ -386,9 +386,15 @@ def run_backfill(
         filtered_table_id = full_table("pair_results_filtered")
         n_filtered = _run_dml_update(client, filtered_table_id, staging_table_id, "pair_results_filtered")
 
-    finally:
-        # ── Step 6: Clean up staging table ───────────────────────────────
-        _delete_staging_table(client, staging_table_id)
+    except Exception:
+        logger.error(
+            f"DML UPDATE failed — staging table preserved for reuse: {staging_table_id}\n"
+            f"Re-run with the same staging table or fix the schema and retry."
+        )
+        raise
+
+    # ── Step 6: Clean up staging table (only on success) ─────────────────
+    _delete_staging_table(client, staging_table_id)
 
     duration = (datetime.now() - start_time).total_seconds()
     logger.info("=" * 60)

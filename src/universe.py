@@ -247,6 +247,71 @@ def get_all_pairs(tickers: List[str]) -> List[Tuple[str, str]]:
     return pairs
 
 
+def get_sector_pairs(tickers: List[str]) -> List[Tuple[str, str]]:
+    """
+    Generate all unique (ticker_i, ticker_j) pairs where both tickers
+    share the same GICS sector, based on ticker_metadata.
+
+    Tickers with no sector metadata are logged and excluded — they cannot
+    be assigned to any sector group.
+
+    Parameters
+    ----------
+    tickers : list of valid ticker strings (from get_valid_tickers())
+
+    Returns
+    -------
+    List of (ticker_i, ticker_j) tuples — all within-sector C(n_sector, 2)
+    combinations across all sectors, ticker_i < ticker_j alphabetically.
+    """
+    from collections import defaultdict
+
+    client = get_client()
+    tickers_sorted = sorted(tickers)
+    ticker_list = ", ".join(f"'{t}'" for t in tickers_sorted)
+
+    df = client.query(f"""
+        SELECT ticker, sector
+        FROM `{full_table('ticker_metadata')}`
+        WHERE ticker IN ({ticker_list})
+          AND sector IS NOT NULL
+          AND TRIM(sector) != ''
+    """).to_dataframe()
+
+    sector_map = dict(zip(df["ticker"], df["sector"]))
+
+    sector_groups: dict = defaultdict(list)
+    no_sector = []
+    for ticker in tickers_sorted:
+        sector = sector_map.get(ticker)
+        if sector:
+            sector_groups[sector].append(ticker)
+        else:
+            no_sector.append(ticker)
+
+    if no_sector:
+        logger.warning(
+            f"  {len(no_sector)} tickers have no sector metadata and will be "
+            f"excluded from sector pairs: {no_sector[:10]}"
+            + (" ..." if len(no_sector) > 10 else "")
+        )
+
+    pairs = []
+    for sector, members in sorted(sector_groups.items()):
+        sector_pairs = list(combinations(members, 2))
+        logger.info(
+            f"  Sector '{sector}': {len(members)} tickers "
+            f"→ {len(sector_pairs):,} pairs"
+        )
+        pairs.extend(sector_pairs)
+
+    logger.info(
+        f"Generated {len(pairs):,} in-sector pairs from "
+        f"{len(tickers):,} tickers across {len(sector_groups)} sectors"
+    )
+    return pairs
+
+
 def partition_pairs(
     pairs: List[Tuple[str, str]],
     partition_id: int,
