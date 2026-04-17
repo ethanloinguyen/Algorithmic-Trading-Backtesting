@@ -137,6 +137,7 @@ def _pair_results_raw_schema() -> List[bigquery.SchemaField]:
         bigquery.SchemaField("permutations_used", "INT64"),
         bigquery.SchemaField("sharpness", "FLOAT64"),
         bigquery.SchemaField("sharpness_entropy", "FLOAT64"),
+        bigquery.SchemaField("pearson_corr", "FLOAT64"),
     ]
 
 
@@ -149,6 +150,7 @@ def _pair_results_filtered_schema() -> List[bigquery.SchemaField]:
         bigquery.SchemaField("dcor", "FLOAT64"),
         bigquery.SchemaField("q_value", "FLOAT64"),
         bigquery.SchemaField("significant", "BOOL"),
+        bigquery.SchemaField("pearson_corr", "FLOAT64"),
     ]
 
 

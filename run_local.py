@@ -260,7 +260,8 @@ def _run_oos_window(args: tuple) -> Tuple[date, bool, int, str]:
         # ── Load significant pairs from pair_results_filtered ─────────────
         client = get_client()
         sig_df = client.query(f"""
-            SELECT ticker_i, ticker_j, lag
+            SELECT ticker_i, ticker_j, lag,
+                   COALESCE(pearson_corr, 1.0) AS pearson_corr
             FROM `{full_table('pair_results_filtered')}`
             WHERE window_start = '{window_start}'
               AND significant = TRUE
@@ -304,6 +305,7 @@ def _run_oos_window(args: tuple) -> Tuple[date, bool, int, str]:
         all_records = []
         for _, row in sig_df.iterrows():
             ti, tj, lag = row["ticker_i"], row["ticker_j"], int(row["lag"])
+            direction = float(row.get("pearson_corr", 1.0) or 1.0)
             if ti not in resid_pivot.columns or tj not in resid_pivot.columns:
                 continue
 
@@ -311,6 +313,7 @@ def _run_oos_window(args: tuple) -> Tuple[date, bool, int, str]:
                 resid_pivot[ti].dropna(),
                 resid_pivot[tj].dropna(),
                 lag, oos_start, oos_end,
+                direction=direction,
             )
             if oos_returns.empty:
                 continue

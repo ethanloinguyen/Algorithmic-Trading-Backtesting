@@ -64,6 +64,7 @@ def compute_strategy_returns(
     lag: int,
     oos_start: date,
     oos_end: date,
+    direction: float = 1.0,
 ) -> pd.DataFrame:
     """
     Compute daily strategy returns for pair (i → j) at a given lag.
@@ -79,6 +80,7 @@ def compute_strategy_returns(
     -------
     DataFrame with: [date, signal, position, strategy_return_gross, strategy_return_net]
     """
+    direction_sign = int(np.sign(direction)) if direction != 0 else 1
     cfg = get_config()["strategy"]
     lookback = cfg["zscore_lookback_days"]
     threshold = cfg["zscore_threshold"]
@@ -112,11 +114,12 @@ def compute_strategy_returns(
         if not (oos_start <= current_date <= oos_end):
             continue
 
-        # Position
+        # Position: direction_sign flips the trade for inverse lead-lag pairs
+        # (pearson_corr < 0 means ticker_i up predicts ticker_j down)
         if sig_t > threshold:
-            position = 1   # Long y
+            position = direction_sign
         elif sig_t < -threshold:
-            position = -1  # Short y
+            position = -direction_sign
         else:
             position = 0   # No trade
 

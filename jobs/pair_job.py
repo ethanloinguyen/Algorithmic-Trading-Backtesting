@@ -41,7 +41,7 @@ for _p in (_project_root, "/app"):
 
 from src.bq_io import read_residuals_for_window, write_pair_results_raw, write_dataframe, log_pipeline_run
 from src.config_loader import load_config, get_config
-from src.dcor_engine import dcor_profile, compute_sharpness, get_best_lag
+from src.dcor_engine import dcor_profile, compute_sharpness, get_best_lag, pearson_at_lag
 from src.permutation import test_pair_all_lags, check_budget_guard
 from src.universe import get_valid_tickers, get_all_pairs, partition_pairs
 
@@ -85,6 +85,9 @@ def process_pair(
     # Compute sharpness from full lag profile
     sharpness = compute_sharpness(raw_dcor, method=sharpness_method)
 
+    # Compute signed Pearson correlation at each lag for trade direction
+    raw_pearson = {lag: pearson_at_lag(x, y, lag) for lag in lags}
+
     # Compute p-values via adaptive permutation (per lag)
     perm_results = test_pair_all_lags(x, y, lags, rng=rng)
 
@@ -100,6 +103,7 @@ def process_pair(
             "permutations_used": pr.get("permutations_used", 0),
             "sharpness": sharpness,
             "sharpness_entropy": sharpness,  # Same field for entropy method
+            "pearson_corr": raw_pearson.get(lag),
         })
 
     return rows

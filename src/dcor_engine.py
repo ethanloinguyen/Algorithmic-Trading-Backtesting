@@ -261,6 +261,27 @@ def compute_sharpness(dcor_values: dict, method: str = "entropy") -> float:
         raise ValueError(f"Unknown sharpness method: {method}. Use 'ratio' or 'entropy'.")
 
 
+def pearson_at_lag(x: np.ndarray, y: np.ndarray, lag: int) -> Optional[float]:
+    """
+    Compute signed Pearson correlation between x[t] and y[t+lag].
+
+    Returns a value in [-1, 1]:
+        positive → ticker_i up predicts ticker_j up at this lag
+        negative → ticker_i up predicts ticker_j down at this lag
+
+    Used alongside dCor to determine trade direction: dCor detects
+    *that* a relationship exists; Pearson sign determines *which way*
+    to trade.
+    """
+    if lag < 1 or len(x) <= lag + 4:
+        return None
+    x_lead = x[:-lag]
+    y_follow = y[lag:]
+    if np.std(x_lead) < 1e-10 or np.std(y_follow) < 1e-10:
+        return None
+    return float(np.corrcoef(x_lead, y_follow)[0, 1])
+
+
 def get_best_lag(dcor_values: dict, significant_lags: list) -> Optional[int]:
     """
     From the set of significant lags, return the one with highest dCor.
