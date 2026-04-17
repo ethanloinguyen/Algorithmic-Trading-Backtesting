@@ -32,6 +32,7 @@ import argparse
 import logging
 import os
 import sys
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import date, datetime
 
 import numpy as np
@@ -145,6 +146,45 @@ def _compute_pearson_for_window(
     return pd.DataFrame(records)
 
 
+def _process_window_worker(args: tuple):
+    """
+    Top-level worker for ProcessPoolExecutor.
+    Creates its own BigQuery client (not picklable across processes).
+
+    Args:
+        args: (window_start, window_pairs_records, lags)
+
+    Returns:
+        list of pearson record dicts, or None if nothing computed
+    """
+    window_start, window_pairs_records, lags = args
+
+    from src.bq_io import get_client
+    from src.config_loader import load_config
+
+    load_config()
+    client = get_client()
+
+    window_pairs = pd.DataFrame(window_pairs_records)
+    window_pairs["window_start"] = pd.to_datetime(window_pairs["window_start"]).dt.date
+
+    tickers = list(set(
+        window_pairs["ticker_i"].tolist() + window_pairs["ticker_j"].tolist()
+    ))
+
+    resid_df = _load_residuals_for_window(client, window_start, tickers)
+    if resid_df.empty:
+        return None
+
+    pivot = resid_df.pivot(index="date", columns="ticker", values="residual")
+    window_pearson = _compute_pearson_for_window(window_pairs, pivot, lags)
+
+    if window_pearson.empty:
+        return None
+
+    return window_pearson.to_dict("records")
+
+
 def _write_staging_table(client, cfg: dict, df: pd.DataFrame, staging_table_name: str) -> str:
     """
     Write the pearson updates to a temporary staging table in BigQuery.
@@ -221,6 +261,7 @@ def run_backfill(
     window_start_filter: date = None,
     dry_run: bool = False,
     force: bool = False,
+    workers: int = 1,
 ) -> None:
     from src.bq_io import get_client, full_table
     from src.config_loader import load_config, get_config
@@ -250,42 +291,58 @@ def run_backfill(
     logger.info(f"Processing {len(all_windows)} windows, {len(sig_df):,} total pair-window rows")
 
     # ── Step 2: Compute pearson per window ────────────────────────────────
+    logger.info(f"Processing {len(all_windows)} windows | workers={workers}")
     all_pearson_rows = []
-    for i, window_start in enumerate(all_windows, 1):
-        window_pairs = sig_df[sig_df["window_start"] == window_start]
-        tickers = list(set(
-            window_pairs["ticker_i"].tolist() + window_pairs["ticker_j"].tolist()
-        ))
 
-        logger.info(
-            f"[{i}/{len(all_windows)}] Window {window_start}: "
-            f"{len(window_pairs)} pairs, {len(tickers)} tickers"
+    worker_args = [
+        (
+            window_start,
+            sig_df[sig_df["window_start"] == window_start].to_dict("records"),
+            lags,
         )
+        for window_start in all_windows
+    ]
 
-        # Load residuals for this training window
-        resid_df = _load_residuals_for_window(client, window_start, tickers)
-        if resid_df.empty:
-            logger.warning(f"  No residuals found for window {window_start} — skipping")
-            continue
+    if workers == 1:
+        for i, args in enumerate(worker_args, 1):
+            window_start = args[0]
+            logger.info(f"[{i}/{len(all_windows)}] Window {window_start}")
+            records = _process_window_worker(args)
+            if records is None:
+                logger.warning(f"  No pearson values computed for window {window_start} — skipping")
+                continue
+            df = pd.DataFrame(records)
+            n_pos = (df["pearson_corr"] > 0).sum()
+            n_neg = (df["pearson_corr"] < 0).sum()
+            logger.info(f"  Computed {len(df)} pearson values ({n_pos} positive, {n_neg} negative)")
+            all_pearson_rows.append(df)
+    else:
+        futures = {}
+        with ProcessPoolExecutor(max_workers=workers) as executor:
+            for args in worker_args:
+                fut = executor.submit(_process_window_worker, args)
+                futures[fut] = args[0]  # window_start
 
-        pivot = resid_df.pivot(index="date", columns="ticker", values="residual")
-        logger.info(f"  Residuals loaded: {pivot.shape[1]} tickers, {pivot.shape[0]} dates")
-
-        # Compute pearson at all lags for each significant pair
-        window_pearson = _compute_pearson_for_window(window_pairs, pivot, lags)
-        if window_pearson.empty:
-            logger.warning(f"  No pearson values computed for window {window_start}")
-            continue
-
-        n_computed = window_pearson["pearson_corr"].notna().sum()
-        n_positive = (window_pearson["pearson_corr"] > 0).sum()
-        n_negative = (window_pearson["pearson_corr"] < 0).sum()
-        logger.info(
-            f"  Computed {n_computed} pearson values "
-            f"({n_positive} positive, {n_negative} negative / inverse)"
-        )
-
-        all_pearson_rows.append(window_pearson)
+            completed = 0
+            for fut in as_completed(futures):
+                window_start = futures[fut]
+                completed += 1
+                try:
+                    records = fut.result()
+                except Exception as e:
+                    logger.warning(f"  [{completed}/{len(all_windows)}] Window {window_start} failed: {e}")
+                    continue
+                if records is None:
+                    logger.warning(f"  [{completed}/{len(all_windows)}] Window {window_start} — no values computed, skipping")
+                    continue
+                df = pd.DataFrame(records)
+                n_pos = (df["pearson_corr"] > 0).sum()
+                n_neg = (df["pearson_corr"] < 0).sum()
+                logger.info(
+                    f"  [{completed}/{len(all_windows)}] Window {window_start}: "
+                    f"{len(df)} pearson values ({n_pos} positive, {n_neg} negative)"
+                )
+                all_pearson_rows.append(df)
 
     if not all_pearson_rows:
         logger.warning("No pearson values were computed. Check residuals data.")
@@ -362,6 +419,12 @@ if __name__ == "__main__":
         action="store_true",
         help="Recompute and overwrite pearson_corr even for pairs that already have it.",
     )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help="Number of parallel worker processes (default: 1).",
+    )
     args = parser.parse_args()
 
     window_filter = date.fromisoformat(args.window_start) if args.window_start else None
@@ -370,4 +433,5 @@ if __name__ == "__main__":
         window_start_filter=window_filter,
         dry_run=args.dry_run,
         force=args.force,
+        workers=args.workers,
     )
