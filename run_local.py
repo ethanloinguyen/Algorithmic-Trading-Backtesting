@@ -427,7 +427,7 @@ def run_step_finalize(dry_run: bool = False) -> bool:
         upsert_final_network,
     )
     from src.bootstrap import run_model_refit, compute_predicted_sharpe, compute_signal_strength
-    from src.network import run_network_pipeline
+    from src.network import build_directed_graph, compute_centrality
     from src.oos_model import compute_sharpe, compute_global_oos_dcor
 
     cfg = get_config()
@@ -525,8 +525,11 @@ def run_step_finalize(dry_run: bool = False) -> bool:
     )
 
     # ── Network centrality ────────────────────────────────────────────────
+    # Build graph directly from final_df — querying BQ here would find nothing
+    # because final_network hasn't been written yet for today's as_of_date.
     logger.info("[FINALIZE] Step 6: Computing network centrality...")
-    centrality_df, _ = run_network_pipeline(date.today())
+    G = build_directed_graph(final_df)
+    centrality_df = compute_centrality(G)
     if not centrality_df.empty:
         cent_map = dict(zip(centrality_df["ticker"], centrality_df["eigenvector_centrality"]))
         final_df["centrality_i"] = final_df["ticker_i"].map(cent_map).fillna(0.0)

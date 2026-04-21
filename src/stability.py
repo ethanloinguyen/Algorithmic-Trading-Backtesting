@@ -27,6 +27,7 @@ from src.bq_io import (read_all_pair_results_filtered, write_dataframe,
                        get_client, full_table)
 from src.config_loader import get_config
 from src.dcor_engine import compute_sharpness
+from src.windows import generate_rolling_windows
 
 logger = logging.getLogger(__name__)
 
@@ -149,9 +150,13 @@ def compute_stability_metrics() -> pd.DataFrame:
     """
     raw_df = client.query(raw_query).to_dataframe()
 
-    # Total number of windows
+    # Total windows ever processed — use the full config window list so windows
+    # with zero significant pairs still count toward the frequency denominator.
+    all_config_windows = generate_rolling_windows()
+    total_windows = len(all_config_windows)
+
+    # Window index map for half-life decay fitting (use filtered windows for ordering)
     all_windows = sorted(filtered["window_start"].unique())
-    total_windows = len(all_windows)
     window_index_map = {w: i for i, w in enumerate(all_windows)}
 
     logger.info(f"Processing {total_windows} windows, "
@@ -174,8 +179,10 @@ def compute_stability_metrics() -> pd.DataFrame:
         win_indices = np.array([window_index_map[w] for w in group["window_start"]])
         dcor_vals = group["dcor"].values
 
-        # Frequency: fraction of all windows where this pair was significant
-        frequency = len(group) / total_windows
+        # Fraction of all windows where this pair was significant.
+        # Use nunique() on window_start — a pair can have multiple significant
+        # lags in one window, which would inflate len(group) above total_windows.
+        frequency = group["window_start"].nunique() / total_windows
 
         # Mean and variance of dCor across significant windows
         mean_dcor = float(dcor_vals.mean())
