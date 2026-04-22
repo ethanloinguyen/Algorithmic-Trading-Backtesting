@@ -3,8 +3,8 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from app.core.config import get_settings
-from app.routers import stocks, indices
 from app.routers.model import router as model_router
+from app.routers import stocks, indices, portfolio
 
 settings = get_settings()
 
@@ -27,26 +27,22 @@ origins = list(set(custom_origins + [
 # ── CORS ──────────────────────────────────────────────────────────────────────
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=settings.origins_list,
+    allow_credentials=False,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type"],
 )
 
-# ── Routers ───────────────────────────────────────────────────────────────────
 app.include_router(stocks.router)
 app.include_router(indices.router)
 app.include_router(model_router)
+app.include_router(portfolio.router)
 
-# ── Health check ──────────────────────────────────────────────────────────────
+
 @app.get("/health", tags=["health"])
 def health():
     return {"status": "ok"}
 
-# ── Global exception handler ──────────────────────────────────────────────────
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception):
-    return JSONResponse(
-        status_code=500,
-        content={"error": "Internal server error"},
-    )
+    return JSONResponse(status_code=500, content={"error": "Internal server error"})

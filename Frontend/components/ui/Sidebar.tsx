@@ -2,7 +2,7 @@
 "use client";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { TrendingUp, BarChart2, Grid, User, LogOut } from "lucide-react";
+import { TrendingUp, BarChart2, Grid, User, LogOut, Sparkles } from "lucide-react";
 import { useAuth } from "@/src/app/context/AuthContext";
 
 export default function Sidebar({ isOpen, onClose }: { isOpen?: boolean; onClose?: () => void }) {
@@ -12,15 +12,15 @@ export default function Sidebar({ isOpen, onClose }: { isOpen?: boolean; onClose
 
   const handleLogout = async () => {
     await logout();
-    // Clear the middleware auth cookie
     document.cookie = "ll_authed=; Max-Age=0; path=/";
     router.push("/");
   };
 
   const navItems = [
-    { href: "/dashboard",          label: "Dashboard", icon: TrendingUp },
-    { href: "/dashboard/analysis", label: "Analysis",  icon: BarChart2  },
-    { href: "/dashboard/heatmap",  label: "Heatmap",   icon: Grid       },
+    { href: "/dashboard",            label: "Dashboard",  icon: TrendingUp },
+    { href: "/dashboard/analysis",   label: "Analysis",   icon: BarChart2  },
+    { href: "/dashboard/heatmap",    label: "Heatmap",    icon: Grid       },
+    { href: "/dashboard/diversify",  label: "Diversify",  icon: Sparkles   },
   ];
 
   const displayName = user?.displayName || user?.email?.split("@")[0] || "User";
@@ -65,7 +65,6 @@ export default function Sidebar({ isOpen, onClose }: { isOpen?: boolean; onClose
 
       {/* Right side */}
       <div className="ml-auto flex items-center gap-3">
-        {/* User pill — links to profile page */}
         <Link
           href="/dashboard/profile"
           className="flex items-center gap-2 px-3 py-1.5 rounded-full text-sm transition-colors hover:opacity-80"
