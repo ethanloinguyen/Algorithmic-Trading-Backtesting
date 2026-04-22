@@ -2,33 +2,13 @@
 "use client";
 import { useEffect, useState } from "react";
 import { fetchIndices, type IndexSummary } from "@/src/app/lib/api";
-import { doc, getDoc, setDoc, Timestamp } from "firebase/firestore";
-import { db } from "@/src/app/lib/firebase";
+import { getCachedIndices } from "@/src/app/lib/stockCache";
 
-const TTL_INDICES = 5 * 60 * 1000; // 5 minutes
 const DISPLAY_ORDER = ["SPX", "IXIC", "DJI"];
-
-// Static sparklines — direction reflects positive/negative from API
 const SPARKLINES = {
   up:   "0,22 12,18 24,20 36,14 48,16 60,10 72,13 84,9  96,11 100,8",
   down: "0,8  12,11 24,9  36,14 48,12 60,18 72,15 84,20 96,17 100,22",
 };
-
-async function getCachedIndices(): Promise<{ data: IndexSummary[]; stale: boolean } | null> {
-  try {
-    const snap = await getDoc(doc(db, "cache", "index_summaries"));
-    if (!snap.exists()) return null;
-    const d = snap.data() as { data: IndexSummary[]; updatedAt: Timestamp };
-    const stale = Date.now() - d.updatedAt.toMillis() > TTL_INDICES;
-    return { data: d.data, stale };
-  } catch { return null; }
-}
-
-async function setCachedIndices(data: IndexSummary[]): Promise<void> {
-  try {
-    await setDoc(doc(db, "cache", "index_summaries"), { data, updatedAt: Timestamp.now() });
-  } catch { /* non-critical */ }
-}
 
 export default function SectorFilter() {
   const [indices, setIndices] = useState<IndexSummary[]>([]);
@@ -39,22 +19,21 @@ export default function SectorFilter() {
     let cancelled = false;
 
     async function load() {
-      // Try cache first
+      // ── 1. Read Firestore cache written by backend ────────────────────────
       const cached = await getCachedIndices();
       if (cached && !cancelled) {
-        setIndices(cached.data);
+        setIndices(cached.data); // ← no cast needed — getCachedIndices returns IndexSummary[]
         setLoading(false);
         if (!cached.stale) return;
       }
 
-      // Fetch fresh from backend
+      // ── 2. Call backend (checks its own Firestore cache, then BigQuery) ───
       try {
         const fresh = await fetchIndices();
         if (!cancelled) {
           setIndices(fresh);
           setLoading(false);
           setError(false);
-          setCachedIndices(fresh);
         }
       } catch {
         if (!cancelled && !cached) {
@@ -96,7 +75,7 @@ export default function SectorFilter() {
   return (
     <div className="flex gap-4 mb-6">
       {cards.map((idx) => {
-        const lineColor = idx.positive ? "hsl(142, 71%, 45%)" : "hsl(0, 84%, 60%)";
+        const lineColor = idx.positive ? "hsl(142,71%,45%)" : "hsl(0,84%,60%)";
         const sparkline = idx.positive ? SPARKLINES.up : SPARKLINES.down;
         return (
           <div key={idx.symbol} className="flex-1 rounded-xl p-5"
@@ -125,7 +104,7 @@ export default function SectorFilter() {
               <defs>
                 <linearGradient id={`spark-${idx.symbol}`} x1="0" y1="0" x2="0" y2="1">
                   <stop offset="0%"   stopColor={lineColor} stopOpacity="0.2" />
-                  <stop offset="100%" stopColor={lineColor} stopOpacity="0" />
+                  <stop offset="100%" stopColor={lineColor} stopOpacity="0"   />
                 </linearGradient>
               </defs>
               <polygon fill={`url(#spark-${idx.symbol})`} points={`0,30 ${sparkline} 100,30`} />

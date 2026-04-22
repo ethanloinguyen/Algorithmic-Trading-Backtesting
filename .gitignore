@@ -3,6 +3,8 @@
 *.env
 .env.local
 .env.*.local
+bin
+lib
 
 # Python
 __pycache__/
@@ -12,6 +14,9 @@ __pycache__/
 .Python
 env/
 venv/
+venv_deltalag
+
+
 *.egg-info/
 dist/
 build/
