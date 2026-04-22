@@ -18,5 +18,5 @@ def analyze_portfolio(body: PortfolioRequest):
         raise HTTPException(status_code=400, detail="At least one ticker is required.")
     if len(body.tickers) > 100:
         raise HTTPException(status_code=400, detail="Maximum 100 tickers per request.")
-    result = run_portfolio_analysis(tickers=body.tickers)
+    result = run_portfolio_analysis(tickers=body.tickers, analysis_mode=body.analysis_mode)
     return PortfolioAnalysisResponse(**result)

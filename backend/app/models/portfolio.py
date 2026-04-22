@@ -1,9 +1,11 @@
 # backend/app/models/portfolio.py
+from typing import Literal
 from pydantic import BaseModel
 
 
 class PortfolioRequest(BaseModel):
     tickers: list[str]
+    analysis_mode: Literal["broad_market", "in_sector"] = "broad_market"
 
 
 class OverlapResult(BaseModel):

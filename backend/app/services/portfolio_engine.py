@@ -24,7 +24,6 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
-# Half-life cap: signals persisting beyond 1 trading year treated equally
 _HALF_LIFE_CAP_DAYS = 252.0
 
 
@@ -58,27 +57,24 @@ class Recommendation:
     best_relationship_strength: float
     mean_relationship_strength: float
     related_holdings:           list
-    direction:                  str   # "leads_your_holdings" | "follows_your_holdings" | "both"
+    direction:                  str
     signal_score:               float
     centrality_score:           float
     sector_diversity_score:     float
     coverage_score:             float
-    durability_score:           float  # NEW: normalized half-life 0-100
+    durability_score:           float
     reasoning:                  str
 
 
 @dataclass
 class IndependentRecommendation:
-    """
-    Group B — stock with zero detected relationship to any holding.
-    Ranked by composite of sector gap (primary) and centrality (secondary).
-    """
+    """Group B — stock with zero detected relationship to any holding."""
     ticker:            str
     sector:            str
     centrality:        float
-    composite_score:   float   # 0-100: 70% sector gap + 30% centrality
-    sector_gap_score:  float   # 100 if sector absent from portfolio, else scaled down
-    centrality_score:  float   # normalized 0-100
+    composite_score:   float
+    sector_gap_score:  float
+    centrality_score:  float
     reasoning:         str
 
 
@@ -89,8 +85,19 @@ def _normalize_tickers(tickers: list) -> list:
 
 
 def get_ticker_metadata(df: pd.DataFrame) -> pd.DataFrame:
-    from app.services.mock_final_network import get_ticker_metadata as _meta
-    return _meta(df)
+    """
+    Derive ticker → (sector, centrality) from the network DataFrame.
+    Works directly from the pair rows — no separate metadata table needed.
+    """
+    if df.empty:
+        return pd.DataFrame(columns=["ticker", "sector", "centrality"]).set_index("ticker")
+
+    side_i = df[["ticker_i", "sector_i", "centrality_i"]].rename(
+        columns={"ticker_i": "ticker", "sector_i": "sector", "centrality_i": "centrality"})
+    side_j = df[["ticker_j", "sector_j", "centrality_j"]].rename(
+        columns={"ticker_j": "ticker", "sector_j": "sector", "centrality_j": "centrality"})
+    meta = pd.concat([side_i, side_j]).drop_duplicates("ticker")
+    return meta.set_index("ticker")
 
 
 def _sector_distribution(holdings: list, meta: pd.DataFrame) -> dict:
@@ -103,11 +110,6 @@ def _sector_distribution(holdings: list, meta: pd.DataFrame) -> dict:
 
 
 def _compute_durability_score(half_life: float) -> float:
-    """
-    Normalize half_life (days) to 0-100.
-    Capped at _HALF_LIFE_CAP_DAYS (252 = 1 trading year).
-    half_life of -1 means fit failed — treat as 0 durability.
-    """
     if half_life is None or half_life < 0:
         return 0.0
     return min(half_life, _HALF_LIFE_CAP_DAYS) / _HALF_LIFE_CAP_DAYS * 100.0
@@ -182,7 +184,7 @@ def analyze_portfolio_overlap(
     min_signal_strength: float = 0.0,
 ) -> list[OverlapResult]:
     tickers = set(_normalize_tickers(user_tickers))
-    if len(tickers) < 2:
+    if len(tickers) < 2 or network_df.empty:
         return []
 
     mask = (
@@ -226,7 +228,7 @@ def get_signal_recommendations(
     centrality_weight: float = 0.10,
 ) -> list[Recommendation]:
     tickers = set(_normalize_tickers(user_tickers))
-    if not tickers:
+    if not tickers or network_df.empty:
         return []
 
     meta        = get_ticker_metadata(network_df)
@@ -238,22 +240,20 @@ def get_signal_recommendations(
     if filtered.empty:
         return []
 
-    # Check if centrality data is actually populated — if all zero, redistribute weight
+    # Check centrality availability — if all zero, redistribute weight to signal
     all_centrality = pd.concat([
         filtered["centrality_i"].fillna(0.0),
         filtered["centrality_j"].fillna(0.0),
     ])
-    centrality_available = all_centrality.max() > 0.0
-    if not centrality_available:
-        # Redistribute centrality weight to signal_score
-        signal_weight    = signal_weight + centrality_weight
+    if all_centrality.max() == 0.0:
+        signal_weight     = signal_weight + centrality_weight
         centrality_weight = 0.0
 
     candidates: dict = {}
     for _, row in filtered.iterrows():
-        ti, tj   = row["ticker_i"], row["ticker_j"]
-        ti_in    = ti in tickers
-        tj_in    = tj in tickers
+        ti, tj = row["ticker_i"], row["ticker_j"]
+        ti_in  = ti in tickers
+        tj_in  = tj in tickers
         if ti_in and tj_in:
             continue
         if ti_in and not tj_in:
@@ -266,8 +266,8 @@ def get_signal_recommendations(
         if cand not in candidates:
             candidates[cand] = {
                 "signal_strengths": [],
-                "frequencies":      [],   # collected alongside signal_strengths
-                "half_lives":       [],   # for durability score
+                "frequencies":      [],
+                "half_lives":       [],
                 "related_holdings": [],
                 "directions":       [],
                 "centrality":       0.0,
@@ -275,9 +275,7 @@ def get_signal_recommendations(
             }
 
         candidates[cand]["signal_strengths"].append(float(row["signal_strength"]))
-        # frequency: fraction of 15-yr windows where this pair was significant
         candidates[cand]["frequencies"].append(float(row.get("frequency", 0.5)))
-        # half_life: days until signal decays to half strength
         candidates[cand]["half_lives"].append(float(row.get("half_life", -1.0)))
         candidates[cand]["related_holdings"].append(holding)
         candidates[cand]["directions"].append(direction)
@@ -304,22 +302,15 @@ def get_signal_recommendations(
         sector  = data["sector"]
         n_conn  = len(set(related))
 
-        # Frequency-weighted signal score — pairs that appeared consistently
-        # across more windows contribute more weight than sporadic ones
         total_freq = sum(freqs)
-        if total_freq > 0:
-            signal_score = float(np.average(sigs, weights=freqs))
-        else:
-            signal_score = float(np.mean(sigs))
+        signal_score = float(np.average(sigs, weights=freqs)) if total_freq > 0 else float(np.mean(sigs))
 
         centrality_score       = (data["centrality"] / max_centrality) * 100.0
         coverage_score         = (n_conn / max_coverage) * 100.0
         sector_frac            = sector_dist.get(sector, 0) / total if total else 0
         sector_diversity_score = max(0.0, (1.0 - sector_frac) * 100.0)
 
-        # Durability: use the best (longest) half_life among all connections
-        # Best = most persistent relationship this candidate has with the portfolio
-        valid_hls     = [h for h in hls if h > 0]
+        valid_hls      = [h for h in hls if h > 0]
         best_half_life = max(valid_hls) if valid_hls else -1.0
         durability_score = _compute_durability_score(best_half_life)
 
@@ -366,69 +357,64 @@ def get_independent_recommendations(
     top_n: int = 10,
     sector_gap_weight: float = 0.70,
     centrality_weight: float = 0.30,
+    universe_meta_df: pd.DataFrame | None = None,
 ) -> list[IndependentRecommendation]:
     """
     Group B: stocks with ZERO detected lead-lag relationships to any user holding.
 
-    If centrality data is unavailable (all zeros), full weight goes to sector_gap_score.
+    universe_meta_df: optional compact DataFrame with columns [ticker, sector, centrality]
+    representing the full ticker universe. If provided, used instead of network_df
+    to build the candidate pool — this avoids needing to load the full network table.
     """
     tickers = set(_normalize_tickers(user_tickers))
     if not tickers:
         return []
 
-    meta           = get_ticker_metadata(network_df)
-    universe       = set(meta.index.tolist())
-    candidates     = universe - tickers
-    sector_dist    = _sector_distribution(list(tickers), meta)
+    # Determine sector distribution from available metadata
+    meta_for_dist = get_ticker_metadata(network_df)
+    sector_dist   = _sector_distribution(list(tickers), meta_for_dist)
     total_holdings = len(tickers)
 
+    # Build the universe from compact metadata if provided, else fall back to network_df
+    if universe_meta_df is not None and not universe_meta_df.empty:
+        # universe_meta_df has columns: ticker, sector, centrality
+        universe_df = universe_meta_df.copy()
+    else:
+        # Fall back: derive from the pair rows we already have
+        side_i = network_df[["ticker_i", "sector_i", "centrality_i"]].rename(
+            columns={"ticker_i": "ticker", "sector_i": "sector", "centrality_i": "centrality"})
+        side_j = network_df[["ticker_j", "sector_j", "centrality_j"]].rename(
+            columns={"ticker_j": "ticker", "sector_j": "sector", "centrality_j": "centrality"})
+        universe_df = pd.concat([side_i, side_j]).drop_duplicates("ticker")
+
+    # Tickers connected to user holdings (from the targeted network_df slice)
+    connected: set[str] = set()
+    if not network_df.empty:
+        involves_user = (
+            network_df["ticker_i"].isin(tickers) | network_df["ticker_j"].isin(tickers)
+        )
+        related_df = network_df[involves_user]
+        connected  = set(related_df["ticker_i"].tolist() + related_df["ticker_j"].tolist())
+        connected -= tickers
+
     # Check centrality availability
-    all_centrality = pd.concat([
-        network_df["centrality_i"].fillna(0.0),
-        network_df["centrality_j"].fillna(0.0),
-    ])
-    centrality_available = all_centrality.max() > 0.0
-    if not centrality_available:
+    max_cent_val = universe_df["centrality"].max() if not universe_df.empty else 0.0
+    if max_cent_val == 0.0:
         sector_gap_weight = 1.0
         centrality_weight = 0.0
 
-    # Find all tickers connected to user holdings (signal-connected group)
-    involves_user = (
-        network_df["ticker_i"].isin(tickers) | network_df["ticker_j"].isin(tickers)
-    )
-    related_df = network_df[involves_user]
-    connected  = set(related_df["ticker_i"].tolist() + related_df["ticker_j"].tolist())
-    connected -= tickers
-
-    truly_independent = candidates - connected
-    if not truly_independent:
-        return []
-
-    raw = []
-    for ticker in truly_independent:
-        if ticker not in meta.index:
-            continue
-        row = meta.loc[ticker]
-        raw.append({
-            "ticker":     ticker,
-            "sector":     row["sector"],
-            "centrality": float(row["centrality"]),
-        })
-
-    if not raw:
-        return []
-
-    max_cent = max(r["centrality"] for r in raw) or 1.0
-
     results = []
-    for r in raw:
-        ticker = r["ticker"]
-        sector = r["sector"]
-        cent   = r["centrality"]
+    for _, row in universe_df.iterrows():
+        ticker = row["ticker"]
+        if ticker in tickers or ticker in connected:
+            continue
+
+        sector = row["sector"]
+        cent   = float(row["centrality"])
 
         sector_frac      = sector_dist.get(sector, 0) / total_holdings if total_holdings else 0
         sector_gap_score = max(0.0, (1.0 - sector_frac) * 100.0)
-        centrality_score = (cent / max_cent) * 100.0
+        centrality_score = (cent / max_cent_val * 100.0) if max_cent_val > 0 else 0.0
 
         composite = (
             sector_gap_weight  * sector_gap_score +
@@ -457,11 +443,6 @@ def get_holdings_sectors(
     user_tickers: list,
     network_df: pd.DataFrame,
 ) -> dict[str, str]:
-    """
-    Return {ticker: sector} for all known user holdings.
-    Used by frontend to populate the SectorDonut "current portfolio" view
-    regardless of whether any overlaps exist.
-    """
     tickers = _normalize_tickers(user_tickers)
     meta    = get_ticker_metadata(network_df)
     result  = {}

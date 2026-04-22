@@ -11,6 +11,7 @@ import {
   type OverlapResult,
   type Recommendation,
   type IndependentRecommendation,
+  type AnalysisMode,
 } from "@/src/app/lib/api";
 import {
   AlertTriangle, TrendingUp, Plus, X,
@@ -378,6 +379,8 @@ function IndependentRecCard({ rec, rank, companyNames, onTickerClick }: {
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 export default function DiversifyPage() {
+  const [analysisMode,  setAnalysisMode]  = useState<AnalysisMode>("broad_market");
+  const [resultMode,    setResultMode]    = useState<AnalysisMode>("broad_market");
   const [inputVal,      setInputVal]      = useState("");
   const [tickers,       setTickers]       = useState<string[]>([]);
   const [loading,       setLoading]       = useState(false);
@@ -438,8 +441,9 @@ export default function DiversifyPage() {
     if (!toAnalyze.length) return;
     setLoading(true); setError(null); setResult(null); setActiveSpiderIdx(0);
     try {
-      const data = await analyzePortfolio(toAnalyze);
+      const data = await analyzePortfolio(toAnalyze, analysisMode);
       setResult(data);
+      setResultMode(analysisMode);
       const allTickers = [
         ...data.tickers_analyzed,
         ...data.signal_recommendations.map(r => r.ticker),
@@ -543,7 +547,26 @@ export default function DiversifyPage() {
               ))}
             </div>
 
-            <div className="flex items-center gap-3 mt-4">
+            {/* Analysis mode toggle */}
+            <div className="flex items-center gap-2 mt-4">
+              <span className="text-xs" style={{ color: TEXT_MUT }}>Analysis scope:</span>
+              <div className="flex items-center p-0.5 rounded-lg"
+                style={{ background: "hsl(215,25%,9%)", border: `1px solid ${BORDER}` }}>
+                {(["broad_market", "in_sector"] as const).map(mode => (
+                  <button
+                    key={mode}
+                    onClick={() => { setAnalysisMode(mode); setResult(null); }}
+                    className="px-3 py-1.5 rounded-md text-xs font-semibold transition-colors"
+                    style={analysisMode === mode
+                      ? { background: BLUE, color: "white" }
+                      : { color: TEXT_SEC, background: "transparent" }}>
+                    {mode === "broad_market" ? "Broad Market" : "In-Sector"}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3 mt-3">
               <button onClick={handleAnalyze}
                 disabled={loading || (tickers.length === 0 && !inputVal.trim())}
                 className="flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-semibold disabled:opacity-40"
@@ -576,6 +599,21 @@ export default function DiversifyPage() {
           {/* Results */}
           {hasResult && result && (
             <div>
+              {/* Active mode banner */}
+              <div className="rounded-xl px-5 py-3 mb-4 flex items-center gap-2"
+                style={{
+                  background: resultMode === "in_sector" ? "hsla(270,70%,65%,0.08)" : BLUE_DIM,
+                  border: `1px solid ${resultMode === "in_sector" ? "hsla(270,70%,65%,0.3)" : "hsla(217,91%,60%,0.3)"}`,
+                }}>
+                <BarChart3 className="w-4 h-4 flex-shrink-0"
+                  style={{ color: resultMode === "in_sector" ? PURPLE : BLUE }} />
+                <p className="text-xs" style={{ color: resultMode === "in_sector" ? PURPLE : BLUE }}>
+                  {resultMode === "in_sector"
+                    ? "In-Sector analysis — pairs are residualized against both market and sector returns, and only stocks within the same sector can form relationships."
+                    : "Broad Market analysis — pairs are residualized against market returns across all sectors."}
+                </p>
+              </div>
+
               {result.unknown_tickers.length > 0 && (
                 <div className="rounded-xl px-5 py-3 mb-4 flex items-center gap-2"
                   style={{ background: "hsla(38,92%,50%,0.1)", border: "1px solid hsla(38,92%,50%,0.3)" }}>

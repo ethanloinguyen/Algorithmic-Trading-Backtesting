@@ -14,6 +14,7 @@ export interface IndexSummary {
   change: string; pct: string; price: string; positive: boolean;
 }
 export type TimeRange = "1D" | "1W" | "1M" | "3M" | "1Y" | "5Y";
+export type AnalysisMode = "broad_market" | "in_sector";
 
 // ── Portfolio types ───────────────────────────────────────────────────────────
 
@@ -95,11 +96,14 @@ export async function fetchIndices(): Promise<IndexSummary[]> {
   return data.data;
 }
 
-export async function analyzePortfolio(tickers: string[]): Promise<PortfolioAnalysisResponse> {
+export async function analyzePortfolio(
+  tickers: string[],
+  analysis_mode: AnalysisMode = "broad_market",
+): Promise<PortfolioAnalysisResponse> {
   const res = await fetch(`${BASE}/api/portfolio/analyze`, {
     method: "POST", cache: "no-store",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ tickers: tickers.map(t => t.toUpperCase()) }),
+    body: JSON.stringify({ tickers: tickers.map(t => t.toUpperCase()), analysis_mode }),
   });
   if (!res.ok) throw new Error(`/api/portfolio/analyze → HTTP ${res.status} ${res.statusText}`);
   return res.json() as Promise<PortfolioAnalysisResponse>;
