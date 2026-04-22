@@ -143,7 +143,8 @@ def setup_distributed(backend: str):
     """
     dist.init_process_group(backend=backend)
     local_rank = int(os.environ["LOCAL_RANK"])
-    torch.cuda.set_device(local_rank)
+    if torch.cuda.is_available(): # fix crash on cpu to run on lab server
+        torch.cuda.set_device(local_rank)
     return local_rank
 
 
