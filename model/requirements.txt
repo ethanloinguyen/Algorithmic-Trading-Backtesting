@@ -1,0 +1,13 @@
+# DeltaLag v10 — Distributed Training
+# =====================================
+# Pin exact versions to ensure reproducibility across cluster nodes.
+# Install with: pip install -r requirements.txt
+
+torch>=2.1.0               # DDP, torchrun, no_sync context manager
+yfinance>=0.2.18           # OHLCV download
+pandas>=2.0.0
+numpy==1.26.4              # 1.x required for PyTorch ABI compatibility
+scikit-learn>=1.3.0        # RobustScaler
+scipy>=1.11.0              # spearmanr
+matplotlib>=3.7.0          # training curve plots (rank 0 only)
+tqdm>=4.65.0
