@@ -423,9 +423,10 @@ def run_step_finalize(dry_run: bool = False) -> bool:
     import pandas as pd
     from src.bq_io import (
         get_client, full_table, write_dataframe,
-        read_stability_metrics, read_oos_strategy_returns,
+        read_oos_strategy_returns,
         upsert_final_network,
     )
+    from src.stability import compute_stability_metrics
     from src.bootstrap import run_model_refit, compute_predicted_sharpe, compute_signal_strength
     from src.network import build_directed_graph, compute_centrality
     from src.oos_model import compute_sharpe, compute_global_oos_dcor
@@ -459,9 +460,9 @@ def run_step_finalize(dry_run: bool = False) -> bool:
     global_sharpe_df = pd.DataFrame(results)
     logger.info(f"  Global OOS Sharpe computed for {len(global_sharpe_df):,} pairs")
 
-    # ── Stability metrics (already in BQ) ─────────────────────────────────
-    logger.info("[FINALIZE] Step 2: Loading stability metrics...")
-    stability_df = read_stability_metrics()
+    # ── Stability metrics — recompute so frequency/half_life are fresh ────
+    logger.info("[FINALIZE] Step 2: Recomputing stability metrics...")
+    stability_df = compute_stability_metrics()
     if stability_df.empty:
         logger.error("[FINALIZE] stability_metrics is empty — cannot fit model")
         return False
