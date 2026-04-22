@@ -1,7 +1,10 @@
 // Frontend/src/app/page.tsx
 "use client";
-import AuthForm from "@/components/ui/Authform";
+import { useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { useAuth } from "@/src/app/context/AuthContext";
+import AuthForm  from "@/components/ui/AuthForm";
 
-export default function LoginPage() {
+export default function Page() {
   return <AuthForm />;
 }

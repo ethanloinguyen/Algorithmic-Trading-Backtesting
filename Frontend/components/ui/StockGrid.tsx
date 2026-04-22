@@ -5,7 +5,7 @@ import { Star, Loader2 } from "lucide-react";
 import { useAuth } from "@/src/app/context/AuthContext";
 import StockModal, { type Stock } from "@/components/ui/StockModal";
 import { fetchAllStocks, type StockSummary } from "@/src/app/lib/api";
-import { getCachedSummaries, setCachedSummaries } from "@/src/app/lib/stockCache";
+import { getCachedSummaries } from "@/src/app/lib/stockCache";
 
 // ── Star button ───────────────────────────────────────────────────────────────
 

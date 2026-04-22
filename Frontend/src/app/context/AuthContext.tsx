@@ -15,14 +15,10 @@ import {
   setDoc,
   updateDoc,
   arrayUnion,
-  arrayRemove,
 } from "firebase/firestore";
-
-// ✅ Correct import path — firebase.ts lives at Frontend/src/app/lib/firebase.ts
 import { auth, db } from "@/src/app/lib/firebase";
-import { getTopClickedSymbols, recordStockClick } from "@/src/app/lib/stockCache";
+import { recordStockClick, getTopClickedSymbols } from "@/src/app/lib/stockCache";
 import { fetchOHLCV } from "@/src/app/lib/api";
-import { setCachedOHLCV, getCachedOHLCV } from "@/src/app/lib/stockCache";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -32,13 +28,13 @@ export interface SavedStock {
 }
 
 interface AuthContextValue {
-  user:           User | null;
-  loading:        boolean;
-  savedStocks:    SavedStock[];
-  isSaved:        (symbol: string) => boolean;
-  toggleSave:     (stock: SavedStock) => Promise<void>;
-  trackClick:     (symbol: string) => Promise<void>;
-  logout:         () => Promise<void>;
+  user:        User | null;
+  loading:     boolean;
+  savedStocks: SavedStock[];
+  isSaved:     (symbol: string) => boolean;
+  toggleSave:  (stock: SavedStock) => Promise<void>;
+  trackClick:  (symbol: string) => Promise<void>;
+  logout:      () => Promise<void>;
 }
 
 // ── Context ───────────────────────────────────────────────────────────────────
@@ -64,7 +60,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading,     setLoading]     = useState(true);
   const [savedStocks, setSavedStocks] = useState<SavedStock[]>([]);
 
-  // Load saved stocks + pre-warm OHLCV cache for top-clicked stocks
+  // Load saved stocks from Firestore and pre-warm cache for top-clicked stocks
   const loadUserData = useCallback(async (uid: string) => {
     const ref  = doc(db, "users", uid);
     const snap = await getDoc(ref);
@@ -72,11 +68,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (snap.exists()) {
       setSavedStocks((snap.data().savedStocks as SavedStock[]) ?? []);
     } else {
+      // First login — create user document
       await setDoc(ref, { savedStocks: [], clickedStocks: {} });
       setSavedStocks([]);
     }
 
-    // Pre-warm Firestore cache for this user's top-clicked stocks (background)
+    // Pre-warm: call the backend API for top-clicked stocks.
+    // The backend will query BigQuery if needed and write results to Firestore,
+    // so subsequent modal opens are instant reads from Firestore.
     prewarmTopStocks(uid);
   }, []);
 
@@ -94,7 +93,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return unsub;
   }, [loadUserData]);
 
-  // Toggle save/unsave a stock in Firestore
+  // Toggle save/unsave — writes to Firestore users/{uid}/savedStocks
   const toggleSave = useCallback(async (stock: SavedStock) => {
     if (!user) return;
     const ref          = doc(db, "users", user.uid);
@@ -103,7 +102,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (alreadySaved) {
       const updated = savedStocks.filter(s => s.symbol !== stock.symbol);
       setSavedStocks(updated);
-      // Use setDoc merge to guarantee removal even if arrayRemove object-match fails
+      // Use setDoc merge to guarantee removal regardless of object shape
       await setDoc(ref, { savedStocks: updated }, { merge: true });
     } else {
       setSavedStocks(prev => [...prev, stock]);
@@ -112,23 +111,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [user, savedStocks]);
 
   /**
-   * Call this whenever a user clicks on a stock to open the modal.
-   * It increments the click counter in Firestore and pre-warms the
-   * 1M OHLCV cache so the next open is instant.
+   * Call when a user opens a stock modal.
+   * Records the click in Firestore and triggers a background backend fetch
+   * (which also warms the Firestore OHLCV cache) for next time.
    */
   const trackClick = useCallback(async (symbol: string) => {
     if (!user) return;
-    // Fire-and-forget — don't block the UI
-    recordStockClick(user.uid, symbol).then(() => {
-      // After recording, check if cache needs warming for this symbol
-      getCachedOHLCV(symbol, "1M").then(cached => {
-        if (!cached || cached.stale) {
-          fetchOHLCV(symbol, "1M")
-            .then(candles => setCachedOHLCV(symbol, "1M", candles))
-            .catch(() => {}); // Non-critical
-        }
-      });
-    });
+    // Record click count — fire and forget
+    recordStockClick(user.uid, symbol);
+    // Warm the backend cache by calling the API (backend writes to Firestore)
+    fetchOHLCV(symbol, "1M").catch(() => {});
   }, [user]);
 
   const logout = useCallback(async () => {
@@ -148,23 +140,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 }
 
-// ── Background cache pre-warmer ───────────────────────────────────────────────
+// ── Background pre-warmer ─────────────────────────────────────────────────────
 
 /**
- * Runs in the background after login.
- * Fetches the top-5 most-clicked stocks for this user and warms their
- * 1M OHLCV cache in Firestore so modals open instantly.
+ * After login, call the backend for the user's top 5 most-clicked stocks.
+ * The backend checks its own Firestore cache first, only hitting BigQuery
+ * if stale. Either way the Firestore cache is refreshed so the next modal
+ * open is an instant Firestore read.
  */
 async function prewarmTopStocks(uid: string): Promise<void> {
   try {
     const topSymbols = await getTopClickedSymbols(uid, 5);
-    for (const symbol of topSymbols) {
-      const cached = await getCachedOHLCV(symbol, "1M");
-      if (!cached || cached.stale) {
-        const candles = await fetchOHLCV(symbol, "1M");
-        await setCachedOHLCV(symbol, "1M", candles);
-      }
-    }
+    await Promise.allSettled(
+      topSymbols.map(symbol => fetchOHLCV(symbol, "1M"))
+    );
   } catch {
     // Non-critical background task
   }

@@ -1,5 +1,8 @@
 // frontend/components/ui/card.tsx
+"use client";
 import * as React from "react"
+import { cn } from "@/src/app/lib/utils"
+
 
 function Card({ className, ...props }: React.ComponentProps<"div">) {
   return (

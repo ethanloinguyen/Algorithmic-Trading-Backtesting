@@ -2,9 +2,9 @@
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-
 from app.core.config import get_settings
 from app.routers import stocks, indices
+from app.routers.model import router as model_router
 
 settings = get_settings()
 
@@ -14,25 +14,34 @@ app = FastAPI(
     version="1.0.0",
 )
 
+# Safely combine settings origins with local development origins
+custom_origins = getattr(settings, "origins_list", [])
+if isinstance(custom_origins, str):
+    custom_origins = [custom_origins]
+
+origins = list(set(custom_origins + [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]))
+
 # ── CORS ──────────────────────────────────────────────────────────────────────
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.origins_list,
-    allow_credentials=False,
-    allow_methods=["GET"],
-    allow_headers=["Content-Type"],
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # ── Routers ───────────────────────────────────────────────────────────────────
 app.include_router(stocks.router)
 app.include_router(indices.router)
-
+app.include_router(model_router)
 
 # ── Health check ──────────────────────────────────────────────────────────────
 @app.get("/health", tags=["health"])
 def health():
     return {"status": "ok"}
-
 
 # ── Global exception handler ──────────────────────────────────────────────────
 @app.exception_handler(Exception)
