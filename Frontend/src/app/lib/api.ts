@@ -50,6 +50,33 @@ export interface IndependentRecommendation {
   reasoning:        string;
 }
 
+/** Extended stock info for the Analysis page fundamentals panel */
+export interface StockDetail {
+  symbol:     string;
+  name:       string;
+  sector:     string | null;
+  industry:   string | null;
+  market_cap: number | null;
+  pe_ratio:   number | null;
+  high_52w:   number | null;
+  low_52w:    number | null;
+}
+
+/** Lead-lag pair details from final_network / sector_final_network */
+export interface PairDetail {
+  ticker_i:        string;
+  ticker_j:        string;
+  best_lag:        number;
+  mean_dcor:       number;
+  signal_strength: number;
+  frequency:       number;
+  half_life:       number;
+  oos_sharpe_net:  number;
+  sector_i:        string;
+  sector_j:        string;
+  found:           boolean;
+}
+
 export interface PortfolioAnalysisResponse {
   tickers_analyzed:            string[];
   unknown_tickers:             string[];
@@ -94,6 +121,20 @@ export async function fetchOHLCV(symbol: string, range: TimeRange): Promise<OHLC
 export async function fetchIndices(): Promise<IndexSummary[]> {
   const data = await apiFetch<{ data: IndexSummary[] }>("/api/indices");
   return data.data;
+}
+
+export async function fetchStockDetail(symbol: string): Promise<StockDetail> {
+  return apiFetch<StockDetail>(`/api/stocks/${encodeURIComponent(symbol.toUpperCase())}/detail`);
+}
+
+export async function fetchPairData(
+  tickerI: string,
+  tickerJ: string,
+  analysis_mode: AnalysisMode = "broad_market",
+): Promise<PairDetail> {
+  const ti = encodeURIComponent(tickerI.toUpperCase());
+  const tj = encodeURIComponent(tickerJ.toUpperCase());
+  return apiFetch<PairDetail>(`/api/pairs/${ti}/${tj}?analysis_mode=${analysis_mode}`);
 }
 
 export async function analyzePortfolio(
