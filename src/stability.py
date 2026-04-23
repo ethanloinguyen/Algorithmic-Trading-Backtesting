@@ -140,6 +140,7 @@ def compute_stability_metrics() -> pd.DataFrame:
     if filtered.empty:
         logger.warning("No filtered pair results found. Cannot compute stability.")
         return pd.DataFrame()
+    filtered["window_start"] = pd.to_datetime(filtered["window_start"]).dt.date
 
     # Also pull sharpness from raw results
     client = get_client()
@@ -150,12 +151,18 @@ def compute_stability_metrics() -> pd.DataFrame:
     """
     raw_df = client.query(raw_query).to_dataframe()
 
-    # Total windows ever processed — use the full config window list so windows
-    # with zero significant pairs still count toward the frequency denominator.
-    all_config_windows = generate_rolling_windows()
-    total_windows = len(all_config_windows)
+    # Total windows actually processed — derived from pair_results_raw, which
+    # has a row for every pair in every processed window regardless of significance.
+    # This is the true denominator: if old runs left extra window_starts in
+    # pair_results_filtered, using a config-derived count would be too small
+    # and push frequency above 1.
+    if not raw_df.empty:
+        raw_df["window_start"] = pd.to_datetime(raw_df["window_start"]).dt.date
+        total_windows = raw_df["window_start"].nunique()
+    else:
+        total_windows = len(generate_rolling_windows())
 
-    # Window index map for half-life decay fitting (use filtered windows for ordering)
+    # Window index map for half-life decay fitting
     all_windows = sorted(filtered["window_start"].unique())
     window_index_map = {w: i for i, w in enumerate(all_windows)}
 
