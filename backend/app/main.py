@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.core.config import get_settings
-from app.routers import stocks, indices, portfolio
+from app.routers import stocks, indices, portfolio, pairs
 
 settings = get_settings()
 
@@ -25,6 +25,7 @@ app.add_middleware(
 app.include_router(stocks.router)
 app.include_router(indices.router)
 app.include_router(portfolio.router)
+app.include_router(pairs.router)
 
 
 @app.get("/health", tags=["health"])

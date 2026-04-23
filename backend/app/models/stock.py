@@ -50,6 +50,33 @@ class OHLCVResponse(BaseModel):
     candles: list[OHLCVCandle]
 
 
+class StockDetail(BaseModel):
+    """Extended stock info for the Analysis page fundamentals panel."""
+    symbol:     str
+    name:       str
+    sector:     str | None = None
+    industry:   str | None = None
+    market_cap: int | None = None   # raw integer from ticker_metadata
+    pe_ratio:   float | None = None
+    high_52w:   float | None = None  # computed from market_data
+    low_52w:    float | None = None
+
+
+class PairDetail(BaseModel):
+    """Lead-lag pair details from final_network / sector_final_network."""
+    ticker_i:       str
+    ticker_j:       str
+    best_lag:       int
+    mean_dcor:      float
+    signal_strength: float
+    frequency:      float
+    half_life:      float
+    oos_sharpe_net: float
+    sector_i:       str
+    sector_j:       str
+    found:          bool = True   # False when no relationship detected
+
+
 class StockListResponse(BaseModel):
     data: list[StockSummary]
 

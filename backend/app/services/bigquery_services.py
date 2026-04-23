@@ -6,7 +6,7 @@ from google.cloud import bigquery
 
 from app.core.bigquery import get_bq_client
 from app.core.config import get_settings
-from app.models.stock import OHLCVCandle, StockSummary, IndexSummary, TimeRange
+from app.models.stock import OHLCVCandle, StockSummary, StockDetail, PairDetail, IndexSummary, TimeRange
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -239,3 +239,127 @@ def get_index_summaries() -> list[IndexSummary]:
         ))
 
     return results
+
+
+def get_stock_detail(symbol: str) -> StockDetail:
+    """
+    Fetch extended stock info for the Analysis page fundamentals panel.
+    Pulls market_cap, pe_ratio, sector, industry from ticker_metadata,
+    and computes 52W high/low from market_data (no external API needed).
+    """
+    client   = get_bq_client()
+    settings = get_settings()
+    sym      = symbol.upper()
+
+    query = f"""
+        SELECT
+            tm.company_name,
+            tm.sector,
+            tm.industry,
+            tm.market_cap,
+            tm.pe_ratio,
+            w.high_52w,
+            w.low_52w
+        FROM (
+            SELECT company_name, sector, industry, market_cap, pe_ratio
+            FROM {settings.fq_ticker_metadata}
+            WHERE ticker = @symbol
+        ) tm
+        CROSS JOIN (
+            SELECT
+                MAX(close) AS high_52w,
+                MIN(close) AS low_52w
+            FROM {settings.fq_market_data}
+            WHERE ticker = @symbol
+              AND date >= DATE_SUB(CURRENT_DATE(), INTERVAL 365 DAY)
+        ) w
+    """
+
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ScalarQueryParameter("symbol", "STRING", sym),
+        ]
+    )
+
+    rows = list(client.query(query, job_config=job_config).result())
+    if not rows:
+        return StockDetail(symbol=sym, name=sym)
+
+    row = rows[0]
+    return StockDetail(
+        symbol     = sym,
+        name       = row.company_name or sym,
+        sector     = row.sector,
+        industry   = row.industry,
+        market_cap = row.market_cap,
+        pe_ratio   = float(row.pe_ratio) if row.pe_ratio is not None else None,
+        high_52w   = float(row.high_52w) if row.high_52w is not None else None,
+        low_52w    = float(row.low_52w) if row.low_52w is not None else None,
+    )
+
+
+def get_pair_data(
+    ticker_i: str,
+    ticker_j: str,
+    analysis_mode: str = "broad_market",
+) -> PairDetail:
+    """
+    Fetch lead-lag pair details for (ticker_i, ticker_j) from the appropriate
+    network table. Returns a PairDetail with found=False if no relationship exists.
+
+    Checks both orderings (i→j and j→i) and returns the row with the highest
+    signal_strength.
+    """
+    from app.services.portfolio_service import _TABLE_NAMES
+
+    client     = get_bq_client()
+    settings   = get_settings()
+    table_name = _TABLE_NAMES.get(analysis_mode, "final_network")
+    table      = f"`{settings.gcp_project_id}.{settings.bq_dataset}.{table_name}`"
+    ti         = ticker_i.upper()
+    tj         = ticker_j.upper()
+
+    query = f"""
+        SELECT
+            ticker_i, ticker_j, best_lag, mean_dcor, signal_strength,
+            frequency, half_life, COALESCE(oos_sharpe_net, 0.0) AS oos_sharpe_net,
+            sector_i, sector_j
+        FROM {table}
+        WHERE as_of_date = (SELECT MAX(as_of_date) FROM {table})
+          AND (
+              (ticker_i = @ti AND ticker_j = @tj)
+           OR (ticker_i = @tj AND ticker_j = @ti)
+          )
+        ORDER BY signal_strength DESC
+        LIMIT 1
+    """
+
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ScalarQueryParameter("ti", "STRING", ti),
+            bigquery.ScalarQueryParameter("tj", "STRING", tj),
+        ]
+    )
+
+    rows = list(client.query(query, job_config=job_config).result())
+    if not rows:
+        return PairDetail(
+            ticker_i=ti, ticker_j=tj, best_lag=0, mean_dcor=0.0,
+            signal_strength=0.0, frequency=0.0, half_life=0.0,
+            oos_sharpe_net=0.0, sector_i="", sector_j="", found=False,
+        )
+
+    r = rows[0]
+    return PairDetail(
+        ticker_i        = r.ticker_i,
+        ticker_j        = r.ticker_j,
+        best_lag        = int(r.best_lag),
+        mean_dcor       = round(float(r.mean_dcor), 4),
+        signal_strength = round(float(r.signal_strength), 1),
+        frequency       = round(float(r.frequency), 3),
+        half_life       = round(float(r.half_life), 1),
+        oos_sharpe_net  = round(float(r.oos_sharpe_net), 3),
+        sector_i        = r.sector_i or "",
+        sector_j        = r.sector_j or "",
+        found           = True,
+    )
