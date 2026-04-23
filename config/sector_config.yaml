@@ -130,7 +130,7 @@ tables:
   ticker_metadata: "ticker_metadata"
   ff_factors: "ff_factors"
   filtered_universe: "filtered_universe"
-  rolling_residuals: "rolling_residuals"          # shared — residuals are reused
+  rolling_residuals: "sector_rolling_residuals"   # sector-augmented residuals (FF + sector factor)
   pair_results_raw: "sector_pair_results_raw"
   pair_results_filtered: "sector_pair_results_filtered"
   stability_metrics: "sector_stability_metrics"

@@ -86,33 +86,33 @@ DEFAULT_CONFIG = os.path.join(PROJECT_ROOT, "config", "sector_config.yaml")
 # populated rolling_residuals for the window you want to analyse.
 
 def run_step_residuals(window_start: date, window_end: date, run_id: str) -> bool:
-    """Compute FF residuals for a single window and write to BigQuery."""
-    from src.residuals import compute_residuals_for_window
+    """Compute sector-augmented FF residuals and write to sector_rolling_residuals."""
+    from src.sector_residuals import compute_sector_residuals_for_window
     from src.universe import get_valid_tickers
     from src.bq_io import write_residuals
 
     cfg = get_config()
     factor_model = cfg["residuals"]["factor_model"]
 
-    logger.info(f"[RESIDUALS] Window {window_start} → {window_end}")
+    logger.info(f"[SECTOR RESIDUALS] Window {window_start} → {window_end}")
     try:
         tickers = get_valid_tickers()
         if not tickers:
             logger.error("No valid tickers found. Run setup first.")
             return False
 
-        df = compute_residuals_for_window(
+        df = compute_sector_residuals_for_window(
             window_start, window_end, tickers, factor_model, run_id=run_id
         )
         if df.empty:
-            logger.warning(f"[RESIDUALS] No residuals produced for {window_start}")
+            logger.warning(f"[SECTOR RESIDUALS] No residuals produced for {window_start}")
             return False
 
         write_residuals(df, window_start)
-        logger.info(f"[RESIDUALS] Done: {len(df):,} rows written")
+        logger.info(f"[SECTOR RESIDUALS] Done: {len(df):,} rows written")
         return True
     except Exception as e:
-        logger.error(f"[RESIDUALS] Failed: {e}", exc_info=True)
+        logger.error(f"[SECTOR RESIDUALS] Failed: {e}", exc_info=True)
         return False
 
 
