@@ -383,12 +383,13 @@ def run_step_finalize(dry_run: bool = False) -> bool:
     import pandas as pd
     from src.bq_io import (
         get_client, full_table, write_dataframe,
-        read_stability_metrics, read_oos_strategy_returns,
+        read_oos_strategy_returns,
         upsert_final_network,
     )
     from src.bootstrap import run_model_refit, compute_predicted_sharpe, compute_signal_strength
-    from src.network import run_network_pipeline
+    from src.network import build_directed_graph, compute_centrality
     from src.oos_model import compute_sharpe, compute_global_oos_dcor
+    from src.stability import compute_stability_metrics
 
     cfg = get_config()
     logger.info("[SECTOR FINALIZE] Starting model refit + sector_final_network rebuild")
@@ -418,8 +419,8 @@ def run_step_finalize(dry_run: bool = False) -> bool:
     global_sharpe_df = pd.DataFrame(results)
     logger.info(f"  Global OOS Sharpe for {len(global_sharpe_df):,} sector pairs")
 
-    logger.info("[SECTOR FINALIZE] Step 2: Loading stability metrics...")
-    stability_df = read_stability_metrics()
+    logger.info("[SECTOR FINALIZE] Step 2: Recomputing stability metrics...")
+    stability_df = compute_stability_metrics()
     if stability_df.empty:
         logger.error("[SECTOR FINALIZE] sector_stability_metrics is empty")
         return False
@@ -475,7 +476,8 @@ def run_step_finalize(dry_run: bool = False) -> bool:
     )
 
     logger.info("[SECTOR FINALIZE] Step 6: Computing network centrality...")
-    centrality_df, _ = run_network_pipeline(date.today())
+    G = build_directed_graph(final_df)
+    centrality_df = compute_centrality(G)
     if not centrality_df.empty:
         cent_map = dict(zip(centrality_df["ticker"], centrality_df["eigenvector_centrality"]))
         final_df["centrality_i"] = final_df["ticker_i"].map(cent_map).fillna(0.0)
