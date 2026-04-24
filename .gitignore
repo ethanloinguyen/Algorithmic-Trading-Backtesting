@@ -20,6 +20,7 @@ build/
 Frontend/.next/
 Frontend/node_modules/
 Frontend/next-env.d.ts
+Frontend/tsconfig.tsbuildinfo
 
 # Secrets
 backend/secrets/

@@ -137,6 +137,40 @@ export async function fetchPairData(
   return apiFetch<PairDetail>(`/api/pairs/${ti}/${tj}?analysis_mode=${analysis_mode}`);
 }
 
+// ── Network graph types + endpoint ────────────────────────────────────────────
+
+export interface NetworkNode {
+  id:         string;
+  sector:     string;
+  centrality: number;
+  out_degree: number;
+}
+
+export interface NetworkEdge {
+  source:          string;
+  target:          string;
+  signal_strength: number;
+  best_lag:        number;
+  mean_dcor:       number;
+}
+
+export interface NetworkResponse {
+  nodes:         NetworkNode[];
+  edges:         NetworkEdge[];
+  analysis_mode: string;
+  min_signal:    number;
+}
+
+export async function fetchNetwork(
+  analysis_mode: AnalysisMode = "broad_market",
+  min_signal:    number       = 55,
+  limit:         number       = 50,
+): Promise<NetworkResponse> {
+  return apiFetch<NetworkResponse>(
+    `/api/network?analysis_mode=${analysis_mode}&min_signal=${min_signal}&limit=${limit}`
+  );
+}
+
 export async function analyzePortfolio(
   tickers: string[],
   analysis_mode: AnalysisMode = "broad_market",
