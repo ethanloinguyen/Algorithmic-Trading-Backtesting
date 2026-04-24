@@ -52,7 +52,13 @@ def _get_latest_as_of_date(table_name: str) -> str:
         f"SELECT MAX(as_of_date) AS latest FROM {table}"
     ).to_dataframe()
 
-    date_val = str(result["latest"].iloc[0])
+    raw      = result["latest"].iloc[0]
+    if pd.isna(raw):
+        raise ValueError(
+            f"Table '{table_name}' returned no valid as_of_date — "
+            "the table may be empty or not yet populated."
+        )
+    date_val = str(raw)
     cache["date"] = date_val
     cache["fetched_at"] = now
     return date_val
