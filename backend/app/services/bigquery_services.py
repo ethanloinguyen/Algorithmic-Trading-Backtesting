@@ -6,7 +6,10 @@ from google.cloud import bigquery
 
 from app.core.bigquery import get_bq_client
 from app.core.config import get_settings
-from app.models.stock import OHLCVCandle, StockSummary, StockDetail, PairDetail, IndexSummary, TimeRange
+from app.models.stock import (
+    OHLCVCandle, StockSummary, StockDetail, PairDetail, IndexSummary, TimeRange,
+    NetworkNodeModel, NetworkEdgeModel, NetworkResponse,
+)
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -362,4 +365,165 @@ def get_pair_data(
         sector_i        = r.sector_i or "",
         sector_j        = r.sector_j or "",
         found           = True,
+    )
+
+
+def get_network_data(
+    analysis_mode: str = "broad_market",
+    min_signal:    float = 55.0,
+    limit:         int   = 50,
+) -> NetworkResponse:
+    """
+    Return the top `limit` nodes from the latest network snapshot, plus all
+    directed edges between them above min_signal.
+
+    Primary query ranks nodes by eigenvector centrality (centrality_i/j columns).
+    Falls back to ranking by connection frequency if those columns don't exist yet,
+    assigning centrality=0.0 so the frontend renders all nodes at a fixed size.
+    """
+    from app.services.portfolio_service import _TABLE_NAMES
+
+    client     = get_bq_client()
+    settings   = get_settings()
+    table_name = _TABLE_NAMES.get(analysis_mode, "final_network")
+    table      = f"`{settings.gcp_project_id}.{settings.bq_dataset}.{table_name}`"
+
+    # NOTE: LIMIT in a CTE cannot be parameterised in BigQuery, so limit is
+    # injected via f-string.  It is clamped to [10, 100] by the router before
+    # reaching this function, so there is no injection risk.
+    query_with_centrality = f"""
+        WITH latest AS (
+            SELECT MAX(as_of_date) AS max_date FROM {table}
+        ),
+        filtered AS (
+            SELECT
+                ticker_i, ticker_j,
+                signal_strength, best_lag, mean_dcor,
+                COALESCE(sector_i, 'Unknown') AS sector_i,
+                COALESCE(sector_j, 'Unknown') AS sector_j,
+                COALESCE(centrality_i, 0.0)   AS cent_i,
+                COALESCE(centrality_j, 0.0)   AS cent_j
+            FROM {table}, latest
+            WHERE as_of_date = latest.max_date
+              AND signal_strength >= @min_signal
+        ),
+        all_node_cents AS (
+            SELECT ticker_i AS ticker, sector_i AS sector, MAX(cent_i) AS centrality
+            FROM filtered GROUP BY ticker_i, sector_i
+            UNION ALL
+            SELECT ticker_j AS ticker, sector_j AS sector, MAX(cent_j) AS centrality
+            FROM filtered GROUP BY ticker_j, sector_j
+        ),
+        top_nodes AS (
+            SELECT ticker, ANY_VALUE(sector) AS sector, MAX(centrality) AS centrality
+            FROM all_node_cents
+            GROUP BY ticker
+            ORDER BY MAX(centrality) DESC
+            LIMIT {limit}
+        )
+        SELECT
+            f.ticker_i, f.ticker_j,
+            f.signal_strength, f.best_lag, f.mean_dcor,
+            f.sector_i, f.sector_j,
+            f.cent_i,   f.cent_j
+        FROM filtered f
+        WHERE f.ticker_i IN (SELECT ticker FROM top_nodes)
+          AND f.ticker_j IN (SELECT ticker FROM top_nodes)
+        ORDER BY f.signal_strength DESC
+        LIMIT 2000
+    """
+
+    # Fallback: no centrality columns — rank by connection frequency, fixed size (0.0)
+    query_no_centrality = f"""
+        WITH latest AS (
+            SELECT MAX(as_of_date) AS max_date FROM {table}
+        ),
+        filtered AS (
+            SELECT
+                ticker_i, ticker_j,
+                signal_strength, best_lag, mean_dcor,
+                COALESCE(sector_i, 'Unknown') AS sector_i,
+                COALESCE(sector_j, 'Unknown') AS sector_j,
+                0.0 AS cent_i,
+                0.0 AS cent_j
+            FROM {table}, latest
+            WHERE as_of_date = latest.max_date
+              AND signal_strength >= @min_signal
+        ),
+        all_tickers AS (
+            SELECT ticker_i AS ticker, sector_i AS sector FROM filtered
+            UNION ALL
+            SELECT ticker_j AS ticker, sector_j AS sector FROM filtered
+        ),
+        top_nodes AS (
+            SELECT ticker, ANY_VALUE(sector) AS sector
+            FROM all_tickers
+            GROUP BY ticker
+            ORDER BY COUNT(*) DESC
+            LIMIT {limit}
+        )
+        SELECT
+            f.ticker_i, f.ticker_j,
+            f.signal_strength, f.best_lag, f.mean_dcor,
+            f.sector_i, f.sector_j,
+            f.cent_i,   f.cent_j
+        FROM filtered f
+        WHERE f.ticker_i IN (SELECT ticker FROM top_nodes)
+          AND f.ticker_j IN (SELECT ticker FROM top_nodes)
+        ORDER BY f.signal_strength DESC
+        LIMIT 2000
+    """
+
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ScalarQueryParameter("min_signal", "FLOAT64", min_signal),
+        ]
+    )
+
+    try:
+        rows = list(client.query(query_with_centrality, job_config=job_config).result())
+    except Exception:
+        # centrality_i / centrality_j columns not yet present — use fixed-size fallback
+        rows = list(client.query(query_no_centrality, job_config=job_config).result())
+
+    # Build node map: ticker → {sector, max centrality}
+    node_map:   dict[str, dict]  = {}
+    out_degree: dict[str, int]   = {}
+    edges:      list[NetworkEdgeModel] = []
+
+    for r in rows:
+        for ticker, sector, cent in [
+            (r.ticker_i, r.sector_i, float(r.cent_i)),
+            (r.ticker_j, r.sector_j, float(r.cent_j)),
+        ]:
+            if ticker not in node_map:
+                node_map[ticker] = {"sector": sector, "centrality": cent}
+            else:
+                node_map[ticker]["centrality"] = max(node_map[ticker]["centrality"], cent)
+
+        out_degree[r.ticker_i] = out_degree.get(r.ticker_i, 0) + 1
+
+        edges.append(NetworkEdgeModel(
+            source          = r.ticker_i,
+            target          = r.ticker_j,
+            signal_strength = round(float(r.signal_strength), 1),
+            best_lag        = int(r.best_lag),
+            mean_dcor       = round(float(r.mean_dcor), 4),
+        ))
+
+    nodes = [
+        NetworkNodeModel(
+            id          = ticker,
+            sector      = info["sector"],
+            centrality  = round(info["centrality"], 4),
+            out_degree  = out_degree.get(ticker, 0),
+        )
+        for ticker, info in node_map.items()
+    ]
+
+    return NetworkResponse(
+        nodes         = nodes,
+        edges         = edges,
+        analysis_mode = analysis_mode,
+        min_signal    = min_signal,
     )

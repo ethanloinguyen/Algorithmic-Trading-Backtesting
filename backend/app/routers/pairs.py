@@ -1,9 +1,9 @@
 # backend/app/routers/pairs.py
 from typing import Literal
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 
-from app.models.stock import StockDetail, PairDetail
-from app.services.bigquery_services import get_stock_detail, get_pair_data
+from app.models.stock import StockDetail, PairDetail, NetworkResponse
+from app.services.bigquery_services import get_stock_detail, get_pair_data, get_network_data
 
 router = APIRouter(prefix="/api", tags=["analysis"])
 
@@ -39,3 +39,17 @@ def pair_detail(
     if ti == tj:
         raise HTTPException(status_code=400, detail="Tickers must be different.")
     return get_pair_data(ti, tj, analysis_mode)
+
+
+@router.get("/network", response_model=NetworkResponse)
+def network_graph(
+    analysis_mode: Literal["broad_market", "in_sector"] = "broad_market",
+    min_signal:    float = Query(default=55.0, ge=0.0,  le=100.0),
+    limit:         int   = Query(default=50,   ge=10,   le=100),
+):
+    """
+    Top `limit` stocks by eigenvector centrality and all directed edges
+    between them with signal_strength >= min_signal, from the latest
+    network snapshot. Used to power the Analysis page network graph.
+    """
+    return get_network_data(analysis_mode, min_signal, limit)

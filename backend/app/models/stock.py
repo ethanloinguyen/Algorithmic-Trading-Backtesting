@@ -83,3 +83,29 @@ class StockListResponse(BaseModel):
 
 class IndexListResponse(BaseModel):
     data: list[IndexSummary]
+
+
+# ── Network graph models ───────────────────────────────────────────────────────
+
+class NetworkNodeModel(BaseModel):
+    """A node in the lead-lag network graph (one stock)."""
+    id:          str
+    sector:      str
+    centrality:  float   # raw eigenvector centrality from final_network
+    out_degree:  int     # number of outgoing (leader) edges in filtered graph
+
+
+class NetworkEdgeModel(BaseModel):
+    """A directed edge: source leads target."""
+    source:          str
+    target:          str
+    signal_strength: float
+    best_lag:        int
+    mean_dcor:       float
+
+
+class NetworkResponse(BaseModel):
+    nodes:         list[NetworkNodeModel]
+    edges:         list[NetworkEdgeModel]
+    analysis_mode: str
+    min_signal:    float
