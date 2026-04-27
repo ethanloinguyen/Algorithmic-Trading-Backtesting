@@ -1,0 +1,63 @@
+2026-03-13 13:15:25,332 [INFO] jobs.pair_job: Pair job starting: window=2012-01-01→2012-12-31, partition=1/3, run_id=local_20260313_131500_e76ad8
+2026-03-13 13:15:25,333 [INFO] jobs.pair_job: Pair job starting: window=2012-01-01→2012-12-31, partition=2/3, run_id=local_20260313_131500_e76ad8
+2026-03-13 13:15:25,358 [INFO] jobs.pair_job: Pair job starting: window=2012-01-01→2012-12-31, partition=0/3, run_id=local_20260313_131500_e76ad8
+2026-03-13 13:15:26,808 [INFO] src.bq_io: BigQuery client initialized for project: capstone-487001
+2026-03-13 13:15:26,808 [INFO] src.bq_io: BigQuery client initialized for project: capstone-487001
+2026-03-13 13:15:26,825 [INFO] src.bq_io: BigQuery client initialized for project: capstone-487001
+2026-03-13 13:15:30,760 [INFO] src.bq_io: Loaded 24,651 residual rows for window 2012-01-01→2012-12-31
+2026-03-13 13:15:30,838 [INFO] src.bq_io: Loaded 24,651 residual rows for window 2012-01-01→2012-12-31
+2026-03-13 13:15:30,839 [INFO] jobs.pair_job: Loaded residuals: 99 tickers, 249 dates
+2026-03-13 13:15:30,924 [INFO] jobs.pair_job: Loaded residuals: 99 tickers, 249 dates
+2026-03-13 13:15:32,210 [INFO] src.bq_io: Loaded 24,651 residual rows for window 2012-01-01→2012-12-31
+2026-03-13 13:15:32,298 [INFO] jobs.pair_job: Loaded residuals: 99 tickers, 249 dates
+2026-03-13 13:15:32,716 [INFO] src.universe: Loaded 99 valid tickers
+2026-03-13 13:15:32,720 [INFO] src.universe: Generated 4,851 pairs from 99 tickers
+2026-03-13 13:15:32,721 [INFO] src.universe: Partition 0/3: 1,617 / 4,851 pairs assigned
+2026-03-13 13:15:32,721 [INFO] jobs.pair_job: Partition 0: processing 1,617 pairs
+2026-03-13 13:15:33,132 [INFO] src.universe: Loaded 99 valid tickers
+2026-03-13 13:15:33,134 [INFO] src.universe: Generated 4,851 pairs from 99 tickers
+2026-03-13 13:15:33,134 [INFO] src.universe: Partition 2/3: 1,617 / 4,851 pairs assigned
+2026-03-13 13:15:33,134 [INFO] jobs.pair_job: Partition 2: processing 1,617 pairs
+2026-03-13 13:15:34,408 [INFO] src.universe: Loaded 99 valid tickers
+2026-03-13 13:15:34,410 [INFO] src.universe: Generated 4,851 pairs from 99 tickers
+2026-03-13 13:15:34,410 [INFO] src.universe: Partition 1/3: 1,617 / 4,851 pairs assigned
+2026-03-13 13:15:34,411 [INFO] jobs.pair_job: Partition 1: processing 1,617 pairs
+2026-03-13 13:30:47,064 [INFO] src.bq_io: Wrote 2,500 rows to capstone-487001.output_results_local.pair_results_raw (WRITE_APPEND)
+2026-03-13 13:30:47,065 [INFO] jobs.pair_job:   Flushed 2,500 rows (total written: 2,500)
+2026-03-13 13:31:02,857 [INFO] src.bq_io: Wrote 2,500 rows to capstone-487001.output_results_local.pair_results_raw (WRITE_APPEND)
+2026-03-13 13:31:02,857 [INFO] jobs.pair_job:   Flushed 2,500 rows (total written: 2,500)
+2026-03-13 13:31:13,511 [INFO] src.bq_io: Wrote 2,500 rows to capstone-487001.output_results_local.pair_results_raw (WRITE_APPEND)
+2026-03-13 13:31:13,512 [INFO] jobs.pair_job:   Flushed 2,500 rows (total written: 2,500)
+2026-03-13 13:43:46,317 [INFO] jobs.pair_job:   Progress: 1,000/1,617 pairs
+2026-03-13 13:43:50,021 [INFO] src.bq_io: Wrote 2,500 rows to capstone-487001.output_results_local.pair_results_raw (WRITE_APPEND)
+2026-03-13 13:43:50,021 [INFO] jobs.pair_job:   Flushed 2,500 rows (total written: 5,000)
+2026-03-13 13:43:53,965 [INFO] jobs.pair_job:   Progress: 1,000/1,617 pairs
+2026-03-13 13:44:00,455 [INFO] src.bq_io: Wrote 2,500 rows to capstone-487001.output_results_local.pair_results_raw (WRITE_APPEND)
+2026-03-13 13:44:00,456 [INFO] jobs.pair_job:   Flushed 2,500 rows (total written: 5,000)
+2026-03-13 13:45:52,096 [INFO] jobs.pair_job:   Progress: 1,000/1,617 pairs
+2026-03-13 13:45:57,868 [INFO] src.bq_io: Wrote 2,500 rows to capstone-487001.output_results_local.pair_results_raw (WRITE_APPEND)
+2026-03-13 13:45:57,869 [INFO] jobs.pair_job:   Flushed 2,500 rows (total written: 5,000)
+2026-03-13 13:56:14,711 [INFO] src.bq_io: Wrote 2,500 rows to capstone-487001.output_results_local.pair_results_raw (WRITE_APPEND)
+2026-03-13 13:56:14,712 [INFO] jobs.pair_job:   Flushed 2,500 rows (total written: 7,500)
+2026-03-13 13:59:28,226 [WARNING] src.permutation: BUDGET ALERT: 50.6% of pairs hit tier 3 permutations (threshold: 10.0%). Review compute costs.
+2026-03-13 13:59:34,011 [INFO] src.bq_io: Wrote 585 rows to capstone-487001.output_results_local.pair_results_raw (WRITE_APPEND)
+2026-03-13 13:59:34,011 [INFO] jobs.pair_job:   Flushed final 585 rows (total written: 8,085)
+2026-03-13 13:59:34,011 [INFO] jobs.pair_job: Wrote 8,085 total rows to pair_results_raw
+2026-03-13 13:59:37,343 [INFO] src.bq_io: Wrote 1 rows to capstone-487001.output_results_local.pipeline_run_log (WRITE_APPEND)
+2026-03-13 13:59:37,343 [INFO] jobs.pair_job: Pair job complete: 1,617 pairs, 8,085 rows written, 2648.7s
+2026-03-13 13:59:38,790 [INFO] src.bq_io: Wrote 2,500 rows to capstone-487001.output_results_local.pair_results_raw (WRITE_APPEND)
+2026-03-13 13:59:38,791 [INFO] jobs.pair_job:   Flushed 2,500 rows (total written: 7,500)
+2026-03-13 14:00:48,400 [INFO] src.bq_io: Wrote 2,500 rows to capstone-487001.output_results_local.pair_results_raw (WRITE_APPEND)
+2026-03-13 14:00:48,400 [INFO] jobs.pair_job:   Flushed 2,500 rows (total written: 7,500)
+2026-03-13 14:02:42,414 [WARNING] src.permutation: BUDGET ALERT: 53.4% of pairs hit tier 3 permutations (threshold: 10.0%). Review compute costs.
+2026-03-13 14:02:47,021 [INFO] src.bq_io: Wrote 585 rows to capstone-487001.output_results_local.pair_results_raw (WRITE_APPEND)
+2026-03-13 14:02:47,022 [INFO] jobs.pair_job:   Flushed final 585 rows (total written: 8,085)
+2026-03-13 14:02:47,022 [INFO] jobs.pair_job: Wrote 8,085 total rows to pair_results_raw
+2026-03-13 14:02:50,434 [INFO] src.bq_io: Wrote 1 rows to capstone-487001.output_results_local.pipeline_run_log (WRITE_APPEND)
+2026-03-13 14:02:50,435 [INFO] jobs.pair_job: Pair job complete: 1,617 pairs, 8,085 rows written, 2841.7s
+2026-03-13 14:04:12,230 [WARNING] src.permutation: BUDGET ALERT: 53.1% of pairs hit tier 3 permutations (threshold: 10.0%). Review compute costs.
+2026-03-13 14:04:16,051 [INFO] src.bq_io: Wrote 585 rows to capstone-487001.output_results_local.pair_results_raw (WRITE_APPEND)
+2026-03-13 14:04:16,051 [INFO] jobs.pair_job:   Flushed final 585 rows (total written: 8,085)
+2026-03-13 14:04:16,052 [INFO] jobs.pair_job: Wrote 8,085 total rows to pair_results_raw
+2026-03-13 14:04:22,410 [INFO] src.bq_io: Wrote 1 rows to capstone-487001.output_results_local.pipeline_run_log (WRITE_APPEND)
+2026-03-13 14:04:22,411 [INFO] jobs.pair_job: Pair job complete: 1,617 pairs, 8,085 rows written, 2930.7s

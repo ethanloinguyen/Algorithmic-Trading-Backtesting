@@ -1,0 +1,62 @@
+2026-03-13 13:15:00,316 [INFO] __main__: Config loaded from: C:\Users\ethan\VSCode\Capstone\lead_lag_local\config\config.yaml
+2026-03-13 13:15:00,317 [INFO] __main__: ======================================================================
+2026-03-13 13:15:00,317 [INFO] __main__: PIPELINE START | window=2012-01-01→2012-12-31 | run_id=local_20260313_131500_e76ad8
+2026-03-13 13:15:00,317 [INFO] __main__:   step=all | workers=3 | monthly=False
+2026-03-13 13:15:00,317 [INFO] __main__: ======================================================================
+2026-03-13 13:15:07,377 [INFO] __main__: [RESIDUALS] Window 2012-01-01 → 2012-12-31
+2026-03-13 13:15:09,661 [INFO] src.bq_io: BigQuery client initialized for project: capstone-487001
+2026-03-13 13:15:12,813 [INFO] src.universe: Loaded 99 valid tickers
+2026-03-13 13:15:12,813 [INFO] src.residuals: Computing residuals for window 2012-01-01 → 2012-12-31
+2026-03-13 13:15:14,791 [INFO] src.bq_io: Loaded 24,750 price rows for 99 tickers (2012-01-01→2012-12-31)
+2026-03-13 13:15:16,698 [INFO] src.residuals: DEBUG: Merged data has 24750 rows after joining prices and factors.
+2026-03-13 13:15:16,852 [INFO] src.residuals: Residuals computed: 24,651 rows across 99 tickers
+2026-03-13 13:15:22,725 [INFO] src.bq_io: Wrote 24,651 rows to capstone-487001.output_results_local.rolling_residuals (WRITE_APPEND)
+2026-03-13 13:15:22,727 [INFO] __main__: [RESIDUALS] Done: 24,651 rows written
+2026-03-13 13:15:22,728 [INFO] __main__: [PAIRS] Window 2012-01-01 → 2012-12-31 | 3 partitions across 3 workers
+2026-03-13 13:59:37,344 [INFO] __main__:   Partition 0 ✓
+2026-03-13 14:02:50,435 [INFO] __main__:   Partition 1 ✓
+2026-03-13 14:04:22,412 [INFO] __main__:   Partition 2 ✓
+2026-03-13 14:04:22,558 [INFO] __main__: [PAIRS] All 3 partitions complete
+2026-03-13 14:04:23,677 [INFO] __main__: [AGGREGATION] Window 2012-01-01 → 2012-12-31
+2026-03-13 14:04:23,678 [INFO] jobs.aggregation_job: === AGGREGATION JOB START === run_id=local_20260313_131500_e76ad8, window=2012-01-01→2012-12-31
+2026-03-13 14:04:23,678 [INFO] jobs.aggregation_job: Step 1: Loading raw pair results...
+2026-03-13 14:04:26,911 [INFO] src.bq_io: Loaded 24,255 raw pair-lag records for window 2012-01-01
+2026-03-13 14:04:26,911 [INFO] jobs.aggregation_job:   24,255 raw pair-lag records loaded
+2026-03-13 14:04:26,912 [INFO] jobs.aggregation_job: Step 2: Applying Benjamini-Hochberg FDR...
+2026-03-13 14:04:26,919 [INFO] src.fdr: Window 2012-01-01: 4,851 unique pairs with valid dCor
+2026-03-13 14:04:26,922 [INFO] src.fdr: Window 2012-01-01: 0 / 4,851 pairs significant at FDR q < 0.05
+2026-03-13 14:04:31,938 [INFO] src.bq_io: Wrote 4,851 rows to capstone-487001.output_results_local.pair_results_filtered (WRITE_APPEND)
+2026-03-13 14:04:31,940 [INFO] jobs.aggregation_job:   0 pairs significant after FDR
+2026-03-13 14:04:31,943 [INFO] jobs.aggregation_job: Step 3: Computing OOS strategy returns...
+2026-03-13 14:04:31,946 [WARNING] jobs.aggregation_job:   No OOS strategy returns computed (no significant pairs or no data)
+2026-03-13 14:04:31,947 [INFO] jobs.aggregation_job: Step 4: Computing global OOS Sharpe per pair...
+2026-03-13 14:04:31,949 [INFO] src.oos_model: Computing global OOS Sharpe per pair...
+2026-03-13 14:04:33,655 [INFO] src.bq_io: Loaded 0 OOS return records
+2026-03-13 14:04:33,656 [WARNING] src.oos_model: No OOS strategy returns found.
+2026-03-13 14:04:33,658 [INFO] jobs.aggregation_job:   Global Sharpe computed for 0 pairs
+2026-03-13 14:04:33,659 [INFO] jobs.aggregation_job: Step 5: Computing stability metrics across all windows...
+2026-03-13 14:04:33,660 [INFO] src.stability: Computing stability metrics across all windows...
+2026-03-13 14:04:35,755 [INFO] src.bq_io: Loaded 0 filtered pair records across all windows
+2026-03-13 14:04:35,757 [WARNING] src.stability: No filtered pair results found. Cannot compute stability.
+2026-03-13 14:04:35,759 [INFO] jobs.aggregation_job:   Stability metrics for 0 pairs
+2026-03-13 14:04:35,760 [INFO] jobs.aggregation_job: Step 6: Using frozen β weights (monthly update mode)...
+2026-03-13 14:04:37,630 [WARNING] jobs.aggregation_job: No model weights found. Cannot compute stability scores.
+2026-03-13 14:04:37,631 [INFO] jobs.aggregation_job:   No frozen weights found. Running initial model fit...
+2026-03-13 14:04:37,632 [INFO] jobs.aggregation_job: Step 7: Computing predicted Sharpe and Signal Strength...
+2026-03-13 14:04:37,635 [INFO] jobs.aggregation_job: Step 8: Building final_network...
+2026-03-13 14:04:39,430 [WARNING] jobs.aggregation_job: Step 8: No stability data to build final_network. Skipping.
+2026-03-13 14:04:39,431 [WARNING] jobs.aggregation_job:   Skipping final_network update — no data.
+2026-03-13 14:04:39,431 [INFO] jobs.aggregation_job: Step 9: Computing network centrality...
+2026-03-13 14:04:41,340 [WARNING] src.network: No network data found for 2026-03-13
+2026-03-13 14:04:41,341 [INFO] jobs.aggregation_job: Step 10: Running Monte Carlo simulation...
+2026-03-13 14:04:42,957 [INFO] src.bq_io: Loaded 0 OOS return records
+2026-03-13 14:04:42,957 [INFO] jobs.aggregation_job: Step 11: Running synthetic health check...
+2026-03-13 14:04:42,957 [INFO] src.synthetic: Running synthetic health check (fixed seed)...
+2026-03-13 14:24:32,286 [INFO] src.synthetic: Synthetic health check: TPR=98.00%, FPR=2.67%, Rank Acc=96.00%, Status=PASS
+2026-03-13 14:24:38,822 [INFO] src.bq_io: Wrote 1 rows to capstone-487001.output_results_local.synthetic_health_log (WRITE_APPEND)
+2026-03-13 14:24:38,822 [INFO] src.bq_io: Synthetic health check result logged.
+2026-03-13 14:24:38,823 [INFO] jobs.aggregation_job:   Health check: PASS
+2026-03-13 14:24:45,599 [INFO] src.bq_io: Wrote 1 rows to capstone-487001.output_results_local.pipeline_run_log (WRITE_APPEND)
+2026-03-13 14:24:45,600 [INFO] jobs.aggregation_job: === AGGREGATION JOB COMPLETE === 1215.1s
+2026-03-13 14:24:45,600 [INFO] __main__: [AGGREGATION] Done
+2026-03-13 14:24:45,601 [INFO] __main__: PIPELINE COMPLETE | 4185.3s | window=2012-01-01→2012-12-31
