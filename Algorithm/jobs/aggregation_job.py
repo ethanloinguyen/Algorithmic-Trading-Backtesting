@@ -31,7 +31,11 @@ from datetime import date, datetime
 import numpy as np
 import pandas as pd
 
-sys.path.insert(0, "/app")
+_agg_dir = os.path.dirname(os.path.abspath(__file__))
+_proj_root = os.path.dirname(_agg_dir)
+for _p in (_proj_root, "/app"):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 from src.bq_io import (
     get_client, full_table, write_dataframe,
@@ -83,6 +87,7 @@ def run_aggregation_job(
     window_end: date,
     run_id: str,
     is_monthly_update: bool = True,
+    run_synthetic: bool = True,
 ) -> None:
     """
     Full aggregation pipeline.
@@ -92,6 +97,8 @@ def run_aggregation_job(
     window_start, window_end : the new window just computed
     run_id : unique identifier for this pipeline run
     is_monthly_update : if True, skip historical recomputation
+    run_synthetic : if False, skip the synthetic health check (Step 11).
+                    Overridden to False when synthetic.enabled=false in config.
     """
     cfg = get_config()
     start_time = datetime.now()
@@ -183,48 +190,62 @@ def run_aggregation_job(
         client = get_client()
         metadata_query = f"""
             SELECT ticker, sector, industry
-            FROM `capstone-487001.output_results.ticker_metadata`
+            FROM `{full_table('ticker_metadata')}`
         """
         metadata_df = client.query(metadata_query).to_dataframe()
         sector_map = dict(zip(metadata_df["ticker"], metadata_df["sector"]))
 
         # Merge OOS Sharpe into stability
-        final_df = stability_df.merge(
-            global_sharpe_df[["ticker_i", "ticker_j", "oos_sharpe_net"]],
-            on=["ticker_i", "ticker_j"],
-            how="left"
-        )
+        if not global_sharpe_df.empty and not stability_df.empty:
+            final_df = stability_df.merge(
+                global_sharpe_df[["ticker_i", "ticker_j", "oos_sharpe_net"]],
+                on=["ticker_i", "ticker_j"],
+                how="left"
+            )
+        elif not stability_df.empty:
+            final_df = stability_df.copy()
+            final_df["oos_sharpe_net"] = None
+        else:
+            logger.warning("Step 8: No stability data to build final_network. Skipping.")
+            final_df = pd.DataFrame()
 
         # Add sector info
-        final_df["sector_i"] = final_df["ticker_i"].map(sector_map).fillna("Unknown")
-        final_df["sector_j"] = final_df["ticker_j"].map(sector_map).fillna("Unknown")
-        final_df["as_of_date"] = as_of_date
+        if not final_df.empty:
+            final_df["sector_i"] = final_df["ticker_i"].map(sector_map).fillna("Unknown")
+            final_df["sector_j"] = final_df["ticker_j"].map(sector_map).fillna("Unknown")
+            final_df["as_of_date"] = as_of_date
 
-        # Add OOS dCor as secondary metric (placeholder — full computation in oos_model)
-        final_df["oos_dcor"] = None
+            # Add OOS dCor as secondary metric (placeholder)
+            final_df["oos_dcor"] = None
 
-        # Rank by signal strength
-        final_df["rank"] = final_df["signal_strength"].rank(ascending=False, method="first").astype(int)
+            # Rank by signal strength
+            if "signal_strength" in final_df.columns:
+                final_df["rank"] = final_df["signal_strength"].rank(ascending=False, method="first").astype(int)
+            else:
+                final_df["rank"] = 0
 
-        # Select columns matching final_network schema
-        network_cols = [
-            "as_of_date", "ticker_i", "ticker_j", "best_lag",
-            "mean_dcor", "variance_dcor", "frequency", "half_life",
-            "sharpness", "predicted_sharpe", "signal_strength",
-            "oos_sharpe_net", "oos_dcor", "sector_i", "sector_j", "rank"
-        ]
-        network_cols_available = [c for c in network_cols if c in final_df.columns]
-        network_df = final_df[network_cols_available].copy()
+            # Select columns matching final_network schema
+            network_cols = [
+                "as_of_date", "ticker_i", "ticker_j", "best_lag",
+                "mean_dcor", "variance_dcor", "frequency", "half_life",
+                "sharpness", "predicted_sharpe", "signal_strength",
+                "oos_sharpe_net", "oos_dcor", "sector_i", "sector_j", "rank"
+            ]
+            network_cols_available = [c for c in network_cols if c in final_df.columns]
+            network_df = final_df[network_cols_available].copy()
 
-        upsert_final_network(network_df)
-        logger.info(f"  final_network updated: {len(network_df):,} pairs")
+            upsert_final_network(network_df)
+            logger.info(f"  final_network updated: {len(network_df):,} pairs")
+        else:
+            logger.warning("  Skipping final_network update — no data.")
+            network_df = pd.DataFrame()
 
         # ── Step 9: Recompute network centrality ──────────────────────────
         logger.info("Step 9: Computing network centrality...")
         centrality_df, network_json = run_network_pipeline(as_of_date)
 
         # Inject centrality scores back into final_network
-        if not centrality_df.empty:
+        if not centrality_df.empty and not network_df.empty:
             centrality_i = dict(zip(centrality_df["ticker"], centrality_df["eigenvector_centrality"]))
             network_df["centrality_i"] = network_df["ticker_i"].map(centrality_i).fillna(0.0)
             network_df["centrality_j"] = network_df["ticker_j"].map(centrality_i).fillna(0.0)
@@ -238,9 +259,13 @@ def run_aggregation_job(
             logger.info(f"  Monte Carlo complete for top pairs")
 
         # ── Step 11: Synthetic health check ───────────────────────────────
-        logger.info("Step 11: Running synthetic health check...")
-        health_result = run_synthetic_health_check()
-        logger.info(f"  Health check: {health_result['status']}")
+        synthetic_enabled = cfg.get("synthetic", {}).get("enabled", True)
+        if run_synthetic and synthetic_enabled:
+            logger.info("Step 11: Running synthetic health check...")
+            health_result = run_synthetic_health_check()
+            logger.info(f"  Health check: {health_result['status']}")
+        else:
+            logger.info("Step 11: Synthetic health check skipped.")
 
     except Exception as e:
         logger.error(f"Aggregation job failed: {e}", exc_info=True)

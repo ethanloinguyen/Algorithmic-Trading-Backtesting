@@ -14,12 +14,15 @@ should exist outside this file.
 """
 
 import logging
+import random
+import time
 from datetime import date, datetime
 from typing import Dict, List, Optional
 
 import pandas as pd
 from google.cloud import bigquery
 from google.cloud.exceptions import NotFound
+from google.api_core.exceptions import GoogleAPICallError, ResourceExhausted
 
 from src.config_loader import get_config, get_gcp_project, get_bq_dataset
 
@@ -52,28 +55,49 @@ def get_bq_dataset() -> str:
     return get_config()["gcp"]["bq_dataset"]
 
 
+# Source tables read from the original dataset, never written by this pipeline.
+_SOURCE_TABLES = {"market_data", "ticker_metadata"}
+
+
 def full_table(table_key: str) -> str:
     """
     Return fully qualified BigQuery table ID: project.dataset.table
-    Handles table names that already include a dataset prefix.
+
+    Source tables (market_data, ticker_metadata) are always resolved against
+    gcp.source_dataset so that changing gcp.bq_dataset for local isolation
+    never breaks reads of the underlying price/metadata data.
+
+    All pipeline output tables resolve against gcp.bq_dataset.
     """
     cfg = get_config()
     project = cfg["gcp"]["project_id"]
     default_dataset = cfg["gcp"]["bq_dataset"]
-    
+    source_dataset = cfg["gcp"].get("source_dataset", default_dataset)
+
     # Get the value from the 'tables' section of config.yaml
     table_path = cfg["tables"].get(table_key, table_key)
-    
-    # Check if the path already contains a dot (e.g., 'yfinance_stocks_data.market_data')
+
+    # If already fully qualified (contains a dot), just prepend project
     if "." in table_path:
-        # It already has a dataset, so just prepend the project ID
         return f"{project}.{table_path}"
-    
-    # Otherwise, use the default dataset defined in config.yaml
+
+    # Source tables always come from source_dataset
+    if table_key in _SOURCE_TABLES:
+        return f"{project}.{source_dataset}.{table_path}"
+
+    # All pipeline output tables go to bq_dataset
     return f"{project}.{default_dataset}.{table_path}"
 
 
 # ── Generic Write ─────────────────────────────────────────────────────────────
+
+# Maximum attempts and base delay for 429 rate-limit retries.
+# Base waits: 5s, 10s, 20s, 40s, 80s (exponential backoff + random jitter).
+# Jitter spreads retrying workers so they don't all retry in lock-step
+# when many workers hit the rate limit simultaneously (common with 90 workers).
+_WRITE_MAX_ATTEMPTS = 6
+_WRITE_BASE_DELAY_S = 5
+
 
 def write_dataframe(
     df: pd.DataFrame,
@@ -82,7 +106,11 @@ def write_dataframe(
     schema: List[bigquery.SchemaField] = None,
 ) -> None:
     """
-    Write a pandas DataFrame to BigQuery.
+    Write a pandas DataFrame to BigQuery with exponential backoff retry.
+
+    Retries up to _WRITE_MAX_ATTEMPTS times on 429 ResourceExhausted errors,
+    which occur when too many workers write to the same partitioned table
+    simultaneously (BigQuery limit: ~50 partition updates per 10 seconds).
 
     Parameters
     ----------
@@ -109,13 +137,39 @@ def write_dataframe(
         schema=schema if schema else [],
     )
 
-    try:
-        job = client.load_table_from_dataframe(df, table_id, job_config=job_config)
-        job.result()  # Wait for completion
-        logger.info(f"Wrote {len(df):,} rows to {table_id} ({write_disposition})")
-    except Exception as e:
-        logger.error(f"Failed to write to {table_id}: {e}")
-        raise
+    delay = _WRITE_BASE_DELAY_S
+    for attempt in range(1, _WRITE_MAX_ATTEMPTS + 1):
+        try:
+            job = client.load_table_from_dataframe(df, table_id, job_config=job_config)
+            job.result()
+            logger.info(f"Wrote {len(df):,} rows to {table_id} ({write_disposition})")
+            return
+        except GoogleAPICallError as e:
+            # BQ rate-limit errors can surface as ResourceExhausted (HTTP 429),
+            # or as a job-level rateLimitExceeded reason (HTTP 403) when the
+            # "too many partition update operations" limit is hit.  Both carry
+            # the same remedy: wait and retry.
+            err_str = str(e).lower()
+            is_rate_limit = (
+                isinstance(e, ResourceExhausted)
+                or getattr(e, "code", None) in (429, 403)
+                or "ratelimitexceeded" in err_str
+                or "too many" in err_str
+                or "quota" in err_str
+            )
+            if not is_rate_limit or attempt == _WRITE_MAX_ATTEMPTS:
+                logger.error(f"Failed to write to {table_id}: {e}")
+                raise
+            jitter = random.uniform(0, delay * 0.5)
+            logger.warning(
+                f"BQ rate limit hit writing to {table_id} "
+                f"(attempt {attempt}/{_WRITE_MAX_ATTEMPTS}), retrying in {delay + jitter:.1f}s..."
+            )
+            time.sleep(delay + jitter)
+            delay *= 2
+        except Exception as e:
+            logger.error(f"Failed to write to {table_id}: {e}")
+            raise
 
 
 # ── Residuals ─────────────────────────────────────────────────────────────────

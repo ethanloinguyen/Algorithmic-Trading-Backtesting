@@ -13,6 +13,95 @@ References:
 import numpy as np
 from typing import Optional
 
+# ---------------------------------------------------------------------------
+# Optional Numba JIT acceleration
+#
+# When Numba is available, _dcor_numba() replaces the NumPy implementation
+# inside dcor(). It computes the same result but:
+#   - Uses explicit loops compiled to native SIMD code (fastmath=True)
+#   - Requires only two O(n) row-mean vectors instead of four O(n²) matrices
+#     (A, B, A_c, B_c), reducing memory allocation on every call
+#   - Eliminates Python interpreter overhead when called thousands of times
+#     inside the permutation loop
+#   - Compiled binary is cached after the first run (cache=True), so the
+#     one-time JIT cost (~1-2 s) is not paid on subsequent executions.
+#
+# If Numba is not installed, dcor() falls back to the original NumPy path
+# transparently — results are numerically identical either way.
+# ---------------------------------------------------------------------------
+try:
+    from numba import njit as _njit
+    _NUMBA_AVAILABLE = True
+except ImportError:  # pragma: no cover
+    _NUMBA_AVAILABLE = False
+    # Transparent no-op decorator so the function definition below is valid
+    # even without Numba installed.
+    def _njit(*args, **kwargs):  # type: ignore[misc]
+        def _decorator(fn):
+            return fn
+        return _decorator
+
+
+@_njit(cache=True, fastmath=True)
+def _dcor_numba(x: np.ndarray, y: np.ndarray) -> float:
+    """
+    JIT-compiled distance correlation.
+
+    Computes dCor in two O(n²) passes using only O(n) extra memory,
+    avoiding allocation of the four n×n intermediate matrices used by
+    the NumPy path.  Results are numerically equivalent to dcor() within
+    floating-point precision.
+    """
+    n = len(x)
+
+    # ── Pass 1: row means and grand mean of each distance matrix ──────────
+    row_a = np.zeros(n)
+    row_b = np.zeros(n)
+    grand_a = 0.0
+    grand_b = 0.0
+    for i in range(n):
+        for j in range(n):
+            a = abs(x[i] - x[j])
+            b = abs(y[i] - y[j])
+            row_a[i] += a
+            row_b[i] += b
+            grand_a += a
+            grand_b += b
+    for i in range(n):
+        row_a[i] /= n
+        row_b[i] /= n
+    grand_a /= n * n
+    grand_b /= n * n
+
+    # ── Pass 2: doubly-centered covariances ───────────────────────────────
+    # For a symmetric distance matrix col_mean[j] == row_mean[j], so:
+    #   A_c[i,j] = |x_i-x_j| - row_a[i] - row_a[j] + grand_a
+    dcov_xy = 0.0
+    dcov_xx = 0.0
+    dcov_yy = 0.0
+    for i in range(n):
+        for j in range(n):
+            ac = abs(x[i] - x[j]) - row_a[i] - row_a[j] + grand_a
+            bc = abs(y[i] - y[j]) - row_b[i] - row_b[j] + grand_b
+            dcov_xy += ac * bc
+            dcov_xx += ac * ac
+            dcov_yy += bc * bc
+
+    n2 = float(n * n)
+    dcov_xy /= n2
+    dcov_xx /= n2
+    dcov_yy /= n2
+
+    if dcov_xx <= 0.0 or dcov_yy <= 0.0:
+        return 0.0
+
+    dcor_sq = dcov_xy / (dcov_xx * dcov_yy) ** 0.5
+    if dcor_sq < 0.0:
+        return 0.0
+    if dcor_sq > 1.0:
+        return 1.0
+    return dcor_sq ** 0.5
+
 
 def _center_distance_matrix(a: np.ndarray) -> np.ndarray:
     """
@@ -40,9 +129,13 @@ def dcor(x: np.ndarray, y: np.ndarray) -> float:
     - Captures nonlinear dependencies unlike Pearson/Spearman
 
     Returns float in [0, 1].
+
+    When Numba is installed the computation is dispatched to _dcor_numba(),
+    which avoids allocating four n×n intermediate matrices and runs as
+    compiled native code.  Falls back to NumPy otherwise.
     """
-    x = np.asarray(x, dtype=float)
-    y = np.asarray(y, dtype=float)
+    x = np.asarray(x, dtype=np.float64)
+    y = np.asarray(y, dtype=np.float64)
 
     n = len(x)
     if n != len(y):
@@ -50,6 +143,10 @@ def dcor(x: np.ndarray, y: np.ndarray) -> float:
     if n < 4:
         return 0.0
 
+    if _NUMBA_AVAILABLE:
+        return float(_dcor_numba(x, y))
+
+    # ── NumPy fallback ────────────────────────────────────────────────────
     # Pairwise distance matrices
     A = _pairwise_distances(x)
     B = _pairwise_distances(y)
@@ -162,6 +259,27 @@ def compute_sharpness(dcor_values: dict, method: str = "entropy") -> float:
 
     else:
         raise ValueError(f"Unknown sharpness method: {method}. Use 'ratio' or 'entropy'.")
+
+
+def pearson_at_lag(x: np.ndarray, y: np.ndarray, lag: int) -> Optional[float]:
+    """
+    Compute signed Pearson correlation between x[t] and y[t+lag].
+
+    Returns a value in [-1, 1]:
+        positive → ticker_i up predicts ticker_j up at this lag
+        negative → ticker_i up predicts ticker_j down at this lag
+
+    Used alongside dCor to determine trade direction: dCor detects
+    *that* a relationship exists; Pearson sign determines *which way*
+    to trade.
+    """
+    if lag < 1 or len(x) <= lag + 4:
+        return None
+    x_lead = x[:-lag]
+    y_follow = y[lag:]
+    if np.std(x_lead) < 1e-10 or np.std(y_follow) < 1e-10:
+        return None
+    return float(np.corrcoef(x_lead, y_follow)[0, 1])
 
 
 def get_best_lag(dcor_values: dict, significant_lags: list) -> Optional[int]:

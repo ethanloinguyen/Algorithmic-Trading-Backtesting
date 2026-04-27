@@ -27,6 +27,7 @@ from src.bq_io import (read_all_pair_results_filtered, write_dataframe,
                        get_client, full_table)
 from src.config_loader import get_config
 from src.dcor_engine import compute_sharpness
+from src.windows import generate_rolling_windows
 
 logger = logging.getLogger(__name__)
 
@@ -139,6 +140,7 @@ def compute_stability_metrics() -> pd.DataFrame:
     if filtered.empty:
         logger.warning("No filtered pair results found. Cannot compute stability.")
         return pd.DataFrame()
+    filtered["window_start"] = pd.to_datetime(filtered["window_start"]).dt.date
 
     # Also pull sharpness from raw results
     client = get_client()
@@ -149,9 +151,19 @@ def compute_stability_metrics() -> pd.DataFrame:
     """
     raw_df = client.query(raw_query).to_dataframe()
 
-    # Total number of windows
+    # Total windows actually processed — derived from pair_results_raw, which
+    # has a row for every pair in every processed window regardless of significance.
+    # This is the true denominator: if old runs left extra window_starts in
+    # pair_results_filtered, using a config-derived count would be too small
+    # and push frequency above 1.
+    if not raw_df.empty:
+        raw_df["window_start"] = pd.to_datetime(raw_df["window_start"]).dt.date
+        total_windows = raw_df["window_start"].nunique()
+    else:
+        total_windows = len(generate_rolling_windows())
+
+    # Window index map for half-life decay fitting
     all_windows = sorted(filtered["window_start"].unique())
-    total_windows = len(all_windows)
     window_index_map = {w: i for i, w in enumerate(all_windows)}
 
     logger.info(f"Processing {total_windows} windows, "
@@ -174,8 +186,10 @@ def compute_stability_metrics() -> pd.DataFrame:
         win_indices = np.array([window_index_map[w] for w in group["window_start"]])
         dcor_vals = group["dcor"].values
 
-        # Frequency: fraction of all windows where this pair was significant
-        frequency = len(group) / total_windows
+        # Fraction of all windows where this pair was significant.
+        # Use nunique() on window_start — a pair can have multiple significant
+        # lags in one window, which would inflate len(group) above total_windows.
+        frequency = group["window_start"].nunique() / total_windows
 
         # Mean and variance of dCor across significant windows
         mean_dcor = float(dcor_vals.mean())

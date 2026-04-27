@@ -4,6 +4,9 @@ config_loader.py
 Loads and provides access to config/config.yaml.
 Singleton pattern — load once, access anywhere via get_config().
 
+Supports both local (config/config.yaml next to project root) and
+Cloud Run (/app/config/config.yaml) environments automatically.
+
 Usage:
     from src.config_loader import load_config, get_config
 
@@ -18,11 +21,38 @@ from typing import Optional
 import yaml
 
 _config: Optional[dict] = None
-_DEFAULT_CONFIG_PATH = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-    "config",
-    "config.yaml",
-)
+
+
+def _find_default_config() -> str:
+    """
+    Search common locations for config.yaml in priority order:
+    1. CONFIG_PATH env var
+    2. /app/config/config.yaml (Cloud Run container)
+    3. <project_root>/config/config.yaml (local: one level up from src/)
+    4. ./config/config.yaml (cwd fallback)
+    """
+    # 1. Explicit env var always wins
+    env_path = os.environ.get("CONFIG_PATH")
+    if env_path and os.path.exists(env_path):
+        return env_path
+
+    # 2. Cloud Run standard location
+    if os.path.exists("/app/config/config.yaml"):
+        return "/app/config/config.yaml"
+
+    # 3. Local: src/ → project root (one level up from this file's directory)
+    this_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.dirname(this_dir)
+    local_path = os.path.join(project_root, "config", "config.yaml")
+    if os.path.exists(local_path):
+        return local_path
+
+    # 4. CWD fallback
+    cwd_path = os.path.join(os.getcwd(), "config", "config.yaml")
+    if os.path.exists(cwd_path):
+        return cwd_path
+
+    return local_path  # Return best guess; FileNotFoundError will explain
 
 
 def load_config(path: str = None) -> dict:
@@ -32,8 +62,7 @@ def load_config(path: str = None) -> dict:
     Parameters
     ----------
     path : str, optional
-        Explicit path to config.yaml.
-        Defaults to config/config.yaml relative to project root.
+        Explicit path to config.yaml. Auto-detected if not provided.
 
     Returns
     -------
@@ -42,13 +71,15 @@ def load_config(path: str = None) -> dict:
     global _config
 
     if path is None:
-        # Also check environment variable for container deployments
-        path = os.environ.get("CONFIG_PATH", _DEFAULT_CONFIG_PATH)
+        path = _find_default_config()
 
     if not os.path.exists(path):
         raise FileNotFoundError(
             f"Config file not found at: {path}\n"
-            f"Set CONFIG_PATH environment variable or pass path explicitly."
+            f"Options:\n"
+            f"  1. Set CONFIG_PATH environment variable\n"
+            f"  2. Place config.yaml at {path}\n"
+            f"  3. Pass path explicitly: load_config('/path/to/config.yaml')"
         )
 
     with open(path, "r") as f:

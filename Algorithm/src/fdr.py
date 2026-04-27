@@ -131,10 +131,11 @@ def apply_fdr_to_window(raw_df: pd.DataFrame, window_start) -> pd.DataFrame:
     )
 
     # ── Return all pairs (significant + not) for completeness ─────────────
-    out = df_best[[
-        "window_start", "ticker_i", "ticker_j", "lag",
-        "dcor", "q_value", "significant"
-    ]].reset_index(drop=True)
+    base_cols = ["window_start", "ticker_i", "ticker_j", "lag",
+                 "dcor", "q_value", "significant"]
+    if "pearson_corr" in df_best.columns:
+        base_cols.append("pearson_corr")
+    out = df_best[base_cols].reset_index(drop=True)
 
     return out
 

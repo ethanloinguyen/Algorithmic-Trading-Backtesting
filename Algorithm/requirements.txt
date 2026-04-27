@@ -1,16 +1,26 @@
+# Core scientific computing
 numpy
 pandas
 scipy
 scikit-learn
 networkx
+numba
+
+# Google Cloud (BigQuery only — no Cloud Run / Workflows needed locally)
 google-cloud-bigquery
 google-cloud-bigquery-storage
 google-cloud-storage
+db-dtypes
+pandas-gbq
+pyarrow
+
+# Web / API
 fastapi
 uvicorn
 requests
-db-dtypes
-pandas-gbq
-pytest
+
+# Config & utilities
 pyyaml
-pyarrow
+
+# Testing
+pytest

@@ -19,11 +19,16 @@ Usage:
 
 import argparse
 import logging
+import os
 import sys
 import pandas as pd
 from datetime import date
 
-sys.path.insert(0, "/app")
+_setup_dir = os.path.dirname(os.path.abspath(__file__))
+_proj_root = os.path.dirname(_setup_dir)
+for _p in (_proj_root, "/app"):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 logging.basicConfig(
     level=logging.INFO,

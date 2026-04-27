@@ -64,6 +64,7 @@ def compute_strategy_returns(
     lag: int,
     oos_start: date,
     oos_end: date,
+    direction: float = 1.0,
 ) -> pd.DataFrame:
     """
     Compute daily strategy returns for pair (i → j) at a given lag.
@@ -79,6 +80,7 @@ def compute_strategy_returns(
     -------
     DataFrame with: [date, signal, position, strategy_return_gross, strategy_return_net]
     """
+    direction_sign = int(np.sign(direction)) if direction != 0 else 1
     cfg = get_config()["strategy"]
     lookback = cfg["zscore_lookback_days"]
     threshold = cfg["zscore_threshold"]
@@ -112,11 +114,12 @@ def compute_strategy_returns(
         if not (oos_start <= current_date <= oos_end):
             continue
 
-        # Position
+        # Position: direction_sign flips the trade for inverse lead-lag pairs
+        # (pearson_corr < 0 means ticker_i up predicts ticker_j down)
         if sig_t > threshold:
-            position = 1   # Long y
+            position = direction_sign
         elif sig_t < -threshold:
-            position = -1  # Short y
+            position = -direction_sign
         else:
             position = 0   # No trade
 
@@ -269,7 +272,7 @@ def compute_global_oos_sharpe() -> pd.DataFrame:
     Returns
     -------
     DataFrame with: ticker_i, ticker_j, oos_sharpe_net, oos_sharpe_gross,
-                    n_oos_days, best_lag
+                    n_oos_days, best_lag, oos_dcor
     """
     logger.info("Computing global OOS Sharpe per pair...")
     all_returns = read_oos_strategy_returns()
@@ -282,28 +285,144 @@ def compute_global_oos_sharpe() -> pd.DataFrame:
     for (ti, tj), group in all_returns.groupby(["ticker_i", "ticker_j"]):
         group = group.sort_values("oos_date")
 
-        # Concatenate all OOS days across windows
         net_returns = group["strategy_return_net"].values
         gross_returns = group["strategy_return_gross"].values
         n_days = len(net_returns)
 
-        # Only compute if enough data
         if n_days < 30:
             continue
-
-        sharpe_net = compute_sharpe(net_returns)
-        sharpe_gross = compute_sharpe(gross_returns)
-        best_lag = int(group["lag"].mode().iloc[0])
 
         results.append({
             "ticker_i": ti,
             "ticker_j": tj,
-            "oos_sharpe_net": sharpe_net,
-            "oos_sharpe_gross": sharpe_gross,
+            "oos_sharpe_net": compute_sharpe(net_returns),
+            "oos_sharpe_gross": compute_sharpe(gross_returns),
             "n_oos_days": n_days,
-            "best_lag": best_lag,
+            "best_lag": int(group["lag"].mode().iloc[0]),
         })
 
     df = pd.DataFrame(results)
     logger.info(f"Global OOS Sharpe computed for {len(df):,} pairs")
+    return df
+
+
+def compute_global_oos_dcor(pairs_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Compute OOS dCor for each pair by loading residuals from rolling_residuals
+    and measuring distance correlation on the OOS period at the best lag.
+
+    OOS residuals live in the NEXT training window, not the current one, so we
+    query by date range (taking the most recent window_start per ticker-date),
+    then slice each OOS window out of the resulting timeline.
+
+    Parameters
+    ----------
+    pairs_df : DataFrame with ticker_i, ticker_j, best_lag (from global_sharpe_df)
+
+    Returns
+    -------
+    DataFrame with ticker_i, ticker_j, oos_dcor
+    """
+    if pairs_df.empty:
+        return pd.DataFrame(columns=["ticker_i", "ticker_j", "oos_dcor"])
+
+    from src.windows import generate_rolling_windows, get_oos_window_for
+
+    client = get_client()
+
+    # Load significant pairs per window — only compute dCor where the pair was
+    # actually significant. Iterating all pairs × all windows is O(14M+ dCor
+    # calls); filtering to significant pairs reduces this by ~1/average_frequency.
+    sig_df = client.query(f"""
+        SELECT window_start, ticker_i, ticker_j, lag
+        FROM `{full_table('pair_results_filtered')}`
+        WHERE significant = TRUE
+        ORDER BY window_start
+    """).to_dataframe()
+
+    if sig_df.empty:
+        logger.warning("No significant pairs found — cannot compute OOS dCor.")
+        return pd.DataFrame(columns=["ticker_i", "ticker_j", "oos_dcor"])
+
+    sig_df["window_start"] = pd.to_datetime(sig_df["window_start"]).dt.date
+
+    # Best-lag lookup from pairs_df (already computed global Sharpe)
+    best_lag_lookup = {
+        (row["ticker_i"], row["ticker_j"]): int(row["best_lag"])
+        for _, row in pairs_df.iterrows()
+    }
+
+    # Per-window significant pair sets: {window_start: [(ti, tj, lag), ...]}
+    window_pairs: dict = {}
+    for _, row in sig_df.iterrows():
+        ti, tj, ws = row["ticker_i"], row["ticker_j"], row["window_start"]
+        lag = best_lag_lookup.get((ti, tj), int(row["lag"]))
+        window_pairs.setdefault(ws, []).append((ti, tj, lag))
+
+    all_tickers = list(set(sig_df["ticker_i"].tolist() + sig_df["ticker_j"].tolist()))
+    ticker_list = ", ".join(f"'{t}'" for t in all_tickers)
+
+    logger.info(
+        f"Loading residuals for {len(all_tickers)} tickers (deduped by date)..."
+    )
+    resid_df = client.query(f"""
+        WITH ranked AS (
+            SELECT
+                ticker,
+                DATE(date) AS date,
+                residual,
+                ROW_NUMBER() OVER (
+                    PARTITION BY ticker, DATE(date)
+                    ORDER BY window_start DESC
+                ) AS rn
+            FROM `{full_table('rolling_residuals')}`
+            WHERE ticker IN ({ticker_list})
+        )
+        SELECT ticker, date, residual
+        FROM ranked
+        WHERE rn = 1
+        ORDER BY ticker, date
+    """).to_dataframe()
+
+    if resid_df.empty:
+        logger.warning("No residuals found for OOS dCor computation.")
+        return pd.DataFrame(columns=["ticker_i", "ticker_j", "oos_dcor"])
+
+    resid_df["date"] = pd.to_datetime(resid_df["date"]).dt.date
+    pivot = resid_df.pivot(index="date", columns="ticker", values="residual")
+
+    dcor_by_pair: dict = {}
+    total_computed = 0
+    for window_start, window_end in generate_rolling_windows():
+        sig_pairs = window_pairs.get(window_start, [])
+        if not sig_pairs:
+            continue
+
+        oos_start, oos_end = get_oos_window_for(window_end)
+        oos_dates = [d for d in pivot.index if oos_start <= d <= oos_end]
+        if not oos_dates:
+            continue
+        oos_pivot = pivot.loc[oos_dates]
+
+        for ti, tj, lag in sig_pairs:
+            if ti not in oos_pivot.columns or tj not in oos_pivot.columns:
+                continue
+            common = oos_pivot[[ti, tj]].dropna()
+            if len(common) < 20:
+                continue
+            val = dcor_at_lag(common[ti].values, common[tj].values, lag)
+            if val is not None:
+                dcor_by_pair.setdefault((ti, tj), []).append(val)
+                total_computed += 1
+
+    logger.info(f"OOS dCor: {total_computed:,} pair-window computations performed")
+    results = [
+        {"ticker_i": ti, "ticker_j": tj, "oos_dcor": float(np.mean(vals))}
+        for (ti, tj), vals in dcor_by_pair.items()
+        if vals
+    ]
+    df = pd.DataFrame(results) if results else pd.DataFrame(
+        columns=["ticker_i", "ticker_j", "oos_dcor"]
+    )
+    logger.info(f"OOS dCor computed for {len(df):,} pairs")
     return df

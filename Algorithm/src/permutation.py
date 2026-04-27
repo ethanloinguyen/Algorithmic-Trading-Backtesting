@@ -59,6 +59,7 @@ def adaptive_permutation_test(
     lag: int,
     observed_dcor: float,
     rng: np.random.Generator = None,
+    max_permutations: int = None,
 ) -> Tuple[float, int]:
     """
     Adaptive 3-tier permutation test for dCor at a given lag.
@@ -87,6 +88,13 @@ def adaptive_permutation_test(
     tier2_cutoff = cfg["tier2_cutoff"]
     tier3_n = cfg["tier3_n"]
     block_size = cfg["block_size"]
+
+    # Cap all tier budgets at max_permutations when provided (e.g. synthetic
+    # health check uses a smaller budget than the main pipeline).
+    if max_permutations is not None:
+        tier1_n = min(tier1_n, max_permutations)
+        tier2_n = min(tier2_n, max_permutations)
+        tier3_n = min(tier3_n, max_permutations)
 
     if rng is None:
         rng = np.random.default_rng()
@@ -125,54 +133,24 @@ def adaptive_permutation_test(
     p3 = (exceed3 + 1) / (tier3_n + 1)
     return float(p3), tier3_n
 
-    # ── TIER 1: 100 permutations ──────────────────────────────────────────
-    for _ in range(tier1_n):
-        x_perm = block_shuffle(x, block_size, rng)
-        perm_dcor = dcor_at_lag(x_perm, y, lag)
-        if perm_dcor is not None and perm_dcor >= observed_dcor:
-            exceed_count += 1
-
-    p_tier1 = (exceed_count + 1) / (tier1_n + 1)
-
-    if p_tier1 > tier1_cutoff:
-        # Clearly null — stop early
-        return p_tier1, tier1_n
-
-    # ── TIER 2: extend to 500 total ───────────────────────────────────────
-    additional_tier2 = tier2_n - tier1_n
-    for _ in range(additional_tier2):
-        x_perm = block_shuffle(x, block_size, rng)
-        perm_dcor = dcor_at_lag(x_perm, y, lag)
-        if perm_dcor is not None and perm_dcor >= observed_dcor:
-            exceed_count += 1
-
-    p_tier2 = (exceed_count + 1) / (tier2_n + 1)
-
-    if p_tier2 > tier2_cutoff:
-        # Not borderline enough — stop
-        return p_tier2, tier2_n
-
-    # ── TIER 3: extend to 1000 total (hard ceiling) ───────────────────────
-    additional_tier3 = tier3_n - tier2_n
-    for _ in range(additional_tier3):
-        x_perm = block_shuffle(x, block_size, rng)
-        perm_dcor = dcor_at_lag(x_perm, y, lag)
-        if perm_dcor is not None and perm_dcor >= observed_dcor:
-            exceed_count += 1
-
-    p_tier3 = (exceed_count + 1) / (tier3_n + 1)
-    return p_tier3, tier3_n
-
 
 def test_pair_all_lags(
     x: np.ndarray,
     y: np.ndarray,
     lags: list,
     rng: np.random.Generator = None,
+    max_permutations: int = None,
 ) -> dict:
     """
     For a pair (x → y), compute dCor and p-value at all lags.
     Uses adaptive permutation at each lag independently.
+
+    Tier 0 pre-screen: if observed dCor at a lag is below
+    permutation.tier0_dcor_threshold (default 0.05), the permutation
+    test is skipped entirely and p_value=1.0 is returned for that lag.
+    For n≈247 observations the expected dCor under independence is
+    ~1/√n ≈ 0.064, so any pair below 0.05 would stop at Tier 1 with
+    p > 0.5 regardless — skipping costs nothing in statistical power.
 
     Parameters
     ----------
@@ -188,13 +166,23 @@ def test_pair_all_lags(
     if rng is None:
         rng = np.random.default_rng()
 
+    tier0_threshold = get_config()["permutation"].get("tier0_dcor_threshold", 0.05)
+
     results = {}
     for lag in lags:
         observed = dcor_at_lag(x, y, lag)
         if observed is None:
             results[lag] = {"dcor": None, "p_value": 1.0, "permutations_used": 0}
             continue
-        p_val, n_perms = adaptive_permutation_test(x, y, lag, observed, rng=rng)
+
+        # Tier 0: skip permutation for clearly null lags
+        if observed < tier0_threshold:
+            results[lag] = {"dcor": observed, "p_value": 1.0, "permutations_used": 0}
+            continue
+
+        p_val, n_perms = adaptive_permutation_test(
+            x, y, lag, observed, rng=rng, max_permutations=max_permutations
+        )
         results[lag] = {
             "dcor": observed,
             "p_value": p_val,
