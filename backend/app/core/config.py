@@ -6,18 +6,24 @@ from functools import lru_cache
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
-    # Google Cloud
+    # Google Cloud — common
     google_application_credentials: str = "./secrets/gcp-service-account.json"
     gcp_project_id: str
-    bq_dataset: str = "output_results"
-    bq_ohlcv_table: str = "market_data"
+
+    # BigQuery
+    bq_dataset:      str = "output_results"
+    bq_ohlcv_table:  str = "market_data"
     bq_stocks_table: str = "ticker_metadata"
+
+    # Firestore — named database (not the default "(default)" instance)
+    # Set in backend/.env as:  FIRESTORE_DATABASE_ID=capstone-firestore
+    firestore_database_id: str = "capstone-firestore"
 
     # Server
     host: str = "0.0.0.0"
     port: int = 4000
 
-    # CORS — comma-separated origins
+    # CORS — comma-separated origins, e.g. "http://localhost:3000"
     allowed_origins: str = "http://localhost:3000"
 
     # Portfolio diversification — use mock data until BQ final_network is populated
@@ -29,7 +35,6 @@ class Settings(BaseSettings):
 
     @property
     def fq_market_data(self) -> str:
-        """Fully-qualified BigQuery table: `project.dataset.table`"""
         return f"`{self.gcp_project_id}.{self.bq_dataset}.{self.bq_ohlcv_table}`"
 
     @property

@@ -4,15 +4,13 @@ from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query
 
-from app.models.stock import (
-    OHLCVResponse,
-    StockListResponse,
-    TimeRange,
-)
-from app.services.bigquery_services import (
-    get_all_stock_summaries,
-    get_ohlcv,
-    get_stock_summaries,
+from app.models.stock import OHLCVResponse, StockListResponse, TimeRange
+from app.services.bigquery_services import get_all_stock_summaries, get_ohlcv, get_stock_summaries
+from app.services.cache_service import (
+    get_cached_summaries,
+    set_cached_summaries,
+    get_cached_ohlcv,
+    set_cached_ohlcv,
 )
 
 router = APIRouter(prefix="/api/stocks", tags=["stocks"])
@@ -31,10 +29,20 @@ def _validate_symbol(symbol: str) -> str:
 @router.get("", response_model=StockListResponse)
 def list_stocks():
     """
-    Returns the latest summary (price, % change, volume) for every stock
-    in the database. Used to auto-populate the Featured Stocks table.
+    Returns the latest summary for every stock in FEATURED_TICKERS.
+    Checks Firestore cache first (TTL 5 min) before querying BigQuery.
     """
+    # 1. Try Firestore cache
+    cached = get_cached_summaries("stock_summaries")
+    if cached is not None:
+        return StockListResponse(data=cached)
+
+    # 2. Cache miss — query BigQuery
     data = get_all_stock_summaries()
+
+    # 3. Write result back to Firestore cache
+    set_cached_summaries(data, "stock_summaries")
+
     return StockListResponse(data=data)
 
 
@@ -45,7 +53,8 @@ def stock_summaries(
 ):
     """
     Returns latest summaries for a specific list of symbols.
-    Used by the profile page to refresh starred-stock prices.
+    Used by the profile page to refresh saved-stock prices.
+    No caching here — these are user-specific requests.
     """
     symbol_list = [_validate_symbol(s) for s in symbols.split(",") if s.strip()]
     if not symbol_list:
@@ -61,19 +70,28 @@ def stock_ohlcv(
     range: TimeRange = TimeRange.ONE_MONTH,
 ):
     """
-    Returns OHLCV candles for a single symbol over the requested time range.
-    Used by StockModal when a user clicks on any stock or index card.
+    Returns OHLCV candles for a single symbol.
+    Checks Firestore cache first before querying BigQuery.
 
-    - **symbol**: ticker (e.g. `AAPL`)
-    - **range**: `1D` | `1W` | `1M` | `3M` | `1Y` | `5Y`  (default `1M`)
+    - range: 1D | 1W | 1M | 3M | 1Y | 5Y  (default 1M)
+    - TTL:   1 min for 1D, 10 min for all others
     """
-    sym     = _validate_symbol(symbol)
-    candles = get_ohlcv(sym, range)
+    sym = _validate_symbol(symbol)
 
+    # 1. Try Firestore cache
+    cached = get_cached_ohlcv(sym, range)
+    if cached is not None:
+        return OHLCVResponse(symbol=sym, range=range, candles=cached)
+
+    # 2. Cache miss — query BigQuery
+    candles = get_ohlcv(sym, range)
     if not candles:
         raise HTTPException(
             status_code=404,
             detail=f"No OHLCV data found for '{sym}' in range '{range.value}'"
         )
+
+    # 3. Write to Firestore cache
+    set_cached_ohlcv(sym, range, candles)
 
     return OHLCVResponse(symbol=sym, range=range, candles=candles)

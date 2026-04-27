@@ -1,7 +1,7 @@
 # backend/app/services/bigquery_services.py
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime
 from google.cloud import bigquery
 
 from app.core.bigquery import get_bq_client
@@ -13,7 +13,7 @@ from app.models.stock import (
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-# Number of calendar days to look back per range
+# Calendar days to look back per time range
 RANGE_DAYS: dict[TimeRange, int] = {
     TimeRange.ONE_DAY:      1,
     TimeRange.ONE_WEEK:     7,
@@ -38,7 +38,6 @@ FEATURED_TICKERS = [
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _abbreviate_volume(vol: int | float) -> str:
-    """Convert raw volume to abbreviated string: 52300000 → '52.3M'"""
     vol = float(vol)
     if vol >= 1_000_000_000:
         return f"{vol / 1_000_000_000:.1f}B"
@@ -50,19 +49,21 @@ def _abbreviate_volume(vol: int | float) -> str:
 
 
 def _format_price(n: float) -> str:
-    """Format price as '$189.84'"""
     return f"${n:,.2f}"
 
 
 def _format_date_label(iso_date: str, range_: TimeRange) -> str:
     """
-    Convert a raw ISO date/datetime string into the display label the
-    frontend expects per time range.
+    Convert BigQuery DATETIME string → display label.
+
+    BigQuery CAST(datetime_col AS STRING) produces ISO-8601 strings like:
+        "2024-01-15T09:30:00" or "2024-01-15 09:30:00"
+    Both are handled by datetime.fromisoformat() in Python 3.7+.
     """
     try:
-        d = datetime.fromisoformat(iso_date)
+        d = datetime.fromisoformat(iso_date.replace(" ", "T"))
     except ValueError:
-        return iso_date
+        return iso_date  # return raw string if unparseable
 
     if range_ == TimeRange.ONE_DAY:
         return d.strftime("%-I:%M %p")   # "9:30 AM"
@@ -71,24 +72,22 @@ def _format_date_label(iso_date: str, range_: TimeRange) -> str:
     return d.strftime("%b %d")            # "Mar 01"
 
 
-# ── Queries ───────────────────────────────────────────────────────────────────
+# ── OHLCV query ───────────────────────────────────────────────────────────────
 
 def get_ohlcv(symbol: str, range_: TimeRange) -> list[OHLCVCandle]:
     """
     Fetch OHLCV candles for a single symbol over the requested time range.
 
-    Expected BigQuery table schema for market_data:
+    Confirmed BigQuery schema for market_data (capstone-487001):
+        date        DATETIME   ← DATETIME not DATE — must use DATETIME_SUB
+        adj_close   FLOAT
+        close       FLOAT
+        high        FLOAT
+        low         FLOAT
+        open        FLOAT
+        volume      INTEGER
         ticker      STRING
-        date        DATE        ← DATE type, not DATETIME
-        open        FLOAT64
-        high        FLOAT64
-        low         FLOAT64
-        close       FLOAT64
-        volume      INT64
-
-    NOTE: Uses DATE_SUB + CURRENT_DATE() (not DATETIME_SUB) because the
-    `date` column is type DATE. If your table uses DATETIME, switch to
-    DATETIME_SUB(CURRENT_DATETIME(), INTERVAL @days DAY).
+        log_return  FLOAT
     """
     client   = get_bq_client()
     settings = get_settings()
@@ -105,7 +104,7 @@ def get_ohlcv(symbol: str, range_: TimeRange) -> list[OHLCVCandle]:
         FROM {settings.fq_market_data}
         WHERE
             ticker = @symbol
-            AND date >= DATE_SUB(CURRENT_DATE(), INTERVAL @days DAY)
+            AND date >= DATETIME_SUB(CURRENT_DATETIME(), INTERVAL @days DAY)
         ORDER BY date ASC
     """
 
@@ -132,8 +131,9 @@ def get_ohlcv(symbol: str, range_: TimeRange) -> list[OHLCVCandle]:
     return candles
 
 
+# ── Summary queries ───────────────────────────────────────────────────────────
+
 def _summaries_from_query(rows) -> list[StockSummary]:
-    """Shared row-to-model conversion for summary queries."""
     results: list[StockSummary] = []
     for row in rows:
         prev  = row.prev_close
@@ -141,7 +141,6 @@ def _summaries_from_query(rows) -> list[StockSummary]:
         pct   = ((today - prev) / prev * 100) if prev else 0.0
         positive   = pct >= 0
         change_str = f"{'+'if positive else ''}{pct:.2f}%"
-
         results.append(StockSummary(
             symbol   = row.ticker,
             name     = row.company_name,
@@ -154,22 +153,20 @@ def _summaries_from_query(rows) -> list[StockSummary]:
 
 
 def get_all_stock_summaries() -> list[StockSummary]:
-    """
-    Fetch the latest price, change, and volume for a curated list
-    of popular stocks. Used to populate the Watchlist table.
-    """
+    """Fetch summaries for the featured tickers list."""
     return get_stock_summaries(FEATURED_TICKERS)
 
 
 def get_stock_summaries(symbols: list[str]) -> list[StockSummary]:
     """
-    Fetch summaries for a specific list of symbols.
-    Used by the profile page to refresh starred-stock prices.
+    Fetch latest price, change %, and volume for a list of symbols.
 
-    Expected BigQuery table schemas:
-      market_data:     ticker STRING, date DATE, open FLOAT64, high FLOAT64,
-                       low FLOAT64, close FLOAT64, volume INT64
-      ticker_metadata: ticker STRING, company_name STRING
+    Uses a window function to get the two most recent DATETIME rows per
+    ticker so we can compute day-over-day % change.
+
+    The LEFT JOIN against ticker_metadata is optional — if that table does
+    not exist or has no matching row, company_name falls back to the ticker
+    symbol itself via COALESCE.
     """
     if not symbols:
         return []
@@ -213,7 +210,9 @@ def get_stock_summaries(symbols: list[str]) -> list[StockSummary]:
 
     job_config = bigquery.QueryJobConfig(
         query_parameters=[
-            bigquery.ArrayQueryParameter("symbols", "STRING", [s.upper() for s in symbols])
+            bigquery.ArrayQueryParameter(
+                "symbols", "STRING", [s.upper() for s in symbols]
+            )
         ]
     )
 
@@ -222,10 +221,7 @@ def get_stock_summaries(symbols: list[str]) -> list[StockSummary]:
 
 
 def get_index_summaries() -> list[IndexSummary]:
-    """
-    Fetch the latest data for SPX, IXIC, and DJI.
-    These are expected to exist as tickers in the market_data table.
-    """
+    """Fetch latest data for SPX, IXIC, DJI."""
     summaries = get_stock_summaries(list(INDEX_META.keys()))
 
     results: list[IndexSummary] = []
@@ -240,7 +236,6 @@ def get_index_summaries() -> list[IndexSummary]:
             price    = s.price,
             positive = s.positive,
         ))
-
     return results
 
 

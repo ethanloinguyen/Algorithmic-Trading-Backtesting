@@ -1,4 +1,3 @@
-// Frontend/components/ui/StockModal.tsx
 "use client";
 import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { X, Star, TrendingUp, TrendingDown, Loader2, AlertTriangle } from "lucide-react";
@@ -24,41 +23,90 @@ export interface Stock {
   positive: boolean;
 }
 
-// ── Constants ─────────────────────────────────────────────────────────────────
+// ── Time range config ─────────────────────────────────────────────────────────
 
-// Exactly matches backend TimeRange enum
-const TIME_RANGES: TimeRange[] = ["1D", "1W", "1M", "3M", "1Y", "5Y"];
+type UIRange = "1D" | "5D" | "1W" | "1M" | "6M" | "1Y" | "5Y";
 
-const CHART_W = 480;
-const CHART_H = 180;
+const UI_RANGES: UIRange[] = ["1D", "5D", "1W", "1M", "6M", "1Y", "5Y"];
 
-// ── Chart helpers ─────────────────────────────────────────────────────────────
+// Map UI label → backend TimeRange (backend supports: 1D 1W 1M 3M 1Y 5Y)
+const TO_API: Record<UIRange, TimeRange> = {
+  "1D": "1D",
+  "5D": "1W",   // backend returns weekly data; we slice the last 5 points client-side
+  "1W": "1W",
+  "1M": "1M",
+  "6M": "3M",   // backend 3M is the closest available
+  "1Y": "1Y",
+  "5Y": "5Y",
+};
+
+// How many tail candles to show when slicing (null = show all)
+const SLICE: Record<UIRange, number | null> = {
+  "1D": null,
+  "5D": 5,
+  "1W": null,
+  "1M": null,
+  "6M": null,
+  "1Y": null,
+  "5Y": null,
+};
+
+// ── Chart constants ───────────────────────────────────────────────────────────
+
+const CHART_W  = 600;
+const CHART_H  = 220;
+const PAD_T    = 12;
+const PAD_B    = 28;   // room for x-axis labels
+const PAD_L    = 8;
+const PAD_R    = 8;
+const INNER_W  = CHART_W - PAD_L - PAD_R;
+const INNER_H  = CHART_H - PAD_T - PAD_B;
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
 interface ChartPoint {
-  x:     number;
-  y:     number;
-  price: number;
-  label: string;
+  x:      number;
+  y:      number;
+  candle: OHLCVCandle;
 }
 
-function candlesToPoints(candles: OHLCVCandle[]): ChartPoint[] {
+function buildPoints(candles: OHLCVCandle[]): ChartPoint[] {
   if (candles.length < 2) return [];
-  const prices     = candles.map(c => parseFloat(c.close));
-  const minP       = Math.min(...prices);
-  const maxP       = Math.max(...prices);
-  const priceRange = maxP - minP || 1;
-  const step       = CHART_W / (candles.length - 1);
-
+  const closes = candles.map(c => parseFloat(c.close));
+  const minP   = Math.min(...closes);
+  const maxP   = Math.max(...closes);
+  const range  = maxP - minP || 1;
+  const step   = INNER_W / (candles.length - 1);
   return candles.map((c, i) => ({
-    x:     i * step,
-    y:     CHART_H - 8 - ((parseFloat(c.close) - minP) / priceRange) * (CHART_H - 16),
-    price: parseFloat(c.close),
-    label: c.date,
+    x:      PAD_L + i * step,
+    y:      PAD_T + INNER_H - ((parseFloat(c.close) - minP) / range) * INNER_H,
+    candle: c,
   }));
 }
 
-function pts(points: ChartPoint[]): string {
-  return points.map(p => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
+function polylineStr(pts: ChartPoint[]): string {
+  return pts.map(p => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
+}
+
+function fillStr(pts: ChartPoint[]): string {
+  if (pts.length < 2) return "";
+  const bottom = (PAD_T + INNER_H).toFixed(1);
+  return [
+    `${pts[0].x.toFixed(1)},${bottom}`,
+    ...pts.map(p => `${p.x.toFixed(1)},${p.y.toFixed(1)}`),
+    `${pts[pts.length - 1].x.toFixed(1)},${bottom}`,
+  ].join(" ");
+}
+
+// Pick evenly-spaced x-axis tick labels (max 6)
+function xTicks(pts: ChartPoint[], maxTicks = 6): ChartPoint[] {
+  if (pts.length === 0) return [];
+  const step = Math.max(1, Math.floor(pts.length / maxTicks));
+  const ticks: ChartPoint[] = [];
+  for (let i = 0; i < pts.length; i += step) ticks.push(pts[i]);
+  // Always include the last point
+  if (ticks[ticks.length - 1] !== pts[pts.length - 1]) ticks.push(pts[pts.length - 1]);
+  return ticks;
 }
 
 // ── Analysis tab helpers ──────────────────────────────────────────────────────
@@ -239,85 +287,79 @@ type ModalTab = "chart" | "analysis";
 export default function StockModal({ stock, onClose }: StockModalProps) {
   const { isSaved, toggleSave } = useAuth();
   const saved      = isSaved(stock.symbol);
-  const overlayRef = useRef<HTMLDivElement>(null);
   const svgRef     = useRef<SVGSVGElement>(null);
-  const color      = stock.positive ? "hsl(142, 71%, 45%)" : "hsl(0, 84%, 60%)";
+  const overlayRef = useRef<HTMLDivElement>(null);
+
+  // Derived from stock prop — kept at component level for use across both tabs
+  const positive  = stock.positive;
+  const lineColor = positive ? "hsl(142, 71%, 45%)" : "hsl(0, 84%, 60%)";
 
   const [activeTab, setActiveTab] = useState<ModalTab>("chart");
-  const [range,    setRange]    = useState<TimeRange>("1M");
-  const [candles,  setCandles]  = useState<OHLCVCandle[]>([]);
-  const [loading,  setLoading]  = useState(true);
-  const [error,    setError]    = useState<string | null>(null);
-  const [hovering, setHovering] = useState(false);
-  const [hoverPt,  setHoverPt]  = useState<ChartPoint | null>(null);
+  const [uiRange,   setUiRange]   = useState<UIRange>("1M");
+  const [candles,   setCandles]   = useState<OHLCVCandle[]>([]);
+  const [loading,   setLoading]   = useState(true);
+  const [error,     setError]     = useState<string | null>(null);
+  const [hoverPt,   setHoverPt]   = useState<ChartPoint | null>(null);
 
-  // Load OHLCV: Firestore cache first, then BigQuery
+  // ── Data loading ────────────────────────────────────────────────────────────
   useEffect(() => {
     let cancelled = false;
+    const apiRange = TO_API[uiRange];
 
     async function load() {
       setLoading(true);
       setError(null);
-      setHovering(false);
       setHoverPt(null);
 
-      // ── Step 1: Try Firestore cache (instant) ──────────────────────────
-      const cached = await getCachedOHLCV(stock.symbol, range);
+      // 1. Firestore cache first
+      const cached = await getCachedOHLCV(stock.symbol, apiRange);
       if (cached && !cancelled) {
-        setCandles(cached.candles);
+        const slice = SLICE[uiRange];
+        setCandles(slice ? cached.candles.slice(-slice) : cached.candles);
         setLoading(false);
-        // If cache is fresh, done
         if (!cached.stale) return;
       }
 
-      // ── Step 2: Fetch from BigQuery via backend ────────────────────────
+      // 2. Backend API fallback
       try {
-        const fresh = await fetchOHLCV(stock.symbol, range);
+        const fresh = await fetchOHLCV(stock.symbol, apiRange);
         if (!cancelled) {
-          setCandles(fresh);
+          const slice = SLICE[uiRange];
+          setCandles(slice ? fresh.slice(-slice) : fresh);
           setLoading(false);
           setError(null);
-          setCachedOHLCV(stock.symbol, range, fresh); // update cache
         }
       } catch (err: unknown) {
-        if (!cancelled) {
-          const msg = err instanceof Error ? err.message : "Failed to load";
-          if (!cached) {
-            setError(msg);
-            setLoading(false);
-          }
-          // If we had cached data, keep showing it silently
+        if (!cancelled && !cached) {
+          setError(err instanceof Error ? err.message : "Failed to load");
+          setLoading(false);
         }
       }
     }
 
     load();
     return () => { cancelled = true; };
-  }, [stock.symbol, range]);
+  }, [stock.symbol, uiRange]);
 
-  // Close on Escape
+  // ── Keyboard close ──────────────────────────────────────────────────────────
   useEffect(() => {
     const h = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
     window.addEventListener("keydown", h);
     return () => window.removeEventListener("keydown", h);
   }, [onClose]);
 
-  const chartPts = candlesToPoints(candles);
-  const polyline = pts(chartPts);
-  const fillPoly = chartPts.length >= 2
-    ? `0,${CHART_H} ${polyline} ${chartPts[chartPts.length - 1].x.toFixed(1)},${CHART_H}`
-    : "";
+  // ── Chart data ──────────────────────────────────────────────────────────────
+  const chartPts  = buildPoints(candles);
+  const ticks     = xTicks(chartPts);
 
-  const latest = candles[candles.length - 1] ?? null;
-
-  // Hover: find nearest point by SVG x
+  // ── Hover handling ──────────────────────────────────────────────────────────
   const handleMouseMove = useCallback((e: React.MouseEvent<SVGSVGElement>) => {
     const svg = svgRef.current;
     if (!svg || chartPts.length < 2) return;
     const rect = svg.getBoundingClientRect();
     const xRaw = ((e.clientX - rect.left) / rect.width) * CHART_W;
     let nearest = chartPts[0];
-    let minDist = Math.abs(chartPts[0].x - xRaw);
+    let minDist = Infinity;
     for (const pt of chartPts) {
       const d = Math.abs(pt.x - xRaw);
       if (d < minDist) { minDist = d; nearest = pt; }
@@ -325,40 +367,48 @@ export default function StockModal({ stock, onClose }: StockModalProps) {
     setHoverPt(nearest);
   }, [chartPts]);
 
-  const displayPrice = hovering && hoverPt ? `$${hoverPt.price.toFixed(2)}` : stock.price;
-  const displayLabel = hovering && hoverPt ? hoverPt.label : null;
+  // ── Derived display values ──────────────────────────────────────────────────
+  const activeCandle = hoverPt?.candle ?? candles[candles.length - 1] ?? null;
+  const displayPrice = hoverPt
+    ? `$${parseFloat(hoverPt.candle.close).toFixed(2)}`
+    : stock.price;
+  const displayDate  = hoverPt?.candle.date ?? null;
 
-  const ohlcvRows = latest ? [
-    { label: "Open",   value: `$${latest.open}`  },
-    { label: "High",   value: `$${latest.high}`  },
-    { label: "Low",    value: `$${latest.low}`   },
-    { label: "Close",  value: `$${latest.close}` },
-    { label: "Volume", value: latest.volume       },
-  ] : [];
+  // Compute change vs first candle when hovering
+  const hoverChange = hoverPt && candles.length > 1
+    ? (() => {
+        const first = parseFloat(candles[0].close);
+        const curr  = parseFloat(hoverPt.candle.close);
+        const diff  = curr - first;
+        const pct   = (diff / first) * 100;
+        const sign  = diff >= 0 ? "+" : "";
+        return { text: `${sign}${pct.toFixed(2)}%`, positive: diff >= 0 };
+      })()
+    : null;
 
   return (
     <div
       ref={overlayRef}
       onClick={(e) => { if (e.target === overlayRef.current) onClose(); }}
       className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      style={{ background: "rgba(8,12,18,0.85)", backdropFilter: "blur(4px)" }}
+      style={{ background: "rgba(6, 10, 16, 0.88)", backdropFilter: "blur(6px)" }}
     >
       <div
-        className="w-full max-w-2xl rounded-2xl overflow-hidden"
+        className="w-full rounded-2xl overflow-hidden"
         style={{
-          background: "hsl(215, 25%, 11%)",
-          border:     "1px solid hsl(215, 20%, 20%)",
-          boxShadow:  "0 24px 64px rgba(0,0,0,0.7)",
+          maxWidth: 680,
+          background:  "hsl(215, 25%, 11%)",
+          border:      "1px solid hsl(215, 20%, 20%)",
+          boxShadow:   "0 32px 80px rgba(0,0,0,0.75)",
         }}
       >
-
         {/* ── Header ── */}
         <div
           className="flex items-center justify-between px-6 py-4"
           style={{ borderBottom: "1px solid hsl(215, 20%, 16%)" }}
         >
           <div>
-            <div className="flex items-center gap-2 mb-0.5">
+            <div className="flex items-baseline gap-2.5 mb-1">
               <span className="text-lg font-bold" style={{ color: "hsl(210, 40%, 92%)" }}>
                 {stock.symbol}
               </span>
@@ -366,21 +416,32 @@ export default function StockModal({ stock, onClose }: StockModalProps) {
                 {stock.name}
               </span>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2.5">
               <span
-                className="text-2xl font-bold"
-                style={{ color: "hsl(210, 40%, 95%)", fontVariantNumeric: "tabular-nums" }}
+                className="text-3xl font-bold"
+                style={{ color: "hsl(210, 40%, 96%)", fontVariantNumeric: "tabular-nums" }}
               >
                 {displayPrice}
               </span>
-              {displayLabel ? (
-                <span className="text-xs" style={{ color: "hsl(215, 15%, 50%)" }}>
-                  {displayLabel}
-                </span>
+              {hoverChange ? (
+                <>
+                  <span
+                    className="text-sm font-semibold"
+                    style={{ color: hoverChange.positive ? "hsl(142,71%,45%)" : "hsl(0,84%,60%)" }}
+                  >
+                    {hoverChange.text}
+                  </span>
+                  <span className="text-xs" style={{ color: "hsl(215,15%,45%)" }}>
+                    {displayDate}
+                  </span>
+                </>
               ) : (
-                <span className="text-sm font-semibold flex items-center gap-1" style={{ color }}>
-                  {stock.positive
-                    ? <TrendingUp className="w-3.5 h-3.5" />
+                <span
+                  className="text-sm font-semibold flex items-center gap-1"
+                  style={{ color: lineColor }}
+                >
+                  {positive
+                    ? <TrendingUp  className="w-3.5 h-3.5" />
                     : <TrendingDown className="w-3.5 h-3.5" />}
                   {stock.change}
                 </span>
@@ -410,7 +471,7 @@ export default function StockModal({ stock, onClose }: StockModalProps) {
                 background: saved ? "hsla(48,96%,53%,0.15)" : "hsl(215,25%,16%)",
                 border: `1px solid ${saved ? "hsla(48,96%,53%,0.4)" : "hsl(215,20%,22%)"}`,
               }}
-              aria-label={saved ? "Remove from saved" : "Save stock"}
+              aria-label={saved ? "Unsave stock" : "Save stock"}
             >
               <Star
                 className="w-4 h-4"
@@ -422,8 +483,9 @@ export default function StockModal({ stock, onClose }: StockModalProps) {
             </button>
             <button
               onClick={onClose}
-              className="p-2 rounded-lg transition-all hover:opacity-80"
+              className="p-2 rounded-lg hover:opacity-80 transition-opacity"
               style={{ background: "hsl(215,25%,16%)", border: "1px solid hsl(215,20%,22%)" }}
+              aria-label="Close"
             >
               <X className="w-4 h-4" style={{ color: "hsl(215,15%,55%)" }} />
             </button>
@@ -432,145 +494,212 @@ export default function StockModal({ stock, onClose }: StockModalProps) {
 
         {/* ── Time range selector (Price tab only) ── */}
         {activeTab === "chart" && (
-        <div className="flex items-center gap-1 px-6 pt-4">
-          {TIME_RANGES.map((r) => (
-            <button
-              key={r}
-              onClick={() => setRange(r)}
-              className="px-2.5 py-1 rounded-md text-xs font-semibold transition-all"
-              style={{
-                background: r === range ? "hsl(217,91%,60%)" : "transparent",
-                color:      r === range ? "white" : "hsl(215,15%,55%)",
-              }}
-            >
-              {r}
-            </button>
-          ))}
-        </div>
+          <div className="flex items-center gap-1 px-6 pt-4 pb-1">
+            {UI_RANGES.map((r) => (
+              <button
+                key={r}
+                onClick={() => setUiRange(r)}
+                className="px-3 py-1.5 rounded-md text-xs font-semibold transition-all"
+                style={{
+                  background: r === uiRange ? "hsl(217, 91%, 60%)"      : "transparent",
+                  color:      r === uiRange ? "white"                    : "hsl(215, 15%, 55%)",
+                }}
+                onMouseEnter={(e) => { if (r !== uiRange) e.currentTarget.style.color = "hsl(210,40%,80%)"; }}
+                onMouseLeave={(e) => { if (r !== uiRange) e.currentTarget.style.color = "hsl(215,15%,55%)"; }}
+              >
+                {r}
+              </button>
+            ))}
+          </div>
         )}
 
         {/* ── Chart + OHLCV table (Price tab) ── */}
         {activeTab === "chart" && (
-        <>
-        <div className="px-6 pt-3 pb-1" style={{ cursor: "crosshair" }}>
-          {loading ? (
-            <div className="flex items-center justify-center" style={{ height: CHART_H }}>
-              <Loader2 className="w-5 h-5 animate-spin" style={{ color: "hsl(217,91%,60%)" }} />
-            </div>
-          ) : error ? (
-            <div
-              className="flex flex-col items-center justify-center gap-1"
-              style={{ height: CHART_H }}
-            >
-              <span className="text-sm" style={{ color: "hsl(0,84%,60%)" }}>
-                Failed to load chart
-              </span>
-              <span className="text-xs" style={{ color: "hsl(215,15%,45%)" }}>
-                {error}
-              </span>
-            </div>
-          ) : chartPts.length < 2 ? (
-            <div
-              className="flex items-center justify-center text-sm"
-              style={{ height: CHART_H, color: "hsl(215,15%,50%)" }}
-            >
-              No data for this range
-            </div>
-          ) : (
-            <svg
-              ref={svgRef}
-              width="100%"
-              viewBox={`0 0 ${CHART_W} ${CHART_H}`}
-              preserveAspectRatio="none"
-              style={{ display: "block", overflow: "visible" }}
-              onMouseMove={handleMouseMove}
-              onMouseEnter={() => setHovering(true)}
-              onMouseLeave={() => { setHovering(false); setHoverPt(null); }}
-            >
-              <defs>
-                <linearGradient id={`grad-${stock.symbol}`} x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%"   stopColor={color} stopOpacity="0.3" />
-                  <stop offset="100%" stopColor={color} stopOpacity="0"   />
-                </linearGradient>
-              </defs>
-
-              {[0.2, 0.4, 0.6, 0.8].map(p => (
-                <line key={p} x1="0" y1={CHART_H * p} x2={CHART_W} y2={CHART_H * p}
-                  stroke="hsl(215,20%,17%)" strokeWidth="1" />
-              ))}
-
-              <polygon fill={`url(#grad-${stock.symbol})`} points={fillPoly} />
-
-              <polyline
-                fill="none" stroke={color} strokeWidth="2"
-                strokeLinecap="round" strokeLinejoin="round"
-                points={polyline}
-              />
-
-              {hovering && hoverPt && (
-                <>
-                  <line
-                    x1={hoverPt.x} y1={0} x2={hoverPt.x} y2={CHART_H}
-                    stroke="hsl(215,20%,40%)" strokeWidth="1" strokeDasharray="4 3"
-                  />
-                  <circle
-                    cx={hoverPt.x} cy={hoverPt.y} r="4"
-                    fill={color} stroke="hsl(215,25%,11%)" strokeWidth="2"
-                  />
-                  <g transform={`translate(${Math.min(hoverPt.x + 8, CHART_W - 82)},${Math.max(hoverPt.y - 30, 4)})`}>
-                    <rect x="0" y="0" width="74" height="22" rx="4"
-                      fill="hsl(215,28%,18%)" stroke="hsl(215,20%,28%)" strokeWidth="1" />
-                    <text x="37" y="15" textAnchor="middle" fontSize="11"
-                      fill="hsl(210,40%,92%)" fontFamily="monospace">
-                      ${hoverPt.price.toFixed(2)}
-                    </text>
-                  </g>
-                </>
-              )}
-            </svg>
-          )}
-        </div>
-
-        {/* ── OHLCV table ── */}
-        <div
-          className="mx-6 mb-5 mt-2 rounded-xl overflow-hidden"
-          style={{ border: "1px solid hsl(215,20%,16%)" }}
-        >
-          <div
-            className="px-4 py-2 text-xs font-semibold tracking-wider"
-            style={{
-              background:   "hsl(215,25%,14%)",
-              color:        "hsl(215,15%,50%)",
-              borderBottom: "1px solid hsl(215,20%,16%)",
-            }}
-          >
-            LATEST OHLCV
-          </div>
-          {loading ? (
-            <div className="flex items-center justify-center py-4">
-              <Loader2 className="w-4 h-4 animate-spin" style={{ color: "hsl(217,91%,60%)" }} />
-            </div>
-          ) : ohlcvRows.length > 0 ? (
-            <div className="grid grid-cols-5">
-              {ohlcvRows.map(({ label, value }, i) => (
+          <>
+            <div className="px-6 pt-3 pb-1" style={{ cursor: "crosshair" }}>
+              {loading ? (
                 <div
-                  key={label}
-                  className="px-3 py-3 flex flex-col gap-1"
-                  style={{ borderRight: i < 4 ? "1px solid hsl(215,20%,16%)" : "none" }}
+                  className="flex items-center justify-center"
+                  style={{ height: CHART_H }}
                 >
-                  <span className="text-xs" style={{ color: "hsl(215,15%,50%)" }}>{label}</span>
-                  <span className="text-sm font-semibold" style={{ color: "hsl(210,40%,92%)" }}>{value}</span>
+                  <Loader2 className="w-5 h-5 animate-spin" style={{ color: "hsl(217,91%,60%)" }} />
                 </div>
-              ))}
+              ) : error ? (
+                <div
+                  className="flex flex-col items-center justify-center gap-1"
+                  style={{ height: CHART_H }}
+                >
+                  <span className="text-sm" style={{ color: "hsl(0,84%,60%)" }}>Failed to load chart</span>
+                  <span className="text-xs" style={{ color: "hsl(215,15%,45%)" }}>{error}</span>
+                </div>
+              ) : chartPts.length < 2 ? (
+                <div
+                  className="flex items-center justify-center text-sm"
+                  style={{ height: CHART_H, color: "hsl(215,15%,50%)" }}
+                >
+                  No data available for this range
+                </div>
+              ) : (
+                <svg
+                  ref={svgRef}
+                  width="100%"
+                  viewBox={`0 0 ${CHART_W} ${CHART_H}`}
+                  preserveAspectRatio="none"
+                  style={{ display: "block", overflow: "visible" }}
+                  onMouseMove={handleMouseMove}
+                  onMouseLeave={() => setHoverPt(null)}
+                >
+                  <defs>
+                    <linearGradient id={`fill-${stock.symbol}`} x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%"   stopColor={lineColor} stopOpacity="0.25" />
+                      <stop offset="100%" stopColor={lineColor} stopOpacity="0"    />
+                    </linearGradient>
+                  </defs>
+
+                  {/* Horizontal grid lines */}
+                  {[0.25, 0.5, 0.75].map((f) => (
+                    <line
+                      key={f}
+                      x1={PAD_L} y1={PAD_T + INNER_H * f}
+                      x2={CHART_W - PAD_R} y2={PAD_T + INNER_H * f}
+                      stroke="hsl(215,20%,17%)" strokeWidth="1"
+                    />
+                  ))}
+
+                  {/* X-axis tick labels */}
+                  {ticks.map((pt) => (
+                    <text
+                      key={pt.candle.date}
+                      x={pt.x}
+                      y={CHART_H - 4}
+                      textAnchor="middle"
+                      fontSize="9"
+                      fill="hsl(215,15%,38%)"
+                      style={{ userSelect: "none" }}
+                    >
+                      {pt.candle.date}
+                    </text>
+                  ))}
+
+                  {/* Area fill */}
+                  <polygon
+                    fill={`url(#fill-${stock.symbol})`}
+                    points={fillStr(chartPts)}
+                  />
+
+                  {/* Price line */}
+                  <polyline
+                    fill="none"
+                    stroke={lineColor}
+                    strokeWidth="1.75"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    points={polylineStr(chartPts)}
+                  />
+
+                  {/* Hover elements */}
+                  {hoverPt && (
+                    <>
+                      {/* Vertical crosshair */}
+                      <line
+                        x1={hoverPt.x} y1={PAD_T}
+                        x2={hoverPt.x} y2={PAD_T + INNER_H}
+                        stroke="hsl(215,20%,45%)"
+                        strokeWidth="1"
+                        strokeDasharray="4 3"
+                      />
+                      {/* Dot on line */}
+                      <circle
+                        cx={hoverPt.x} cy={hoverPt.y} r="4.5"
+                        fill={lineColor}
+                        stroke="hsl(215,25%,11%)"
+                        strokeWidth="2"
+                      />
+                    </>
+                  )}
+                </svg>
+              )}
             </div>
-          ) : (
-            <div className="px-4 py-3 text-xs" style={{ color: "hsl(215,15%,50%)" }}>
-              No OHLCV data available
+
+            {/* ── OHLCV hover panel ── */}
+            <div
+              className="mx-6 mb-5 rounded-xl overflow-hidden"
+              style={{ border: "1px solid hsl(215,20%,17%)" }}
+            >
+              {/* Section label */}
+              <div
+                className="px-4 py-2 flex items-center justify-between"
+                style={{
+                  background:   "hsl(215,25%,14%)",
+                  borderBottom: "1px solid hsl(215,20%,17%)",
+                }}
+              >
+                <span
+                  className="text-xs font-semibold tracking-wider"
+                  style={{ color: "hsl(215,15%,48%)" }}
+                >
+                  OHLCV
+                </span>
+                {activeCandle && (
+                  <span className="text-xs" style={{ color: "hsl(215,15%,45%)" }}>
+                    {activeCandle.date}
+                  </span>
+                )}
+              </div>
+
+              {loading ? (
+                <div className="flex items-center justify-center py-5">
+                  <Loader2 className="w-4 h-4 animate-spin" style={{ color: "hsl(217,91%,60%)" }} />
+                </div>
+              ) : !activeCandle ? (
+                <div className="px-4 py-4 text-xs" style={{ color: "hsl(215,15%,50%)" }}>
+                  No data available
+                </div>
+              ) : (
+                <div className="grid grid-cols-5">
+                  {(
+                    [
+                      { label: "Open",   value: `$${parseFloat(activeCandle.open).toFixed(2)}` },
+                      { label: "High",   value: `$${parseFloat(activeCandle.high).toFixed(2)}` },
+                      { label: "Low",    value: `$${parseFloat(activeCandle.low).toFixed(2)}`  },
+                      { label: "Close",  value: `$${parseFloat(activeCandle.close).toFixed(2)}`},
+                      { label: "Volume", value: activeCandle.volume                             },
+                    ] as { label: string; value: string }[]
+                  ).map(({ label, value }, i) => {
+                    const isHigh   = label === "High";
+                    const isLow    = label === "Low";
+                    const valColor = isHigh
+                      ? "hsl(142,71%,45%)"
+                      : isLow
+                      ? "hsl(0,84%,60%)"
+                      : "hsl(210,40%,92%)";
+
+                    return (
+                      <div
+                        key={label}
+                        className="px-4 py-3 flex flex-col gap-1.5 transition-colors"
+                        style={{
+                          borderRight: i < 4 ? "1px solid hsl(215,20%,17%)" : "none",
+                          background:  hoverPt ? "hsl(215,25%,12%)" : "transparent",
+                        }}
+                      >
+                        <span className="text-xs" style={{ color: "hsl(215,15%,48%)" }}>
+                          {label}
+                        </span>
+                        <span
+                          className="text-sm font-semibold"
+                          style={{ color: valColor, fontVariantNumeric: "tabular-nums" }}
+                        >
+                          {value}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
-          )}
-        </div>
-        </>
-        )} {/* end activeTab === "chart" */}
+          </>
+        )}
 
         {/* ── Analysis tab ── */}
         {activeTab === "analysis" && (

@@ -1,35 +1,172 @@
 // Frontend/src/app/dashboard/profile/page.tsx
 "use client";
-import { useState, useEffect } from "react";
-import Sidebar from "@/components/ui/Sidebar";
-import StockModal, { type Stock } from "@/components/ui/StockModal";
+import { useState, useEffect, useRef } from "react";
+import { useRouter } from "next/navigation";
+import {
+  TrendingUp, Star, User, Mail, LogOut, Loader2, BarChart2,
+  LayoutDashboard, LineChart, Grid3X3, ChevronDown, Layers,
+} from "lucide-react";
 import { useAuth } from "@/src/app/context/AuthContext";
 import { fetchStockSummaries, type StockSummary } from "@/src/app/lib/api";
-import { Star, User, Mail, LogOut, Loader2 } from "lucide-react";
-import { useRouter } from "next/navigation";
+import { SECTORS, ALL_SECTORS, filterBySector } from "@/src/app/lib/sectorData";
 
-const card = {
-  background: "hsl(215, 25%, 11%)",
-  border:     "1px solid hsl(215, 20%, 18%)",
-};
+// ─── Shared nav (no sidebar — using top nav like dashboard) ──────────────────
+function Navbar({ displayName, onLogout }: { displayName: string; onLogout: () => void }) {
+  const router = useRouter();
+  const navItems = [
+    { label: "Dashboard", icon: LayoutDashboard, href: "/dashboard" },
+    { label: "Analysis",  icon: LineChart,       href: "/dashboard/analysis" },
+    { label: "Model",     icon: BarChart2,       href: "/dashboard/model" },
+    { label: "Heatmap",   icon: Grid3X3,         href: "/dashboard/heatmap" },
+  ];
+  return (
+    <header
+      className="fixed top-0 left-0 right-0 z-40 flex items-center justify-between px-6 h-14"
+      style={{ background: "hsl(215, 25%, 10%)", borderBottom: "1px solid hsl(215, 20%, 17%)" }}
+    >
+      <div className="flex items-center gap-2">
+        <div className="w-7 h-7 rounded-md flex items-center justify-center" style={{ background: "hsl(217, 91%, 60%)" }}>
+          <TrendingUp className="w-3.5 h-3.5 text-white" strokeWidth={2.5} />
+        </div>
+        <span className="text-base font-bold" style={{ color: "hsl(217, 91%, 60%)" }}>LagLens</span>
+      </div>
+      <nav className="flex items-center gap-1">
+        {navItems.map(({ label, icon: Icon, href }) => (
+          <button
+            key={label}
+            onClick={() => router.push(href)}
+            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-sm font-medium transition-all"
+            style={{ color: "hsl(215, 15%, 55%)" }}
+            onMouseEnter={(e) => (e.currentTarget.style.color = "hsl(210, 40%, 85%)")}
+            onMouseLeave={(e) => (e.currentTarget.style.color = "hsl(215, 15%, 55%)")}
+          >
+            <Icon className="w-3.5 h-3.5" />
+            {label}
+          </button>
+        ))}
+      </nav>
+      <div className="flex items-center gap-3">
+        <button
+          onClick={() => router.push("/dashboard/profile")}
+          className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm transition-all"
+          style={{ background: "hsl(217, 91%, 60% / 0.15)", border: "1px solid hsl(217, 91%, 60% / 0.3)", color: "hsl(217, 91%, 70%)" }}
+        >
+          <User className="w-3.5 h-3.5" />
+          {displayName}
+        </button>
+        <button onClick={onLogout} className="p-2 rounded-lg transition-all hover:opacity-70" style={{ color: "hsl(215, 15%, 50%)" }} aria-label="Sign out">
+          <LogOut className="w-4 h-4" />
+        </button>
+      </div>
+    </header>
+  );
+}
+
+const card = { background: "hsl(215, 25%, 11%)", border: "1px solid hsl(215, 20%, 18%)" };
+
+// ─── Sector dropdown ──────────────────────────────────────────────────────────
+function SectorDropdown({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (sector: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handler(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm transition-all"
+        style={{
+          background: value !== ALL_SECTORS ? "hsla(217,91%,60%,0.15)" : "hsl(215,25%,8%)",
+          border:     value !== ALL_SECTORS ? "1px solid hsla(217,91%,60%,0.4)" : "1px solid hsl(215,20%,20%)",
+          color:      value !== ALL_SECTORS ? "hsl(217,91%,70%)" : "hsl(210,40%,75%)",
+          minWidth:   148,
+        }}
+      >
+        <Layers className="w-3.5 h-3.5 flex-shrink-0" />
+        <span className="flex-1 text-left truncate">{value}</span>
+        <ChevronDown
+          className="w-3.5 h-3.5 flex-shrink-0 transition-transform"
+          style={{ transform: open ? "rotate(180deg)" : "rotate(0deg)" }}
+        />
+      </button>
+
+      {open && (
+        <div
+          className="absolute right-0 top-full mt-1 rounded-xl overflow-y-auto z-50"
+          style={{
+            background: "hsl(215,25%,11%)",
+            border:     "1px solid hsl(215,20%,20%)",
+            boxShadow:  "0 8px 24px rgba(0,0,0,0.4)",
+            minWidth:   180,
+            maxHeight:  320,
+          }}
+        >
+          {SECTORS.map((sector) => (
+            <button
+              key={sector}
+              onClick={() => { onChange(sector); setOpen(false); }}
+              className="w-full text-left px-4 py-2.5 text-sm transition-colors"
+              style={{
+                background:   value === sector ? "hsla(217,91%,60%,0.15)" : "transparent",
+                color:        value === sector ? "hsl(217,91%,70%)" : "hsl(210,40%,80%)",
+                borderBottom: "1px solid hsl(215,20%,16%)",
+              }}
+              onMouseEnter={(e) =>
+                value !== sector && (e.currentTarget.style.background = "hsl(215,25%,15%)")
+              }
+              onMouseLeave={(e) =>
+                value !== sector && (e.currentTarget.style.background = "transparent")
+              }
+            >
+              {sector === ALL_SECTORS ? (
+                <span className="flex items-center gap-2">
+                  <Layers className="w-3.5 h-3.5" />
+                  {sector}
+                </span>
+              ) : sector}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function ProfilePage() {
   const { user, savedStocks, toggleSave, trackClick, loading: authLoading, logout } = useAuth();
   const router = useRouter();
 
-  const [liveData,      setLiveData]      = useState<StockSummary[]>([]);
-  const [pricesLoading, setPricesLoading] = useState(false);
-  const [pricesError,   setPricesError]   = useState(false);
-  const [selectedStock, setSelectedStock] = useState<Stock | null>(null);
+  const [liveData,       setLiveData]       = useState<StockSummary[]>([]);
+  const [pricesLoading,  setPricesLoading]  = useState(false);
+  const [pricesError,    setPricesError]    = useState(false);
+  const [selectedSector, setSelectedSector] = useState(ALL_SECTORS);
 
-  // Fetch live prices from BigQuery whenever saved stocks change
+  // Redirect unauthenticated
+  useEffect(() => {
+    if (!authLoading && !user) router.replace("/");
+  }, [user, authLoading, router]);
+
+  // Fetch live prices whenever saved stocks change
   useEffect(() => {
     if (!savedStocks.length) { setLiveData([]); return; }
     setPricesLoading(true);
     setPricesError(false);
-    fetchStockSummaries(savedStocks.map(s => s.symbol))
-      .then(data  => { setLiveData(data); setPricesLoading(false); })
-      .catch(()   => { setPricesError(true); setPricesLoading(false); });
+    fetchStockSummaries(savedStocks.map((s) => s.symbol))
+      .then((data) => { setLiveData(data); setPricesLoading(false); })
+      .catch(()    => { setPricesError(true); setPricesLoading(false); });
   }, [savedStocks]);
 
   const handleLogout = async () => {
@@ -38,21 +175,14 @@ export default function ProfilePage() {
     router.push("/");
   };
 
-  const handleStockClick = (stock: Stock) => {
-    setSelectedStock(stock);
-    trackClick(stock.symbol);
-  };
-
   const displayName = user?.displayName || user?.email?.split("@")[0] || "User";
-  const joinDate    = user?.metadata?.creationTime
-    ? new Date(user.metadata.creationTime).toLocaleDateString("en-US", {
-        month: "long", year: "numeric",
-      })
+  const joinDate = user?.metadata?.creationTime
+    ? new Date(user.metadata.creationTime).toLocaleDateString("en-US", { month: "long", year: "numeric" })
     : "—";
 
-  // Merge Firestore saved list with live BigQuery prices
-  const mergedStocks = savedStocks.map(saved => {
-    const live = liveData.find(l => l.symbol === saved.symbol);
+  // Merge Firestore saved list with live prices
+  const mergedStocks = savedStocks.map((saved) => {
+    const live = liveData.find((l) => l.symbol === saved.symbol);
     return {
       symbol:   saved.symbol,
       name:     saved.name,
@@ -63,10 +193,15 @@ export default function ProfilePage() {
     };
   });
 
+  // Apply sector filter to the merged list
+  const filteredStocks = filterBySector(mergedStocks, selectedSector);
+
+  // Avg. change — based only on sector-filtered stocks that have live data
   const avgChange = (() => {
-    const vals = liveData
-      .map(s => parseFloat(s.change.replace("%", "").replace("+", "")))
-      .filter(n => !isNaN(n));
+    const sectorLive = filterBySector(liveData, selectedSector);
+    const vals = sectorLive
+      .map((s) => parseFloat(s.change.replace("%", "").replace("+", "")))
+      .filter((n) => !isNaN(n));
     if (!vals.length) return "—";
     const avg = vals.reduce((a, b) => a + b, 0) / vals.length;
     return `${avg >= 0 ? "+" : ""}${avg.toFixed(2)}%`;
@@ -75,7 +210,8 @@ export default function ProfilePage() {
 
   return (
     <div className="min-h-screen" style={{ background: "hsl(213, 27%, 7%)" }}>
-      <Sidebar />
+      <Navbar displayName={displayName} onLogout={handleLogout} />
+
       <main className="pt-14">
         <div className="max-w-4xl mx-auto px-6 py-8">
 
@@ -126,21 +262,27 @@ export default function ProfilePage() {
           </div>
 
           {/* ── Saved stocks table ── */}
-          <div className="rounded-xl overflow-hidden" style={card}>
-            <div className="px-6 py-4 flex items-center justify-between"
-              style={{ borderBottom: "1px solid hsl(215,20%,18%)" }}>
+          <div className="rounded-xl" style={{ ...card, overflow: "visible" }}>
+            <div
+              className="px-6 py-4 flex items-center justify-between gap-3"
+              style={{ borderBottom: "1px solid hsl(215,20%,18%)" }}
+            >
               <h2 className="text-base font-semibold" style={{ color: "hsl(210,40%,92%)" }}>
                 Saved Stocks
               </h2>
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2 ml-auto flex-wrap">
                 {pricesError && (
                   <span className="text-xs" style={{ color: "hsl(0,84%,60%)" }}>
                     Live prices unavailable
                   </span>
                 )}
-                <span className="text-xs px-2 py-1 rounded-full"
-                  style={{ background: "hsla(217,91%,60%,0.15)", color: "hsl(217,91%,70%)" }}>
-                  {savedStocks.length} stock{savedStocks.length !== 1 ? "s" : ""}
+                {/* Sector dropdown */}
+                <SectorDropdown value={selectedSector} onChange={setSelectedSector} />
+                <span
+                  className="text-xs px-2 py-1 rounded-full"
+                  style={{ background: "hsla(217,91%,60%,0.15)", color: "hsl(217,91%,70%)" }}
+                >
+                  {filteredStocks.length} stock{filteredStocks.length !== 1 ? "s" : ""}
                 </span>
               </div>
             </div>
@@ -163,10 +305,28 @@ export default function ProfilePage() {
               </div>
             )}
 
-            {!authLoading && savedStocks.length > 0 && (
+            {!authLoading && savedStocks.length > 0 && filteredStocks.length === 0 && (
+              <div className="py-12 text-center">
+                <Layers className="w-8 h-8 mx-auto mb-3" style={{ color: "hsl(215,15%,28%)" }} />
+                <p className="text-sm font-medium mb-1" style={{ color: "hsl(215,15%,55%)" }}>
+                  No saved stocks in this sector
+                </p>
+                <p className="text-xs" style={{ color: "hsl(215,15%,40%)" }}>
+                  Try selecting a different sector or &quot;All Sectors&quot;.
+                </p>
+              </div>
+            )}
+
+            {!authLoading && filteredStocks.length > 0 && (
               <>
-                <div className="grid px-6 py-2.5 text-xs font-medium"
-                  style={{ gridTemplateColumns: "1fr 1fr 1fr 1fr 36px", color: "hsl(215,15%,50%)", borderBottom: "1px solid hsl(215,20%,16%)" }}>
+                <div
+                  className="grid px-6 py-2.5 text-xs font-medium"
+                  style={{
+                    gridTemplateColumns: "1fr 1fr 1fr 1fr 36px",
+                    color: "hsl(215,15%,50%)",
+                    borderBottom: "1px solid hsl(215,20%,16%)",
+                  }}
+                >
                   <span>Ticker</span>
                   <span className="text-right">Price</span>
                   <span className="text-right">Change</span>
@@ -174,12 +334,15 @@ export default function ProfilePage() {
                   <span />
                 </div>
 
-                {mergedStocks.map(stock => (
+                {filteredStocks.map((stock) => (
                   <div
                     key={stock.symbol}
-                    onClick={() => handleStockClick(stock)}
-                    className="grid px-6 py-3.5 cursor-pointer items-center"
-                    style={{ gridTemplateColumns: "1fr 1fr 1fr 1fr 36px", borderTop: "1px solid hsl(215,20%,16%)" }}
+                    onClick={() => trackClick(stock.symbol)}
+                    className="grid px-6 py-3.5 cursor-pointer items-center transition-colors"
+                    style={{
+                      gridTemplateColumns: "1fr 1fr 1fr 1fr 36px",
+                      borderTop: "1px solid hsl(215,20%,16%)",
+                    }}
                     onMouseEnter={(e) => (e.currentTarget.style.background = "hsl(215,25%,14%)")}
                     onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
                   >
@@ -194,15 +357,21 @@ export default function ProfilePage() {
 
                     {pricesLoading ? (
                       <>
-                        <span /><span className="flex justify-end"><Loader2 className="w-3.5 h-3.5 animate-spin" style={{ color: "hsl(217,91%,60%)" }} /></span><span />
+                        <span />
+                        <span className="flex justify-end">
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" style={{ color: "hsl(217,91%,60%)" }} />
+                        </span>
+                        <span />
                       </>
                     ) : (
                       <>
                         <span className="text-sm font-medium text-right" style={{ color: "hsl(210,40%,92%)" }}>
                           {stock.price}
                         </span>
-                        <span className="text-sm font-semibold text-right"
-                          style={{ color: stock.positive ? "hsl(142,71%,45%)" : "hsl(0,84%,60%)" }}>
+                        <span
+                          className="text-sm font-semibold text-right"
+                          style={{ color: stock.positive ? "hsl(142,71%,45%)" : "hsl(0,84%,60%)" }}
+                        >
                           {stock.change}
                         </span>
                         <span className="text-sm text-right" style={{ color: "hsl(215,15%,55%)" }}>
@@ -213,11 +382,17 @@ export default function ProfilePage() {
 
                     <div className="flex justify-end">
                       <button
-                        onClick={(e) => { e.stopPropagation(); toggleSave({ symbol: stock.symbol, name: stock.name }); }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleSave({ symbol: stock.symbol, name: stock.name });
+                        }}
                         aria-label="Remove from saved"
                         className="transition-opacity hover:opacity-60"
                       >
-                        <Star className="w-4 h-4" style={{ fill: "hsl(48,96%,53%)", color: "hsl(48,96%,53%)" }} />
+                        <Star
+                          className="w-4 h-4"
+                          style={{ fill: "hsl(48,96%,53%)", color: "hsl(48,96%,53%)" }}
+                        />
                       </button>
                     </div>
                   </div>
@@ -225,13 +400,8 @@ export default function ProfilePage() {
               </>
             )}
           </div>
-
         </div>
       </main>
-
-      {selectedStock && (
-        <StockModal stock={selectedStock} onClose={() => setSelectedStock(null)} />
-      )}
     </div>
   );
 }

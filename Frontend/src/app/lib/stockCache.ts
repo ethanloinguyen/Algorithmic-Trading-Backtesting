@@ -1,34 +1,31 @@
 // Frontend/src/app/lib/stockCache.ts
 //
-// Firestore caching layer for stock data.
+// Frontend Firestore cache reader.
 //
-// Strategy:
-//   • Watchlist summaries  → cached in Firestore at  cache/stock_summaries
-//     TTL: 5 minutes. On cache hit, data is returned immediately while a
-//     background refresh runs if the cache is >2 minutes old.
+// The backend (FastAPI) is responsible for ALL cache writes to Firestore.
+// Every time the backend serves data from BigQuery it writes it to:
 //
-//   • OHLCV candles        → cached per symbol+range at  cache/ohlcv_{SYMBOL}_{RANGE}
-//     TTL: 1 minute for 1D (intraday), 10 minutes for all other ranges.
+//   cache/stock_summaries        — featured watchlist  (TTL 5 min)
+//   cache/index_summaries        — SPX / IXIC / DJI    (TTL 5 min)
+//   cache/ohlcv_{SYMBOL}_{RANGE} — OHLCV candles       (TTL 1 min / 10 min)
 //
-//   • Click frequency      → tracked per user at  users/{uid}/clickedStocks
-//     The top-5 most-clicked stocks get their OHLCV pre-warmed in Firestore
-//     so the modal opens instantly.
+// The frontend reads these documents directly from Firestore for instant
+// display, then falls back to the backend API when the cache is cold or stale.
 //
-// All cache docs live in the top-level `cache` collection (not per-user) so
-// all users benefit from the same warmed data.
+// Click tracking (users/{uid}/clickedStocks) is written by the frontend only
+// since it is per-user data the backend does not need to know about.
 
 import {
   doc,
   getDoc,
-  setDoc,
-  Timestamp,
   updateDoc,
+  Timestamp,
   increment,
 } from "firebase/firestore";
 import { db } from "@/src/app/lib/firebase";
-import type { StockSummary, OHLCVCandle, TimeRange } from "@/src/app/lib/api";
+import type { StockSummary, OHLCVCandle, IndexSummary, TimeRange } from "@/src/app/lib/api";
 
-// ── TTL constants (ms) ────────────────────────────────────────────────────────
+// ── TTL constants (ms) — must match backend cache_service.py ─────────────────
 
 const TTL_SUMMARIES      = 5  * 60 * 1000;   // 5 min
 const TTL_OHLCV_INTRADAY = 1  * 60 * 1000;   // 1 min  (1D range)
@@ -40,25 +37,32 @@ function ohlcvTTL(range: TimeRange): number {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function ageMs(updatedAt: Timestamp): number {
-  return Date.now() - updatedAt.toMillis();
-}
-
 function isStale(updatedAt: Timestamp, ttl: number): boolean {
-  return ageMs(updatedAt) > ttl;
+  return Date.now() - updatedAt.toMillis() > ttl;
 }
 
-// ── Stock summaries cache ─────────────────────────────────────────────────────
+// ── Firestore document shapes (mirror backend cache_service.py) ───────────────
 
-interface SummariesCacheDoc {
-  data:      StockSummary[];
-  updatedAt: Timestamp;
+interface SummariesDoc {
+  data:       StockSummary[];
+  updated_at: Timestamp;
 }
+
+interface IndicesDoc {
+  data:       IndexSummary[];   // ← correctly typed, not Record<string, unknown>
+  updated_at: Timestamp;
+}
+
+interface OHLCVDoc {
+  data:       OHLCVCandle[];
+  updated_at: Timestamp;
+}
+
+// ── Stock summaries ───────────────────────────────────────────────────────────
 
 /**
- * Read cached summaries from Firestore.
- * Returns { data, stale } where stale=true means a refresh should run.
- * Returns null if no cache entry exists yet.
+ * Read cached watchlist summaries written by the backend.
+ * Returns { data, stale } if a cache doc exists, null if cold.
  */
 export async function getCachedSummaries(): Promise<{
   data:  StockSummary[];
@@ -67,42 +71,48 @@ export async function getCachedSummaries(): Promise<{
   try {
     const snap = await getDoc(doc(db, "cache", "stock_summaries"));
     if (!snap.exists()) return null;
-    const cached = snap.data() as SummariesCacheDoc;
+    const d = snap.data() as SummariesDoc;
     return {
-      data:  cached.data,
-      stale: isStale(cached.updatedAt, TTL_SUMMARIES),
+      data:  d.data,
+      stale: isStale(d.updated_at, TTL_SUMMARIES),
     };
   } catch {
     return null;
   }
 }
 
-/** Write fresh summaries into the Firestore cache. */
-export async function setCachedSummaries(data: StockSummary[]): Promise<void> {
+// ── Index summaries ───────────────────────────────────────────────────────────
+
+/**
+ * Read cached index summaries (SPX / IXIC / DJI) written by the backend.
+ * Returns { data, stale } if a cache doc exists, null if cold.
+ */
+export async function getCachedIndices(): Promise<{
+  data:  IndexSummary[];   // ← correct return type, no cast needed at call site
+  stale: boolean;
+} | null> {
   try {
-    await setDoc(doc(db, "cache", "stock_summaries"), {
-      data,
-      updatedAt: Timestamp.now(),
-    });
+    const snap = await getDoc(doc(db, "cache", "index_summaries"));
+    if (!snap.exists()) return null;
+    const d = snap.data() as IndicesDoc;
+    return {
+      data:  d.data,
+      stale: isStale(d.updated_at, TTL_SUMMARIES),
+    };
   } catch {
-    // Non-critical — cache write failure is silent
+    return null;
   }
 }
 
-// ── OHLCV cache ───────────────────────────────────────────────────────────────
-
-interface OHLCVCacheDoc {
-  candles:   OHLCVCandle[];
-  updatedAt: Timestamp;
-}
+// ── OHLCV candles ─────────────────────────────────────────────────────────────
 
 function ohlcvDocId(symbol: string, range: TimeRange): string {
   return `ohlcv_${symbol.toUpperCase()}_${range}`;
 }
 
 /**
- * Read cached OHLCV candles from Firestore.
- * Returns { candles, stale } or null if no cache entry exists.
+ * Read cached OHLCV candles written by the backend.
+ * Returns { candles, stale } if a cache doc exists, null if cold.
  */
 export async function getCachedOHLCV(
   symbol: string,
@@ -111,53 +121,35 @@ export async function getCachedOHLCV(
   try {
     const snap = await getDoc(doc(db, "cache", ohlcvDocId(symbol, range)));
     if (!snap.exists()) return null;
-    const cached = snap.data() as OHLCVCacheDoc;
+    const d = snap.data() as OHLCVDoc;
     return {
-      candles: cached.candles,
-      stale:   isStale(cached.updatedAt, ohlcvTTL(range)),
+      candles: d.data,
+      stale:   isStale(d.updated_at, ohlcvTTL(range)),
     };
   } catch {
     return null;
   }
 }
 
-/** Write fresh OHLCV candles into the Firestore cache. */
-export async function setCachedOHLCV(
-  symbol:  string,
-  range:   TimeRange,
-  candles: OHLCVCandle[],
-): Promise<void> {
-  try {
-    await setDoc(doc(db, "cache", ohlcvDocId(symbol, range)), {
-      candles,
-      updatedAt: Timestamp.now(),
-    });
-  } catch {
-    // Non-critical
-  }
-}
-
-// ── Click frequency tracking ──────────────────────────────────────────────────
+// ── Click frequency tracking (frontend-only, per-user) ────────────────────────
 
 /**
- * Increment the click count for a stock symbol for the given user.
- * Stored at users/{uid}/clickedStocks as a map { AAPL: 5, MSFT: 3, ... }
- * This is used to pre-warm OHLCV cache for the user's most-viewed stocks.
+ * Increment click count for a symbol in users/{uid}/clickedStocks.
+ * Used to decide which stocks to pre-warm after login.
  */
 export async function recordStockClick(uid: string, symbol: string): Promise<void> {
   try {
-    const ref = doc(db, "users", uid);
-    await updateDoc(ref, {
+    await updateDoc(doc(db, "users", uid), {
       [`clickedStocks.${symbol.toUpperCase()}`]: increment(1),
     });
   } catch {
-    // Non-critical — don't block the UI
+    // Non-critical — never block the UI
   }
 }
 
 /**
  * Return the top N most-clicked symbols for a user.
- * Used to decide which stocks to pre-warm in the OHLCV cache.
+ * Used by AuthContext to pre-warm OHLCV cache on login.
  */
 export async function getTopClickedSymbols(uid: string, n = 5): Promise<string[]> {
   try {

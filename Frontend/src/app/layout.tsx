@@ -15,7 +15,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body className="bg-gray-50 antialiased">
+      <body className="antialiased" style={{ background: "hsl(213, 27%, 7%)" }}>
         <AuthProvider>
           {children}
         </AuthProvider>
