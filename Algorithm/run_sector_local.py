@@ -62,8 +62,8 @@ os.environ.setdefault("MKL_NUM_THREADS", "1")
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, PROJECT_ROOT)
 
-from src.config_loader import load_config, get_config
-from src.windows import generate_rolling_windows, get_latest_window
+from Algorithm.src.config_loader import load_config, get_config
+from Algorithm.src.windows import generate_rolling_windows, get_latest_window
 
 if hasattr(sys.stdout, "reconfigure"):
     try:
@@ -87,9 +87,9 @@ DEFAULT_CONFIG = os.path.join(PROJECT_ROOT, "config", "sector_config.yaml")
 
 def run_step_residuals(window_start: date, window_end: date, run_id: str) -> bool:
     """Compute sector-augmented FF residuals and write to sector_rolling_residuals."""
-    from src.sector_residuals import compute_sector_residuals_for_window
-    from src.universe import get_valid_tickers
-    from src.bq_io import write_residuals
+    from Algorithm.src.sector_residuals import compute_sector_residuals_for_window
+    from Algorithm.src.universe import get_valid_tickers
+    from Algorithm.src.bq_io import write_residuals
 
     cfg = get_config()
     factor_model = cfg["residuals"]["factor_model"]
@@ -131,11 +131,11 @@ def _run_partition(args: tuple) -> Tuple[int, bool, str]:
 
     time.sleep(random.uniform(0, min(partition_id * 0.1, 10.0)))
 
-    from src.config_loader import load_config
+    from Algorithm.src.config_loader import load_config
     load_config(config_path)
 
     try:
-        from jobs.sector_pair_job import run_pair_job
+        from Algorithm.jobs.sector_pair_job import run_pair_job
         run_pair_job(window_start, window_end, partition_id, num_partitions, run_id)
         return partition_id, True, ""
     except Exception as e:
@@ -197,7 +197,7 @@ def run_step_pairs(
 
 def _get_already_computed_oos_windows() -> Set[date]:
     """Return sector OOS windows already written (for resume support)."""
-    from src.bq_io import get_client, full_table
+    from Algorithm.src.bq_io import get_client, full_table
     import pandas as pd
     try:
         client = get_client()
@@ -218,16 +218,16 @@ def _run_oos_window(args: tuple) -> Tuple[date, bool, int, str]:
     import sys, os
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-    from src.config_loader import load_config
+    from Algorithm.src.config_loader import load_config
     load_config(config_path)
 
     try:
         import pandas as pd
         from datetime import timedelta
-        from src.bq_io import get_client, full_table, write_dataframe
-        from src.config_loader import get_config
-        from src.oos_model import compute_strategy_returns
-        from src.windows import get_oos_window_for
+        from Algorithm.src.bq_io import get_client, full_table, write_dataframe
+        from Algorithm.src.config_loader import get_config
+        from Algorithm.src.oos_model import compute_strategy_returns
+        from Algorithm.src.windows import get_oos_window_for
 
         cfg      = get_config()["strategy"]
         lookback = cfg["zscore_lookback_days"]
@@ -381,15 +381,15 @@ def run_step_oos(
 def run_step_finalize(dry_run: bool = False) -> bool:
     """Model refit + sector_final_network rebuild (single global pass)."""
     import pandas as pd
-    from src.bq_io import (
+    from Algorithm.src.bq_io import (
         get_client, full_table, write_dataframe,
         read_oos_strategy_returns,
         upsert_final_network,
     )
-    from src.bootstrap import run_model_refit, compute_predicted_sharpe, compute_signal_strength
-    from src.network import build_directed_graph, compute_centrality
-    from src.oos_model import compute_sharpe, compute_global_oos_dcor
-    from src.stability import compute_stability_metrics
+    from Algorithm.src.bootstrap import run_model_refit, compute_predicted_sharpe, compute_signal_strength
+    from Algorithm.src.network import build_directed_graph, compute_centrality
+    from Algorithm.src.oos_model import compute_sharpe, compute_global_oos_dcor
+    from Algorithm.src.stability import compute_stability_metrics
 
     cfg = get_config()
     logger.info("[SECTOR FINALIZE] Starting model refit + sector_final_network rebuild")
@@ -516,7 +516,7 @@ def run_step_aggregation(
     run_synthetic: bool = True,
 ) -> bool:
     """Run full aggregation against sector tables (FDR, OOS eval, stability, model, network)."""
-    from jobs.aggregation_job import run_aggregation_job
+    from Algorithm.jobs.aggregation_job import run_aggregation_job
 
     logger.info(f"[SECTOR AGGREGATION] Window {window_start} → {window_end}")
     try:
@@ -665,7 +665,7 @@ def run_quarterly_batch(
 
 def run_setup() -> None:
     """Create sector-specific BQ tables (sector_pair_results_raw, etc.)."""
-    from src.bq_schema import create_all_tables
+    from Algorithm.src.bq_schema import create_all_tables
     logger.info("[SECTOR SETUP] Creating sector BigQuery tables...")
     create_all_tables()
     logger.info("[SECTOR SETUP] Done")

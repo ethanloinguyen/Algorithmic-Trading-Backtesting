@@ -37,26 +37,26 @@ for _p in (_proj_root, "/app"):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from src.bq_io import (
+from Algorithm.src.bq_io import (
     get_client, full_table, write_dataframe,
     read_pair_results_raw, read_stability_metrics,
     read_model_weights, read_oos_strategy_returns,
     upsert_final_network, log_pipeline_run
 )
-from src.bootstrap import (
+from Algorithm.src.bootstrap import (
     run_model_refit, compute_predicted_sharpe,
     compute_signal_strength, FEATURES
 )
-from src.config_loader import load_config, get_config
-from src.fdr import apply_fdr_pipeline
-from src.monte_carlo import run_monte_carlo_pipeline
-from src.network import run_network_pipeline, build_directed_graph, compute_centrality
-from src.oos_model import (
+from Algorithm.src.config_loader import load_config, get_config
+from Algorithm.src.fdr import apply_fdr_pipeline
+from Algorithm.src.monte_carlo import run_monte_carlo_pipeline
+from Algorithm.src.network import run_network_pipeline, build_directed_graph, compute_centrality
+from Algorithm.src.oos_model import (
     run_oos_evaluation_for_window, compute_global_oos_sharpe
 )
-from src.stability import compute_stability_metrics
-from src.synthetic import run_synthetic_health_check
-from src.windows import get_latest_window, get_oos_window_for
+from Algorithm.src.stability import compute_stability_metrics
+from Algorithm.src.synthetic import run_synthetic_health_check
+from Algorithm.src.windows import get_latest_window, get_oos_window_for
 
 logging.basicConfig(
     level=logging.INFO,
