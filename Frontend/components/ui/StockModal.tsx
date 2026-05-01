@@ -6,7 +6,7 @@ import {
   fetchOHLCV, fetchStockDetail,
   type OHLCVCandle, type TimeRange, type StockDetail,
 } from "@/src/app/lib/api";
-import { getCachedOHLCV, setCachedOHLCV } from "@/src/app/lib/stockCache";
+import { getCachedOHLCV } from "@/src/app/lib/stockCache";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, ReferenceLine,
