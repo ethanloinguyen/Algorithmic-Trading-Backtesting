@@ -39,11 +39,11 @@ for _p in (_project_root, "/app"):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from src.bq_io import read_residuals_for_window, write_pair_results_raw, write_dataframe, log_pipeline_run
-from src.config_loader import load_config, get_config
-from src.dcor_engine import dcor_profile, compute_sharpness, get_best_lag, pearson_at_lag
-from src.permutation import test_pair_all_lags, check_budget_guard
-from src.universe import get_valid_tickers, get_all_pairs, partition_pairs
+from Algorithm.src.bq_io import read_residuals_for_window, write_pair_results_raw, write_dataframe, log_pipeline_run
+from Algorithm.src.config_loader import load_config, get_config
+from Algorithm.src.dcor_engine import dcor_profile, compute_sharpness, get_best_lag, pearson_at_lag
+from Algorithm.src.permutation import test_pair_all_lags, check_budget_guard
+from Algorithm.src.universe import get_valid_tickers, get_all_pairs, partition_pairs
 
 logging.basicConfig(
     level=logging.INFO,

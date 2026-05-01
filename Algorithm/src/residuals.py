@@ -19,11 +19,11 @@ import pandas as pd
 import requests
 from scipy import stats
 
-from src.bq_io import (get_client, full_table, read_ff_factors,
+from Algorithm.src.bq_io import (get_client, full_table, read_ff_factors,
                        read_daily_prices, write_dataframe, write_residuals)
-from src.config_loader import get_config
-from src.universe import get_valid_tickers
-from src.windows import generate_rolling_windows
+from Algorithm.src.config_loader import get_config
+from Algorithm.src.universe import get_valid_tickers
+from Algorithm.src.windows import generate_rolling_windows
 
 logger = logging.getLogger(__name__)
 
@@ -218,7 +218,7 @@ def run_residuals_pipeline(
     run_id = os.environ.get("RUN_ID", f"manual_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
 
     if windows is None:
-        from src.windows import generate_rolling_windows
+        from Algorithm.src.windows import generate_rolling_windows
         windows = generate_rolling_windows()
 
     if only_latest:
@@ -235,7 +235,7 @@ def run_residuals_pipeline(
             
 if __name__ == "__main__":
     import sys
-    from src.config_loader import load_config
+    from Algorithm.src.config_loader import load_config
 
     logging.basicConfig(
         level=logging.INFO,

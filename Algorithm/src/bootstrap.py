@@ -32,8 +32,8 @@ from sklearn.linear_model import LinearRegression
 from sklearn.preprocessing import StandardScaler
 from scipy import stats
 
-from src.bq_io import write_dataframe, mark_model_weights_current
-from src.config_loader import get_config
+from Algorithm.src.bq_io import write_dataframe, mark_model_weights_current
+from Algorithm.src.config_loader import get_config
 
 logger = logging.getLogger(__name__)
 

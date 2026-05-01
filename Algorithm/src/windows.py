@@ -22,7 +22,7 @@ from typing import List, Optional, Tuple
 
 import pandas as pd
 
-from src.config_loader import get_config
+from Algorithm.src.config_loader import get_config
 
 logger = logging.getLogger(__name__)
 

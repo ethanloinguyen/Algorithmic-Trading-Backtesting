@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 
 
 def run_setup(skip_historical: bool = False, factors_only: bool = False):
-    from src.config_loader import load_config, get_config
+    from Algorithm.src.config_loader import load_config, get_config
     load_config()
     cfg = get_config()
 
@@ -48,14 +48,14 @@ def run_setup(skip_historical: bool = False, factors_only: bool = False):
 
     # ── Step 1: Create BigQuery tables ────────────────────────────────────
     logger.info("\n[1/6] Creating BigQuery tables...")
-    from src.bq_schema import create_all_tables
+    from Algorithm.src.bq_schema import create_all_tables
     create_all_tables()
     logger.info("  ✓ Tables created")
 
     if factors_only:
         # ── Factors only mode ─────────────────────────────────────────────
         logger.info("\n[2/6] Downloading and ingesting Fama-French factors...")
-        from src.residuals import ingest_ff_factors
+        from Algorithm.src.residuals import ingest_ff_factors
         factor_model = cfg["residuals"]["factor_model"]
         ingest_ff_factors(factor_model)
         logger.info(f"  ✓ {factor_model} factors ingested")
@@ -63,7 +63,7 @@ def run_setup(skip_historical: bool = False, factors_only: bool = False):
 
     # ── Step 2: Fama-French factors ───────────────────────────────────────
     logger.info("\n[2/6] Downloading and ingesting Fama-French factors...")
-    from src.residuals import ingest_ff_factors
+    from Algorithm.src.residuals import ingest_ff_factors
     factor_model = cfg["residuals"]["factor_model"]
     ingest_ff_factors(factor_model)
     logger.info(f"  ✓ {factor_model} factors ingested")
@@ -75,7 +75,7 @@ def run_setup(skip_historical: bool = False, factors_only: bool = False):
 
     # ── Step 4: Universe quality filter ──────────────────────────────────
     logger.info("\n[4/6] Running universe quality filter...")
-    from src.universe import run_universe_filter
+    from Algorithm.src.universe import run_universe_filter
     from datetime import datetime
     start = datetime.strptime(cfg["universe"]["start_date"], "%Y-%m-%d").date()
     end = datetime.strptime(cfg["universe"]["end_date"], "%Y-%m-%d").date()
@@ -99,8 +99,8 @@ def run_setup(skip_historical: bool = False, factors_only: bool = False):
     logger.info("\n[5/6] Computing historical rolling residuals (this may take a while)...")
     logger.info("  Note: This runs residuals for all windows from start_date to end_date.")
     logger.info("  For production: consider running this as a Cloud Run job.")
-    from src.residuals import run_residuals_pipeline
-    from src.windows import generate_rolling_windows
+    from Algorithm.src.residuals import run_residuals_pipeline
+    from Algorithm.src.windows import generate_rolling_windows
     windows = generate_rolling_windows()
     logger.info(f"  Processing {len(windows)} rolling windows...")
     run_residuals_pipeline(windows=windows, only_latest=False)
