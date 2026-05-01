@@ -18,6 +18,19 @@ Group A composite (must sum to 1.0):
 Group B composite:
     0.70 × sector_gap_score
     0.30 × centrality_score    (gracefully zeroed if unavailable)
+
+Component 1 — dCor-filtered candidate pool (feeds Components 2 & 3):
+    compute_dcor_filtered_pool() computes mean dCor between each candidate stock
+    in the universe and the user's portfolio holdings.  Candidates above the dCor
+    threshold are filtered out as too correlated.  The remaining low-dCor pool is
+    returned sorted ascending by mean_dcor_to_portfolio (most independent first),
+    ready for downstream clustering and Monte Carlo risk assessment.
+
+    mean_dcor_to_portfolio(C) = mean({pair_dcor(C, p) for p in portfolio
+                                      where pair (C, p) exists in network})
+
+    Stocks with NO pairs in the network at all get dcor = 0.0 — no detected
+    dependency means they automatically pass the filter.
 """
 from __future__ import annotations
 from dataclasses import dataclass
@@ -450,3 +463,223 @@ def get_holdings_sectors(
         if t in meta.index:
             result[t] = str(meta.loc[t, "sector"])
     return result
+
+
+# ── Component 1 — dCor-filtered candidate pool ────────────────────────────────
+
+@dataclass
+class DcorCandidate:
+    """
+    A candidate stock that passed the dCor threshold filter.
+    Ready to be passed to Component 2 (clustering) and Component 3 (Monte Carlo).
+    """
+    ticker:                  str
+    sector:                  str
+    centrality:              float
+    mean_dcor_to_portfolio:  float   # average pairwise dCor vs all user holdings
+    n_portfolio_pairs:       int     # number of portfolio stocks this was paired with
+    paired_holdings:         dict    # {holding_ticker: mean_dcor} for each detected pair
+    reasoning:               str
+
+
+def _dcor_candidate_reasoning(
+    ticker: str,
+    sector: str,
+    mean_dcor: float,
+    n_pairs: int,
+    n_portfolio: int,
+    is_zero_pair: bool = False,
+) -> str:
+    if is_zero_pair:
+        return (
+            f"{ticker} ({sector}) has no detected lead-lag pairs with any of your "
+            f"{n_portfolio} portfolio holding(s) across 15 years of analysis. "
+            f"It was selected for its high market network centrality, meaning it carries "
+            f"real informational weight in the broader market — a strong independent candidate."
+        )
+    coverage_str = f"paired with {n_pairs}/{n_portfolio} portfolio stock(s) in the network"
+    return (
+        f"{ticker} ({sector}) has a mean distance correlation of {round(mean_dcor, 3)} "
+        f"with your portfolio ({coverage_str}). "
+        f"This is among the lowest measured dCor values across all candidates, "
+        f"indicating low nonlinear dependence with your current holdings."
+    )
+
+
+def compute_dcor_filtered_pool(
+    user_tickers: list[str],
+    network_df: pd.DataFrame,
+    universe_meta_df: pd.DataFrame | None = None,
+    dcor_threshold: float = 0.3,
+    max_network_candidates: int = 20,
+    max_zero_pair_candidates: int = 80,
+) -> list[DcorCandidate]:
+    """
+    Component 1: compute mean dCor between each candidate stock in the universe
+    and the user's portfolio, then return a curated pool sorted ascending by
+    mean_dcor_to_portfolio (most independent first).
+
+    Why caps instead of a fixed threshold
+    --------------------------------------
+    All pairs that survive the pipeline's FDR correction and enter final_network
+    already have statistically significant but naturally low mean_dcor values
+    (typically 0.05–0.20).  An absolute 0.3 threshold therefore passes virtually
+    every candidate in the ~1700-stock universe.  Instead we:
+
+      - Network candidates  : keep the top `max_network_candidates` stocks with the
+                              lowest measured mean dCor (already most independent).
+      - Zero-pair candidates: keep the top `max_zero_pair_candidates` stocks by
+                              market centrality — no detected relationship + high
+                              market connectivity = high-quality independent pick.
+
+    The absolute dcor_threshold is retained as a safety cap to exclude any
+    pathologically high-dCor outliers that somehow survive the pipeline.
+
+    Parameters
+    ----------
+    user_tickers              : tickers in the user's current portfolio
+    network_df                : pairwise dCor rows from final_network that involve
+                                at least one user holding
+    universe_meta_df          : optional compact universe table (ticker, sector, centrality)
+    dcor_threshold            : hard cap — paired candidates above this are always excluded
+    max_network_candidates    : max paired candidates to return (lowest dCor first)
+    max_zero_pair_candidates  : max zero-pair candidates to return (highest centrality first)
+
+    Returns
+    -------
+    list[DcorCandidate] sorted ascending by mean_dcor_to_portfolio, then descending
+    by centrality
+    """
+    portfolio = set(_normalize_tickers(user_tickers))
+    if not portfolio:
+        return []
+
+    n_portfolio = len(portfolio)
+
+    # ── Step 1: collect per-candidate dCor values from network pairs ──────────
+    # network_df contains rows where ticker_i or ticker_j is a user holding.
+    # For each such row the OTHER side is a candidate.
+    # candidate_dcors  : {candidate: [dcor, ...]}  — for computing the mean
+    # candidate_holding_dcors: {candidate: {holding: dcor}} — for UI display
+    candidate_dcors: dict[str, list[float]] = {}
+    candidate_holding_dcors: dict[str, dict[str, float]] = {}
+
+    if not network_df.empty:
+        for _, row in network_df.iterrows():
+            ti = row["ticker_i"]
+            tj = row["ticker_j"]
+            dcor_val = float(row["mean_dcor"])
+
+            ti_in_portfolio = ti in portfolio
+            tj_in_portfolio = tj in portfolio
+
+            # Both are portfolio holdings — skip (overlap, not a candidate)
+            if ti_in_portfolio and tj_in_portfolio:
+                continue
+
+            # Determine which is the candidate and which is the holding
+            if ti_in_portfolio:
+                candidate, holding = tj, ti
+            elif tj_in_portfolio:
+                candidate, holding = ti, tj
+            else:
+                # Neither side is a portfolio holding — shouldn't appear in the
+                # targeted network slice, but guard defensively
+                continue
+
+            candidate_dcors.setdefault(candidate, []).append(dcor_val)
+            # Store per-holding dCor; if the same pair appears multiple times,
+            # keep the minimum (most conservative independence estimate).
+            ph = candidate_holding_dcors.setdefault(candidate, {})
+            ph[holding] = min(ph.get(holding, float("inf")), round(dcor_val, 4))
+
+    # ── Step 2: build metadata lookup (sector, centrality) ───────────────────
+    meta = get_ticker_metadata(network_df)
+
+    # Supplement with universe_meta_df when provided
+    if universe_meta_df is not None and not universe_meta_df.empty:
+        universe_index = universe_meta_df.set_index("ticker")
+    else:
+        universe_index = pd.DataFrame(columns=["sector", "centrality"])
+
+    def _sector(ticker: str) -> str:
+        if ticker in meta.index:
+            return str(meta.loc[ticker, "sector"])
+        if ticker in universe_index.index:
+            return str(universe_index.loc[ticker, "sector"])
+        return "Unknown"
+
+    def _centrality(ticker: str) -> float:
+        if ticker in meta.index:
+            return float(meta.loc[ticker, "centrality"])
+        if ticker in universe_index.index:
+            return float(universe_index.loc[ticker, "centrality"])
+        return 0.0
+
+    # ── Step 3: compute mean dCor per candidate and apply hard cap ───────────
+    network_candidates: list[DcorCandidate] = []
+
+    for ticker, dcor_values in candidate_dcors.items():
+        if ticker in portfolio:
+            continue
+        mean_dcor = float(np.mean(dcor_values))
+        if mean_dcor > dcor_threshold:
+            continue  # hard cap — exclude pathologically high dCor
+        sec  = _sector(ticker)
+        cent = _centrality(ticker)
+        network_candidates.append(DcorCandidate(
+            ticker=ticker,
+            sector=sec,
+            centrality=round(cent, 4),
+            mean_dcor_to_portfolio=round(mean_dcor, 4),
+            n_portfolio_pairs=len(dcor_values),
+            paired_holdings=candidate_holding_dcors.get(ticker, {}),
+            reasoning=_dcor_candidate_reasoning(
+                ticker, sec, mean_dcor, len(dcor_values), n_portfolio,
+                is_zero_pair=False,
+            ),
+        ))
+
+    # Sort by ascending dCor, descending centrality — take only the top N most independent
+    network_candidates.sort(key=lambda c: (c.mean_dcor_to_portfolio, -c.centrality))
+    network_candidates = network_candidates[:max_network_candidates]
+
+    # ── Step 4: zero-pair candidates — capped by centrality ──────────────────
+    # Stocks with NO network pairs vs any portfolio holding are collected from
+    # universe_meta_df, sorted by centrality descending, and capped at
+    # max_zero_pair_candidates.  This ensures only market-relevant, well-connected
+    # names are passed through rather than the entire ~1700-stock universe.
+    zero_pair_candidates: list[DcorCandidate] = []
+
+    if universe_meta_df is not None and not universe_meta_df.empty:
+        seen = set(candidate_dcors.keys()) | portfolio
+        zero_rows = [
+            row for _, row in universe_meta_df.iterrows()
+            if row["ticker"] not in seen
+        ]
+        # Sort by centrality descending — most network-connected first
+        zero_rows.sort(key=lambda r: float(r["centrality"]), reverse=True)
+
+        for row in zero_rows[:max_zero_pair_candidates]:
+            ticker = row["ticker"]
+            sector = str(row["sector"])
+            cent   = float(row["centrality"])
+            zero_pair_candidates.append(DcorCandidate(
+                ticker=ticker,
+                sector=sector,
+                centrality=round(cent, 4),
+                mean_dcor_to_portfolio=0.0,
+                n_portfolio_pairs=0,
+                paired_holdings={},
+                reasoning=_dcor_candidate_reasoning(
+                    ticker, sector, 0.0, 0, n_portfolio,
+                    is_zero_pair=True,
+                ),
+            ))
+
+    # ── Step 5: merge and final sort ─────────────────────────────────────────
+    # Network candidates come first (they have measured dCor data), then zero-pair.
+    # Within each group the sort applied above is preserved by Python's stable sort.
+    results = network_candidates + zero_pair_candidates
+    results.sort(key=lambda c: (c.mean_dcor_to_portfolio, -c.centrality))
+    return results

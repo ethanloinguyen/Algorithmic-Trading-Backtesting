@@ -50,6 +50,23 @@ export interface IndependentRecommendation {
   reasoning:        string;
 }
 
+/**
+ * Component 1 output — a candidate that passed the mean dCor < threshold filter.
+ * mean_dcor_to_portfolio is the average pairwise distance correlation between this
+ * stock and all user holdings. 0.0 means no pairs in the network (treat as fully
+ * independent). Sorted ascending — most independent stocks first.
+ */
+export interface DcorCandidate {
+  ticker:                  string;
+  sector:                  string;
+  centrality:              number;
+  mean_dcor_to_portfolio:  number;
+  n_portfolio_pairs:       number;
+  /** Maps each portfolio holding that has a detected pair to its individual dCor value */
+  paired_holdings:         Record<string, number>;
+  reasoning:               string;
+}
+
 /** Extended stock info for the Analysis page fundamentals panel */
 export interface StockDetail {
   symbol:     string;
@@ -85,6 +102,13 @@ export interface PortfolioAnalysisResponse {
   independent_recommendations: IndependentRecommendation[];
   /** Sector for each known holding — always populated regardless of overlaps */
   holdings_sectors:            Record<string, string>;
+  /**
+   * Component 1 output — dCor-filtered diversification candidate pool.
+   * Candidates with mean dCor > 0.3 to the portfolio are excluded.
+   * Sorted ascending by mean_dcor_to_portfolio (most independent first).
+   * Feeds Components 2 (clustering) and 3 (Monte Carlo).
+   */
+  dcor_filtered_candidates:    DcorCandidate[];
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

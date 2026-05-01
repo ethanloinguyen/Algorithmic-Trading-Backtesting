@@ -1,22 +1,32 @@
 // Frontend/src/app/dashboard/diversify/page.tsx
 "use client";
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import Sidebar from "@/components/ui/Sidebar";
 import SpiderChart from "@/components/ui/SpiderChart";
 import SectorDonut from "@/components/ui/SectorDonut";
 import StockModal, { type Stock } from "@/components/ui/StockModal";
 import {
+  LineChart, Line, XAxis, YAxis,
+  CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine,
+} from "recharts";
+import {
   analyzePortfolio,
   fetchStockSummaries,
+  fetchOHLCV,
+  fetchStockDetail,
+  type OHLCVCandle,
+  type StockDetail,
   type OverlapResult,
   type Recommendation,
-  type IndependentRecommendation,
+  type DcorCandidate,
   type AnalysisMode,
 } from "@/src/app/lib/api";
+import { useAuth } from "@/src/app/context/AuthContext";
 import {
   AlertTriangle, TrendingUp, Plus, X,
   ChevronDown, ChevronUp, Loader2, Sparkles, ArrowRight,
   ShieldAlert, BarChart3, Unlink, Info, Zap, Globe, Link2, Layers, Timer,
+  Briefcase,
 } from "lucide-react";
 
 // ── Design tokens ─────────────────────────────────────────────────────────────
@@ -50,12 +60,12 @@ const SECTOR_COLORS: Record<string, string> = {
 };
 const sc = (s: string) => SECTOR_COLORS[s] ?? TEXT_SEC;
 
-// ── Preset portfolios (from new version) ──────────────────────────────────────
-const PRESETS = [
-  { label: "Big Tech",   tickers: ["NVDA","AMD","AAPL","MSFT","GOOGL"] },
-  { label: "Financials", tickers: ["JPM","GS","MS","BAC","V"] },
-  { label: "Energy",     tickers: ["XOM","CVX","COP","SLB"] },
-  { label: "Healthcare", tickers: ["JNJ","UNH","MRK","PFE","ABBV"] },
+// ── Built-in preset portfolios ────────────────────────────────────────────────
+const BUILTIN_PRESETS = [
+  { label: "Big Tech",   tickers: ["NVDA","AMD","AAPL","MSFT","GOOGL"], saved: false },
+  { label: "Financials", tickers: ["JPM","GS","MS","BAC","V"],          saved: false },
+  { label: "Energy",     tickers: ["XOM","CVX","COP","SLB"],            saved: false },
+  { label: "Healthcare", tickers: ["JNJ","UNH","MRK","PFE","ABBV"],     saved: false },
 ];
 
 // ── Factor explanations — 5 factors ──────────────────────────────────────────
@@ -91,6 +101,32 @@ const FACTOR_EXPLANATIONS = [
     why: "Central stocks tend to transmit information efficiently and are more likely to be reliable signal sources.",
   },
 ];
+
+// ── Shared helpers ────────────────────────────────────────────────────────────
+
+/**
+ * Normalize a candle array so the first close equals 100.
+ * Used by MiniPairChart to put two price series on the same scale
+ * regardless of their absolute prices.
+ */
+function normalizeCandles(candles: OHLCVCandle[]): number[] {
+  if (!candles.length) return [];
+  const base = parseFloat(candles[0].close);
+  if (!base) return candles.map(() => 100);
+  return candles.map(c => parseFloat(((parseFloat(c.close) / base) * 100).toFixed(2)));
+}
+
+/**
+ * Format a raw market cap number into a human-readable T / B / M string.
+ * Used by CompactFundamentals to keep the pill cells narrow.
+ */
+function formatMarketCap(cap: number | null): string {
+  if (cap === null) return "—";
+  if (cap >= 1_000_000_000_000) return `$${(cap / 1_000_000_000_000).toFixed(2)}T`;
+  if (cap >= 1_000_000_000)     return `$${(cap / 1_000_000_000).toFixed(1)}B`;
+  if (cap >= 1_000_000)         return `$${(cap / 1_000_000).toFixed(1)}M`;
+  return `$${cap.toLocaleString()}`;
+}
 
 // ── Small helpers ─────────────────────────────────────────────────────────────
 function SignalBar({ score }: { score: number }) {
@@ -199,7 +235,346 @@ function FactorExplanations() {
   );
 }
 
-// ── Overlap card — original design + expanded stats from new version ───────────
+// ── CompactFundamentals ───────────────────────────────────────────────────────
+// Fetches StockDetail for a ticker lazily on mount (only renders when its
+// parent card is in the expanded/open state). Displays Market Cap, P/E,
+// 52W High, and 52W Low as four small pill cells in a horizontal row.
+// Sector and Industry are intentionally omitted — they're already visible
+// on every card's header area.
+
+function CompactFundamentals({ symbol }: { symbol: string }) {
+  const [detail,  setDetail]  = useState<StockDetail | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!symbol) return;
+    setLoading(true);
+    fetchStockDetail(symbol)
+      .then(setDetail)
+      .catch(() => setDetail(null))
+      .finally(() => setLoading(false));
+  }, [symbol]);
+
+  if (loading) return (
+    <div className="flex justify-center py-3">
+      <Loader2 className="w-4 h-4 animate-spin" style={{ color: BLUE }} />
+    </div>
+  );
+
+  if (!detail) return (
+    <p className="text-xs py-2" style={{ color: TEXT_MUT }}>No fundamentals available.</p>
+  );
+
+  const items = [
+    { label: "Market Cap", value: formatMarketCap(detail.market_cap) },
+    { label: "P/E Ratio",  value: detail.pe_ratio != null ? detail.pe_ratio.toFixed(1) : "—" },
+    { label: "52W High",   value: detail.high_52w != null ? `$${detail.high_52w.toFixed(2)}` : "—" },
+    { label: "52W Low",    value: detail.low_52w  != null ? `$${detail.low_52w.toFixed(2)}`  : "—" },
+  ];
+
+  return (
+    <div className="grid grid-cols-4 gap-2">
+      {items.map(({ label, value }) => (
+        <div key={label} className="flex flex-col gap-0.5 px-3 py-2.5 rounded-lg text-center"
+          style={{ background: "hsl(215,25%,9%)", border: `1px solid ${BORDER_D}` }}>
+          <span className="text-[10px]" style={{ color: TEXT_MUT }}>{label}</span>
+          <span className="text-xs font-semibold" style={{ color: TEXT_PRI }}>{value}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── MiniPairChart ─────────────────────────────────────────────────────────────
+// Fetches 3M OHLCV for both the recommended stock (recTicker) and the user's
+// most-connected holding (holdingTicker) in parallel. Both series are normalized
+// to base 100 so movements are visually comparable regardless of absolute price.
+// The rec stock renders as a solid blue line; the holding as a muted dashed line.
+// No inputs or controls — everything is pre-configured from the parent card's data.
+
+const MINI_REC_COLOR     = "hsl(217, 91%, 60%)";   // blue  — recommended stock
+const MINI_HOLDING_COLOR = "hsl(215, 15%, 55%)";    // muted — user's holding
+
+function MiniPairChart({
+  recTicker,
+  holdingTicker,
+}: {
+  recTicker:     string;
+  holdingTicker: string;
+}) {
+  const [chartData, setChartData] = useState<
+    { date: string; rec: number; holding: number }[]
+  >([]);
+  const [loading, setLoading] = useState(false);
+  const [error,   setError]   = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!recTicker || !holdingTicker) return;
+    setLoading(true); setError(null);
+    Promise.all([
+      fetchOHLCV(recTicker,     "3M"),
+      fetchOHLCV(holdingTicker, "3M"),
+    ])
+      .then(([recCandles, holdingCandles]) => {
+        const n = Math.min(recCandles.length, holdingCandles.length);
+        if (!n) { setChartData([]); return; }
+        const rn = normalizeCandles(recCandles.slice(0, n));
+        const hn = normalizeCandles(holdingCandles.slice(0, n));
+        setChartData(
+          recCandles.slice(0, n).map((c, i) => ({
+            date:    c.date,
+            rec:     rn[i],
+            holding: hn[i],
+          }))
+        );
+      })
+      .catch(e => setError(e.message))
+      .finally(() => setLoading(false));
+  }, [recTicker, holdingTicker]);
+
+  const labelStyle = { fill: TEXT_MUT, fontSize: 10 } as const;
+
+  if (loading) return (
+    <div className="h-36 flex items-center justify-center rounded-lg"
+      style={{ background: "hsl(215,25%,9%)" }}>
+      <Loader2 className="w-4 h-4 animate-spin" style={{ color: BLUE }} />
+    </div>
+  );
+
+  if (error) return (
+    <div className="h-36 flex items-center justify-center gap-2 rounded-lg"
+      style={{ background: "hsl(215,25%,9%)" }}>
+      <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" style={{ color: RED }} />
+      <p className="text-xs" style={{ color: RED }}>{error}</p>
+    </div>
+  );
+
+  if (!chartData.length) return null;
+
+  return (
+    <div>
+      <div className="h-36">
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart data={chartData} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={BORDER} />
+            <XAxis
+              dataKey="date"
+              axisLine={false}
+              tickLine={false}
+              tick={labelStyle}
+              interval="preserveStartEnd"
+              minTickGap={40}
+            />
+            <YAxis
+              domain={["auto", "auto"]}
+              axisLine={false}
+              tickLine={false}
+              tick={labelStyle}
+              width={38}
+              tickFormatter={v => v.toFixed(0)}
+            />
+            <Tooltip
+              contentStyle={{
+                background: "hsl(215,25%,13%)",
+                border: `1px solid ${BORDER}`,
+                borderRadius: 8,
+              }}
+              labelStyle={{ color: TEXT_SEC, fontSize: 10 }}
+              formatter={(v: number, name: string) => [
+                v.toFixed(1),
+                name === "rec" ? `${recTicker} (candidate)` : `${holdingTicker} (holding)`,
+              ]}
+            />
+            {/* Baseline — both series start at 100 */}
+            <ReferenceLine y={100} stroke={BORDER} strokeDasharray="4 4" />
+            {/* Recommended stock — solid blue */}
+            <Line
+              type="monotone"
+              dataKey="rec"
+              stroke={MINI_REC_COLOR}
+              strokeWidth={2}
+              dot={false}
+              isAnimationActive={false}
+            />
+            {/* User's holding — muted dashed */}
+            <Line
+              type="monotone"
+              dataKey="holding"
+              stroke={MINI_HOLDING_COLOR}
+              strokeWidth={1.5}
+              strokeDasharray="4 3"
+              dot={false}
+              isAnimationActive={false}
+            />
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+
+      {/* Legend */}
+      <div className="flex gap-5 mt-2">
+        <div className="flex items-center gap-1.5">
+          <div className="w-5 h-0.5 rounded" style={{ background: MINI_REC_COLOR }} />
+          <span className="text-xs" style={{ color: TEXT_SEC }}>{recTicker} (candidate)</span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          {/* Dashed line swatch — two segments to mirror the chart dash pattern */}
+          <svg width="20" height="2" style={{ display: "block" }}>
+            <line x1="0" y1="1" x2="10" y2="1" stroke={MINI_HOLDING_COLOR} strokeWidth="1.5" />
+            <line x1="13" y1="1" x2="20" y2="1" stroke={MINI_HOLDING_COLOR} strokeWidth="1.5" />
+          </svg>
+          <span className="text-xs" style={{ color: TEXT_SEC }}>{holdingTicker} (your holding)</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── SignalRecCard ─────────────────────────────────────────────────────────────
+// Expandable card for each signal-connected recommendation.
+//
+// COLLAPSED: rank badge · ticker (opens StockModal) · company name · sector tag
+//            · direction tag · composite score · signal bar
+//
+// EXPANDED (two-tier):
+//   1. MiniPairChart — rec vs rec.related_holdings[0], 3M, read-only
+//   2. CompactFundamentals — Market Cap / P/E / 52W High / 52W Low for the rec ticker
+//   3. Reasoning text from the backend
+//
+// Both MiniPairChart and CompactFundamentals only mount when the card is open,
+// so there is zero network cost until the user actually expands a card.
+
+function SignalRecCard({
+  rec,
+  rank,
+  companyNames,
+  onTickerClick,
+}: {
+  rec:           Recommendation;
+  rank:          number;
+  companyNames:  Record<string, string>;
+  onTickerClick: (ticker: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  // Use the first related holding as the chart counterpart.
+  // If a rec has multiple related holdings, [0] is the strongest connection
+  // (the backend returns them sorted by relationship strength).
+  const primaryHolding = rec.related_holdings[0] ?? null;
+  const rankColor = RANK_COLORS[(rank - 1) % RANK_COLORS.length];
+
+  return (
+    <div className="rounded-xl overflow-hidden" style={CARD}>
+
+      {/* ── Collapsed header ── */}
+      <div
+        className="px-5 py-4 cursor-pointer"
+        onClick={() => setOpen(o => !o)}
+        onMouseEnter={e => (e.currentTarget.style.background = CARD_H)}
+        onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
+      >
+        <div className="flex items-center gap-3">
+          {/* Rank badge */}
+          <div
+            className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 text-xs font-bold"
+            style={{ background: `${rankColor}20`, color: rankColor }}
+          >
+            {rank}
+          </div>
+
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              {/* Ticker — stop-propagation so clicking it opens the modal
+                  without also toggling the accordion */}
+              <button
+                className="text-sm font-bold hover:underline"
+                style={{ color: TEXT_PRI }}
+                onClick={e => { e.stopPropagation(); onTickerClick(rec.ticker); }}
+              >
+                {rec.ticker}
+              </button>
+              {companyNames[rec.ticker] && (
+                <span className="text-xs" style={{ color: TEXT_MUT }}>
+                  {companyNames[rec.ticker]}
+                </span>
+              )}
+              <SectorTag sector={rec.sector} />
+              <DirectionTag direction={rec.direction} />
+            </div>
+
+            {/* Sub-row: score + connected holdings */}
+            <div className="flex items-center gap-4 mt-1 flex-wrap">
+              <span className="text-xs" style={{ color: TEXT_MUT }}>
+                Score{" "}
+                <span className="font-semibold" style={{ color: rankColor }}>
+                  {rec.composite_score.toFixed(0)}
+                </span>
+              </span>
+              <span className="text-xs" style={{ color: TEXT_MUT }}>
+                Connected to{" "}
+                <span className="font-semibold" style={{ color: TEXT_SEC }}>
+                  {rec.related_holdings.join(", ")}
+                </span>
+              </span>
+            </div>
+          </div>
+
+          {/* Signal strength bar — right-aligned, fixed width */}
+          <div className="w-28 flex-shrink-0">
+            <SignalBar score={rec.signal_score} />
+          </div>
+
+          {open
+            ? <ChevronUp   className="w-4 h-4 flex-shrink-0" style={{ color: TEXT_MUT }} />
+            : <ChevronDown className="w-4 h-4 flex-shrink-0" style={{ color: TEXT_MUT }} />}
+        </div>
+      </div>
+
+      {/* ── Expanded body ── */}
+      {open && (
+        <div className="px-5 pb-5" style={{ borderTop: `1px solid ${BORDER_D}` }}>
+
+          {/* 1. Mini pair chart (only shown when a related holding exists) */}
+          {primaryHolding ? (
+            <div className="mt-4">
+              <p className="text-[10px] font-bold uppercase tracking-widest mb-3"
+                style={{ color: TEXT_MUT }}>
+                3-Month Price Comparison — normalized to 100
+              </p>
+              <MiniPairChart recTicker={rec.ticker} holdingTicker={primaryHolding} />
+            </div>
+          ) : (
+            <div className="mt-4 px-4 py-3 rounded-lg"
+              style={{ background: "hsl(215,25%,9%)", border: `1px solid ${BORDER_D}` }}>
+              <p className="text-xs" style={{ color: TEXT_MUT }}>
+                No related holding available for price comparison.
+              </p>
+            </div>
+          )}
+
+          {/* Divider */}
+          <div className="my-4" style={{ borderTop: `1px solid ${BORDER_D}` }} />
+
+          {/* 2. Compact fundamentals */}
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-widest mb-3"
+              style={{ color: TEXT_MUT }}>
+              Fundamentals — {rec.ticker}
+            </p>
+            <CompactFundamentals symbol={rec.ticker} />
+          </div>
+
+          {/* 3. Reasoning text */}
+          {rec.reasoning && (
+            <p className="text-xs mt-4 leading-relaxed" style={{ color: TEXT_SEC }}>
+              {rec.reasoning}
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── OverlapCard ───────────────────────────────────────────────────────────────
 function OverlapCard({ overlap, companyNames, onTickerClick }: {
   overlap: OverlapResult;
   companyNames: Record<string, string>;
@@ -209,7 +584,7 @@ function OverlapCard({ overlap, companyNames, onTickerClick }: {
   const same = overlap.sector_leader === overlap.sector_follower;
   return (
     <div className="rounded-xl overflow-hidden" style={CARD}>
-      {/* Header row — original layout */}
+      {/* Header row */}
       <div className="px-5 py-4 cursor-pointer" onClick={() => setOpen(o => !o)}
         onMouseEnter={e => (e.currentTarget.style.background = CARD_H)}
         onMouseLeave={e => (e.currentTarget.style.background = "transparent")}>
@@ -249,14 +624,15 @@ function OverlapCard({ overlap, companyNames, onTickerClick }: {
             ? <ChevronUp className="w-4 h-4 flex-shrink-0" style={{ color: TEXT_MUT }} />
             : <ChevronDown className="w-4 h-4 flex-shrink-0" style={{ color: TEXT_MUT }} />}
         </div>
-        {/* Sector tags row — original */}
+        {/* Sector tags row */}
         <div className="flex items-center gap-2 mt-2">
           <SectorTag sector={overlap.sector_leader} />
           <ArrowRight className="w-3 h-3" style={{ color: TEXT_MUT }} />
           <SectorTag sector={overlap.sector_follower} />
         </div>
       </div>
-      {/* Expanded — 6 stats including new ones from new version */}
+
+      {/* Expanded — 6 stats */}
       {open && (
         <div className="px-5 pb-4" style={{ borderTop: `1px solid ${BORDER_D}` }}>
           <p className="text-sm mt-3 leading-relaxed" style={{ color: TEXT_SEC }}>
@@ -264,12 +640,12 @@ function OverlapCard({ overlap, companyNames, onTickerClick }: {
           </p>
           <div className="grid grid-cols-3 gap-3 mt-4">
             {[
-              { label: "dCor",       val: overlap.mean_dcor.toFixed(3),          desc: "Distance correlation at best lag" },
-              { label: "OOS Sharpe", val: overlap.oos_sharpe_net.toFixed(2),     desc: "Net out-of-sample Sharpe ratio" },
-              { label: "Half-life",  val: `${Math.round(overlap.half_life)}d`,   desc: "Days until signal decays 50%" },
+              { label: "dCor",       val: overlap.mean_dcor.toFixed(3),              desc: "Distance correlation at best lag" },
+              { label: "OOS Sharpe", val: overlap.oos_sharpe_net.toFixed(2),         desc: "Net out-of-sample Sharpe ratio" },
+              { label: "Half-life",  val: `${Math.round(overlap.half_life)}d`,       desc: "Days until signal decays 50%" },
               { label: "Frequency",  val: `${Math.round(overlap.frequency * 100)}%`, desc: "% of 15-yr windows significant" },
-              { label: "Sharpness",  val: overlap.sharpness.toFixed(2),          desc: "Signal concentration at one lag" },
-              { label: "Best Lag",   val: `${overlap.best_lag}d`,                desc: "Lead-lag in trading days" },
+              { label: "Sharpness",  val: overlap.sharpness.toFixed(2),              desc: "Signal concentration at one lag" },
+              { label: "Best Lag",   val: `${overlap.best_lag}d`,                    desc: "Lead-lag in trading days" },
             ].map(({ label, val, desc }) => (
               <div key={label} className="rounded-lg px-3 py-2 text-center"
                 style={{ background: "hsl(215,25%,9%)", border: `1px solid ${BORDER_D}` }}>
@@ -285,91 +661,242 @@ function OverlapCard({ overlap, companyNames, onTickerClick }: {
   );
 }
 
-// ── Independent rec card — original color + labelling fully restored ──────────
-function IndependentRecCard({ rec, rank, companyNames, onTickerClick }: {
-  rec: IndependentRecommendation; rank: number;
-  companyNames: Record<string, string>;
-  onTickerClick: (ticker: string) => void;
+// ── DcorCandidateCard ─────────────────────────────────────────────────────────
+// Component 1 output card. Shows stocks that passed the mean dCor filter
+// against the user's portfolio, sorted most-independent first.
+//
+// The key metric is mean_dcor_to_portfolio (lower = more independent).
+// We display an "independence score" = (1 − dCor / 0.3) × 100 so that
+// higher bar = better, consistent with the rest of the UI.
+// Stocks with zero network pairs (dCor = 0) get a perfect score of 100
+// and a "No overlap detected" badge.
+//
+// COLLAPSED: rank badge · ticker · company name · sector tag · dCor badge ·
+//            independence bar · pairs sub-text
+// EXPANDED:  holding chips (select which portfolio stock to compare) ·
+//            MiniPairChart (candidate vs selected holding) ·
+//            reasoning · 3 stat chips · CompactFundamentals
+
+function DcorCandidateCard({ candidate, rank, companyNames, onTickerClick, portfolioHoldings }: {
+  candidate:         DcorCandidate;
+  rank:              number;
+  companyNames:      Record<string, string>;
+  onTickerClick:     (ticker: string) => void;
+  portfolioHoldings: string[];   // all tickers in the user's analyzed portfolio
 }) {
   const [open, setOpen] = useState(false);
-  const pctCent = Math.round(rec.centrality_score);
-  const pctGap  = Math.round(rec.sector_gap_score);
+  const rankColor = RANK_COLORS[(rank - 1) % RANK_COLORS.length];
+
+  // Default to the first paired holding if one exists, otherwise the first portfolio holding.
+  const defaultHolding = (() => {
+    const paired = portfolioHoldings.find(h => h in candidate.paired_holdings);
+    return paired ?? portfolioHoldings[0] ?? null;
+  })();
+  const [selectedHolding, setSelectedHolding] = useState<string | null>(defaultHolding);
+
+  // Re-derive the default if the card is opened for a new candidate (rank changes)
+  // and the previous selectedHolding is no longer in the portfolio list.
+  const holdingIsValid = selectedHolding !== null && portfolioHoldings.includes(selectedHolding);
+
+  // Independence score: dCor=0 → 100, dCor=0.3 → 0
+  const independenceScore = candidate.n_portfolio_pairs === 0
+    ? 100
+    : Math.max(0, (1 - candidate.mean_dcor_to_portfolio / 0.3) * 100);
+  const scoreColor =
+    independenceScore >= 80 ? GREEN :
+    independenceScore >= 50 ? BLUE  : AMBER;
+
   return (
     <div className="rounded-xl overflow-hidden" style={CARD}>
+
+      {/* ── Collapsed header ── */}
       <div className="px-5 py-4 cursor-pointer" onClick={() => setOpen(o => !o)}
         onMouseEnter={e => (e.currentTarget.style.background = CARD_H)}
         onMouseLeave={e => (e.currentTarget.style.background = "transparent")}>
         <div className="flex items-center gap-3">
-          {/* Colored rank badge — purple for top 3 */}
+
+          {/* Rank badge */}
           <div className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 text-xs font-bold"
-            style={{
-              background: rank <= 3 ? PURPLE_DIM : "hsl(215,25%,16%)",
-              color:      rank <= 3 ? PURPLE     : TEXT_SEC,
-            }}>
+            style={{ background: `${rankColor}20`, color: rankColor }}>
             {rank}
           </div>
+
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
               <button className="text-sm font-bold hover:underline"
                 style={{ color: TEXT_PRI }}
-                onClick={e => { e.stopPropagation(); onTickerClick(rec.ticker); }}>
-                {rec.ticker}
+                onClick={e => { e.stopPropagation(); onTickerClick(candidate.ticker); }}>
+                {candidate.ticker}
               </button>
-              {companyNames[rec.ticker] && (
-                <span className="text-xs" style={{ color: TEXT_MUT }}>{companyNames[rec.ticker]}</span>
+              {companyNames[candidate.ticker] && (
+                <span className="text-xs" style={{ color: TEXT_MUT }}>
+                  {companyNames[candidate.ticker]}
+                </span>
               )}
-              {/* Sector tag with sector color */}
-              <SectorTag sector={rec.sector} />
-              {/* "No overlap detected" pill — purple */}
-              <span className="text-xs px-2 py-0.5 rounded-full"
-                style={{ background: PURPLE_DIM, color: PURPLE }}>
-                No overlap detected
-              </span>
+              <SectorTag sector={candidate.sector} />
+              {candidate.n_portfolio_pairs === 0 ? (
+                <span className="text-xs px-2 py-0.5 rounded-full"
+                  style={{ background: GREEN_DIM, color: GREEN }}>
+                  No overlap detected
+                </span>
+              ) : (
+                <span className="text-xs px-2 py-0.5 rounded-full"
+                  style={{ background: `${scoreColor}20`, color: scoreColor }}>
+                  dCor {candidate.mean_dcor_to_portfolio.toFixed(3)}
+                </span>
+              )}
             </div>
-            {/* Inline sub-scores row with icons — from original */}
+
+            {/* Sub-row */}
             <div className="flex items-center gap-4 mt-1.5 flex-wrap">
               <span className="text-xs" style={{ color: TEXT_MUT }}>
-                <Layers className="w-3 h-3 inline mr-1" style={{ color: PURPLE }} />
-                Sector gap{" "}
-                <span className="font-semibold" style={{ color: PURPLE }}>{pctGap}</span>
-              </span>
-              <span className="text-xs" style={{ color: TEXT_MUT }}>
-                <Globe className="w-3 h-3 inline mr-1" style={{ color: TEXT_SEC }} />
-                Centrality{" "}
-                <span className="font-semibold" style={{ color: TEXT_SEC }}>{pctCent}</span>
-              </span>
-              <span className="text-xs" style={{ color: TEXT_MUT }}>
-                Score{" "}
-                <span className="font-semibold" style={{ color: PURPLE }}>
-                  {rec.composite_score.toFixed(0)}
+                Independence{" "}
+                <span className="font-semibold" style={{ color: scoreColor }}>
+                  {Math.round(independenceScore)}/100
                 </span>
+              </span>
+              <span className="text-xs" style={{ color: TEXT_MUT }}>
+                {candidate.n_portfolio_pairs === 0
+                  ? "Not present in any portfolio pair"
+                  : `Paired with ${candidate.n_portfolio_pairs} holding${candidate.n_portfolio_pairs !== 1 ? "s" : ""}`}
               </span>
             </div>
           </div>
+
+          {/* Independence bar — wider is more independent */}
+          <div className="w-28 flex-shrink-0">
+            <div className="flex items-center gap-2">
+              <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ background: BORDER }}>
+                <div className="h-full rounded-full"
+                  style={{ width: `${independenceScore}%`, background: scoreColor }} />
+              </div>
+              <span className="text-xs font-semibold w-8 text-right" style={{ color: scoreColor }}>
+                {Math.round(independenceScore)}
+              </span>
+            </div>
+          </div>
+
           {open
-            ? <ChevronUp className="w-4 h-4 flex-shrink-0" style={{ color: TEXT_MUT }} />
+            ? <ChevronUp   className="w-4 h-4 flex-shrink-0" style={{ color: TEXT_MUT }} />
             : <ChevronDown className="w-4 h-4 flex-shrink-0" style={{ color: TEXT_MUT }} />}
         </div>
       </div>
+
+      {/* ── Expanded body ── */}
       {open && (
         <div className="px-5 pb-4" style={{ borderTop: `1px solid ${BORDER_D}` }}>
-          <p className="text-sm mt-3 leading-relaxed" style={{ color: TEXT_SEC }}>{rec.reasoning}</p>
-          <div className="grid grid-cols-2 gap-3 mt-4">
+
+          {/* ── Holding selector + price comparison ── */}
+          {portfolioHoldings.length > 0 && (
+            <div className="mt-4">
+              <p className="text-[10px] font-bold uppercase tracking-widest mb-2"
+                style={{ color: TEXT_MUT }}>
+                Compare against your holding
+              </p>
+
+              {/* Chip row — one chip per portfolio holding */}
+              <div className="flex flex-wrap gap-2 mb-3">
+                {portfolioHoldings.map(holding => {
+                  const pairDcor = candidate.paired_holdings[holding];
+                  const hasPair  = pairDcor !== undefined;
+                  const isActive = holding === selectedHolding;
+
+                  // Color scheme:
+                  //   Active + has pair  → amber (there's a measured relationship)
+                  //   Active + no pair   → green (genuinely independent)
+                  //   Inactive           → muted border
+                  const activeColor = hasPair ? AMBER : GREEN;
+                  const chipBg      = isActive
+                    ? `${activeColor}20`
+                    : "hsl(215,25%,14%)";
+                  const chipBorder  = isActive
+                    ? `1px solid ${activeColor}60`
+                    : `1px solid ${BORDER}`;
+                  const chipText    = isActive ? activeColor : TEXT_MUT;
+
+                  return (
+                    <button
+                      key={holding}
+                      onClick={() => setSelectedHolding(holding)}
+                      className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-colors"
+                      style={{ background: chipBg, border: chipBorder, color: chipText }}
+                    >
+                      {holding}
+                      {/* Pair annotation badge */}
+                      <span
+                        className="text-[10px] px-1.5 py-0.5 rounded-full font-medium"
+                        style={{
+                          background: hasPair ? `${AMBER}20` : `${GREEN}20`,
+                          color:       hasPair ? AMBER          : GREEN,
+                        }}
+                      >
+                        {hasPair ? `dCor ${pairDcor.toFixed(3)}` : "Independent"}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Price comparison chart — loads on demand when expanded */}
+              {holdingIsValid && selectedHolding && (
+                <div>
+                  <MiniPairChart
+                    recTicker={candidate.ticker}
+                    holdingTicker={selectedHolding}
+                  />
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Divider */}
+          <div className="my-4" style={{ borderTop: `1px solid ${BORDER_D}` }} />
+
+          {/* Reasoning */}
+          {candidate.reasoning && (
+            <p className="text-sm leading-relaxed" style={{ color: TEXT_SEC }}>
+              {candidate.reasoning}
+            </p>
+          )}
+
+          {/* 3 stat chips */}
+          <div className="grid grid-cols-3 gap-3 mt-4">
             {[
-              { label: "Sector Gap",       val: rec.sector_gap_score,  desc: "How underrepresented this sector is in your portfolio (70% of score)", color: PURPLE },
-              { label: "Market Centrality", val: rec.centrality_score, desc: "How central this stock is in the market network (30% of score)",        color: TEXT_SEC },
-            ].map(({ label, val, desc, color }) => (
-              <div key={label}>
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-xs font-semibold" style={{ color: TEXT_PRI }}>{label}</span>
-                  <span className="text-xs font-bold" style={{ color }}>{Math.round(val)}/100</span>
-                </div>
-                <div className="h-1.5 rounded-full overflow-hidden mb-1" style={{ background: BORDER_D }}>
-                  <div className="h-full rounded-full" style={{ width: `${val}%`, background: color }} />
-                </div>
-                <p className="text-xs" style={{ color: TEXT_MUT }}>{desc}</p>
+              {
+                label: "Mean dCor",
+                val:   candidate.n_portfolio_pairs === 0 ? "0.000" : candidate.mean_dcor_to_portfolio.toFixed(3),
+                desc:  "Avg distance correlation to your portfolio",
+              },
+              {
+                label: "Portfolio Pairs",
+                val:   `${candidate.n_portfolio_pairs}`,
+                desc:  "Holdings with a network pair",
+              },
+              {
+                label: "Independence",
+                val:   `${Math.round(independenceScore)}/100`,
+                desc:  "Lower dCor → higher independence score",
+              },
+            ].map(({ label, val, desc }) => (
+              <div key={label} className="rounded-lg px-3 py-2 text-center"
+                style={{ background: "hsl(215,25%,9%)", border: `1px solid ${BORDER_D}` }}>
+                <p className="text-xs mb-0.5" style={{ color: TEXT_MUT }}>{label}</p>
+                <p className="text-sm font-semibold" style={{ color: TEXT_PRI }}>{val}</p>
+                <p style={{ color: TEXT_MUT, fontSize: "10px" }} className="mt-0.5">{desc}</p>
               </div>
             ))}
+          </div>
+
+          {/* Divider */}
+          <div className="my-4" style={{ borderTop: `1px solid ${BORDER_D}` }} />
+
+          {/* Compact fundamentals */}
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-widest mb-3"
+              style={{ color: TEXT_MUT }}>
+              Fundamentals — {candidate.ticker}
+            </p>
+            <CompactFundamentals symbol={candidate.ticker} />
           </div>
         </div>
       )}
@@ -379,6 +906,15 @@ function IndependentRecCard({ rec, rank, companyNames, onTickerClick }: {
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 export default function DiversifyPage() {
+  const { savedPortfolios } = useAuth();
+
+  // Merge saved portfolios (user's own) before the built-in presets so they
+  // appear first and are visually distinguished with a briefcase icon.
+  const allPresets = useMemo(() => [
+    ...savedPortfolios.map(p => ({ label: p.name, tickers: p.tickers, saved: true })),
+    ...BUILTIN_PRESETS,
+  ], [savedPortfolios]);
+
   const [analysisMode,  setAnalysisMode]  = useState<AnalysisMode>("broad_market");
   const [resultMode,    setResultMode]    = useState<AnalysisMode>("broad_market");
   const [inputVal,      setInputVal]      = useState("");
@@ -386,16 +922,17 @@ export default function DiversifyPage() {
   const [loading,       setLoading]       = useState(false);
   const [error,         setError]         = useState<string | null>(null);
   const [result,        setResult]        = useState<{
-    tickers_analyzed:            string[];
-    unknown_tickers:             string[];
-    overlaps:                    OverlapResult[];
-    signal_recommendations:      Recommendation[];
-    independent_recommendations: IndependentRecommendation[];
-    holdings_sectors:            Record<string, string>;
+    tickers_analyzed:         string[];
+    unknown_tickers:          string[];
+    overlaps:                 OverlapResult[];
+    signal_recommendations:   Recommendation[];
+    dcor_filtered_candidates: DcorCandidate[];
+    holdings_sectors:         Record<string, string>;
   } | null>(null);
-  const [activeSpiderIdx, setActiveSpiderIdx] = useState<number | null>(0);
-  const [companyNames,    setCompanyNames]    = useState<Record<string, string>>({});
-  const [modalStock,      setModalStock]      = useState<Stock | null>(null);
+  const [activeSpiderIdx,        setActiveSpiderIdx]        = useState<number | null>(0);
+  const [companyNames,           setCompanyNames]           = useState<Record<string, string>>({});
+  const [modalStock,             setModalStock]             = useState<Stock | null>(null);
+  const [visibleCandidateCount,  setVisibleCandidateCount]  = useState(10);
 
   const hoveredTicker = activeSpiderIdx !== null
     ? (result?.signal_recommendations[activeSpiderIdx]?.ticker ?? null)
@@ -404,7 +941,7 @@ export default function DiversifyPage() {
 
   useEffect(() => { inputRef.current?.focus(); }, []);
 
-  // currentSectors from holdings_sectors — always populated, fixes blank donut
+  // currentSectors from holdings_sectors
   const currentSectors = (() => {
     if (!result?.holdings_sectors) return {};
     const dist: Record<string, number> = {};
@@ -439,7 +976,7 @@ export default function DiversifyPage() {
       ? [...tickers, ...inputVal.trim().toUpperCase().split(/[\s,]+/).filter(Boolean)]
       : tickers;
     if (!toAnalyze.length) return;
-    setLoading(true); setError(null); setResult(null); setActiveSpiderIdx(0);
+    setLoading(true); setError(null); setResult(null); setActiveSpiderIdx(0); setVisibleCandidateCount(10);
     try {
       const data = await analyzePortfolio(toAnalyze, analysisMode);
       setResult(data);
@@ -447,7 +984,7 @@ export default function DiversifyPage() {
       const allTickers = [
         ...data.tickers_analyzed,
         ...data.signal_recommendations.map(r => r.ticker),
-        ...data.independent_recommendations.map(r => r.ticker),
+        ...(data.dcor_filtered_candidates ?? []).map(r => r.ticker),
       ];
       const uniqueTickers = [...new Set(allTickers)];
       if (uniqueTickers.length > 0) {
@@ -468,7 +1005,7 @@ export default function DiversifyPage() {
 
   const reset = () => {
     setTickers([]); setInputVal(""); setResult(null); setError(null);
-    setActiveSpiderIdx(null); setCompanyNames({}); setModalStock(null);
+    setActiveSpiderIdx(null); setCompanyNames({}); setModalStock(null); setVisibleCandidateCount(10);
     setTimeout(() => inputRef.current?.focus(), 0);
   };
 
@@ -502,12 +1039,13 @@ export default function DiversifyPage() {
               <h1 className="text-xl font-bold" style={{ color: TEXT_PRI }}>Portfolio Diversifier</h1>
             </div>
             <p className="text-sm leading-relaxed" style={{ color: TEXT_SEC }}>
-              Enter your holdings to uncover hidden lead-lag relationships and receive
-              signal-backed diversification recommendations.
+              Enter your holdings to uncover hidden lead-lag concentration risk, receive
+              signal-backed picks, and find genuinely independent diversification candidates
+              filtered by distance correlation.
             </p>
           </div>
 
-          {/* ── Input — always visible, even after analysis ── */}
+          {/* ── Input — always visible ── */}
           <div className="rounded-xl p-5 mb-6" style={CARD}>
             <p className="text-xs font-medium mb-3" style={{ color: TEXT_SEC }}>
               YOUR HOLDINGS — type a ticker and press Enter, Space, or comma
@@ -533,15 +1071,20 @@ export default function DiversifyPage() {
                 style={{ color: TEXT_PRI }} />
             </div>
 
-            {/* Preset buttons — always visible, new version style */}
+            {/* Preset buttons */}
             <div className="flex items-center gap-2 mt-3 flex-wrap">
               <span className="text-xs" style={{ color: TEXT_MUT }}>Presets:</span>
-              {PRESETS.map(p => (
+              {allPresets.map(p => (
                 <button key={p.label} onClick={() => { setTickers(p.tickers); setResult(null); }}
-                  className="text-xs px-2.5 py-1 rounded-md transition-colors"
-                  style={{ background: "hsl(215,25%,14%)", border: `1px solid ${BORDER}`, color: TEXT_SEC }}
-                  onMouseEnter={e => (e.currentTarget.style.background = "hsl(215,25%,18%)")}
-                  onMouseLeave={e => (e.currentTarget.style.background = "hsl(215,25%,14%)")}>
+                  className="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-md transition-colors"
+                  style={{
+                    background: p.saved ? "hsla(142,71%,45%,0.12)" : "hsl(215,25%,14%)",
+                    border:     p.saved ? "1px solid hsla(142,71%,45%,0.3)" : `1px solid ${BORDER}`,
+                    color:      p.saved ? GREEN : TEXT_SEC,
+                  }}
+                  onMouseEnter={e => (e.currentTarget.style.opacity = "0.75")}
+                  onMouseLeave={e => (e.currentTarget.style.opacity = "1")}>
+                  {p.saved && <Briefcase className="w-3 h-3 flex-shrink-0" />}
                   {p.label}
                 </button>
               ))}
@@ -624,13 +1167,13 @@ export default function DiversifyPage() {
                 </div>
               )}
 
-              {/* ── Stat cards — original design with icons fully restored ── */}
+              {/* Stat cards */}
               <div className="grid grid-cols-4 gap-3 mb-6">
                 {[
-                  { label: "Analyzed",     value: result.tickers_analyzed.length,            color: BLUE,   icon: <BarChart3 className="w-4 h-4" /> },
-                  { label: "Overlaps",     value: result.overlaps.length,                    color: result.overlaps.length > 0 ? AMBER : GREEN, icon: <ShieldAlert className="w-4 h-4" /> },
-                  { label: "Signal Picks", value: result.signal_recommendations.length,      color: BLUE,   icon: <Sparkles className="w-4 h-4" /> },
-                  { label: "Pure Picks",   value: result.independent_recommendations.length, color: PURPLE, icon: <Unlink className="w-4 h-4" /> },
+                  { label: "Analyzed",            value: result.tickers_analyzed.length,                       color: BLUE,  icon: <BarChart3 className="w-4 h-4" /> },
+                  { label: "Overlaps",            value: result.overlaps.length,                               color: result.overlaps.length > 0 ? AMBER : GREEN, icon: <ShieldAlert className="w-4 h-4" /> },
+                  { label: "Signal Picks",        value: result.signal_recommendations.length,                 color: BLUE,  icon: <Sparkles className="w-4 h-4" /> },
+                  { label: "Diversification Picks", value: (result.dcor_filtered_candidates ?? []).length,     color: GREEN, icon: <Unlink className="w-4 h-4" /> },
                 ].map(({ label, value, color, icon }) => (
                   <div key={label} className="rounded-xl p-4" style={CARD}>
                     <div className="flex items-center gap-2 mb-2">
@@ -642,10 +1185,10 @@ export default function DiversifyPage() {
                 ))}
               </div>
 
-              {/* Factor explanations — new version's layout */}
+              {/* Factor explanations */}
               <FactorExplanations />
 
-              {/* Concentration Risk */}
+              {/* ── Concentration Risk ── */}
               <section className="mb-8">
                 <SectionHeader
                   icon={<ShieldAlert className="w-4 h-4" />}
@@ -668,15 +1211,17 @@ export default function DiversifyPage() {
                 )}
               </section>
 
-              {/* Signal-connected recommendations */}
+              {/* ── Signal-connected recommendations ── */}
               {signalRecs.length > 0 && (
                 <section className="mb-8">
                   <SectionHeader
                     icon={<Sparkles className="w-4 h-4" />}
                     label="Signal-Connected Recommendations" count={signalRecs.length}
                     color={BLUE} dimColor={BLUE_DIM}
-                    subtitle="Stocks with detected lead-lag relationships to your holdings — click a ticker on the chart or in the list to explore its profile"
+                    subtitle="Stocks with detected lead-lag relationships to your holdings — use the chart to compare scores, then expand a card below for a price comparison and fundamentals"
                   />
+
+                  {/* Spider chart — overview / score comparison */}
                   <div className="mb-4">
                     <SpiderChart
                       recommendations={signalRecs}
@@ -686,6 +1231,8 @@ export default function DiversifyPage() {
                       companyNames={companyNames}
                     />
                   </div>
+
+                  {/* Sector donut — portfolio sector distribution preview */}
                   <div className="mb-6">
                     <SectorDonut
                       currentSectors={currentSectors}
@@ -693,39 +1240,100 @@ export default function DiversifyPage() {
                       previewTicker={hoveredRec?.ticker ?? null}
                     />
                   </div>
-                </section>
-              )}
 
-              {/* Independent recommendations */}
-              <section className="mb-8">
-                <SectionHeader
-                  icon={<Unlink className="w-4 h-4" />}
-                  label="Independent Recommendations" count={result.independent_recommendations.length}
-                  color={PURPLE} dimColor={PURPLE_DIM}
-                  subtitle="Stocks with zero detected lead-lag relationships to your holdings — ranked by sector gap (70%) and market centrality (30%)"
-                />
-                {result.independent_recommendations.length > 0 && (
-                  <p className="text-xs mb-4 px-1 leading-relaxed" style={{ color: TEXT_MUT }}>
-                    These stocks have no detected relationship to your holdings, so signal strength,
-                    durability, and coverage are not applicable. Ranked purely by new sector exposure
-                    and market network centrality.
-                  </p>
-                )}
-                {result.independent_recommendations.length === 0 ? (
-                  <div className="rounded-xl px-6 py-8 text-center" style={CARD}>
-                    <p className="text-sm" style={{ color: TEXT_SEC }}>No independent stocks found.</p>
-                  </div>
-                ) : (
+                  {/* Expandable per-stock cards — drill-down layer.
+                      Each card loads MiniPairChart + CompactFundamentals on demand,
+                      so there is no network cost until the user opens a card. */}
                   <div className="space-y-2">
-                    {result.independent_recommendations.map((rec, i) => (
-                      <IndependentRecCard
-                        key={rec.ticker} rec={rec} rank={i + 1}
-                        companyNames={companyNames} onTickerClick={handleTickerClick}
+                    {signalRecs.map((rec, i) => (
+                      <SignalRecCard
+                        key={rec.ticker}
+                        rec={rec}
+                        rank={i + 1}
+                        companyNames={companyNames}
+                        onTickerClick={handleTickerClick}
                       />
                     ))}
                   </div>
-                )}
-              </section>
+                </section>
+              )}
+
+              {/* ── Diversification Candidate Pool (Component 1) ── */}
+              {(() => {
+                const allCandidates = result.dcor_filtered_candidates ?? [];
+                const visibleCandidates = allCandidates.slice(0, visibleCandidateCount);
+                const remaining = allCandidates.length - visibleCandidateCount;
+
+                return (
+                  <section className="mb-8">
+                    <SectionHeader
+                      icon={<Unlink className="w-4 h-4" />}
+                      label="Diversification Candidate Pool"
+                      count={allCandidates.length}
+                      color={GREEN} dimColor={GREEN_DIM}
+                      subtitle="Top candidates ranked by independence from your portfolio — sorted by lowest mean dCor, then market centrality"
+                    />
+                    {allCandidates.length > 0 && (
+                      <p className="text-xs mb-4 px-1 leading-relaxed" style={{ color: TEXT_MUT }}>
+                        These candidates are ranked by how independent they are from your holdings.
+                        Distance correlation (dCor) captures both linear and nonlinear dependencies —
+                        a lower dCor means genuinely independent behavior. Stocks with detected network
+                        pairs are ranked by measured dCor; stocks with no detected pairs are ranked by
+                        market centrality so the most network-connected names surface first.
+                        Expand a card to see key fundamentals and reasoning.
+                      </p>
+                    )}
+                    {allCandidates.length === 0 ? (
+                      <div className="rounded-xl px-6 py-8 text-center" style={CARD}>
+                        <p className="text-sm" style={{ color: TEXT_SEC }}>
+                          No diversification candidates found.
+                        </p>
+                      </div>
+                    ) : (
+                      <>
+                        <div className="space-y-2">
+                          {visibleCandidates.map((candidate, i) => (
+                            <DcorCandidateCard
+                              key={candidate.ticker} candidate={candidate} rank={i + 1}
+                              companyNames={companyNames} onTickerClick={handleTickerClick}
+                              portfolioHoldings={result.tickers_analyzed}
+                            />
+                          ))}
+                        </div>
+
+                        {/* Show more / show less controls */}
+                        {allCandidates.length > 10 && (
+                          <div className="flex items-center justify-center gap-3 mt-4">
+                            {remaining > 0 && (
+                              <button
+                                onClick={() => setVisibleCandidateCount(c => c + 10)}
+                                className="flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold transition-colors"
+                                style={{ background: GREEN_DIM, color: GREEN, border: `1px solid ${GREEN}40` }}
+                                onMouseEnter={e => (e.currentTarget.style.background = `${GREEN}25`)}
+                                onMouseLeave={e => (e.currentTarget.style.background = GREEN_DIM)}>
+                                <ChevronDown className="w-3.5 h-3.5" />
+                                Show {Math.min(remaining, 10)} more
+                                <span style={{ color: `${GREEN}99` }}>({remaining} remaining)</span>
+                              </button>
+                            )}
+                            {visibleCandidateCount > 10 && (
+                              <button
+                                onClick={() => setVisibleCandidateCount(10)}
+                                className="flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold transition-colors"
+                                style={{ background: "hsl(215,25%,14%)", color: TEXT_SEC, border: `1px solid ${BORDER}` }}
+                                onMouseEnter={e => (e.currentTarget.style.background = "hsl(215,25%,18%)")}
+                                onMouseLeave={e => (e.currentTarget.style.background = "hsl(215,25%,14%)")}>
+                                <ChevronUp className="w-3.5 h-3.5" />
+                                Collapse to top 10
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </section>
+                );
+              })()}
             </div>
           )}
 
@@ -738,9 +1346,9 @@ export default function DiversifyPage() {
               </div>
               <p className="text-sm font-medium mb-1" style={{ color: TEXT_PRI }}>Add your stock holdings above</p>
               <p className="text-xs leading-relaxed max-w-xs mx-auto" style={{ color: TEXT_SEC }}>
-                We'll identify hidden relationships between your stocks and recommend two types of
-                additions: signal-connected picks for early warning, and truly independent picks
-                for pure diversification.
+                We'll identify hidden lead-lag relationships within your portfolio, surface
+                signal-connected picks, and use distance correlation to build a pool of
+                genuinely independent diversification candidates.
               </p>
             </div>
           )}

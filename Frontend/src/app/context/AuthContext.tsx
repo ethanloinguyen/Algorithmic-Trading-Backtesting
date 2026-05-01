@@ -27,26 +27,37 @@ export interface SavedStock {
   name:   string;
 }
 
+export interface SavedPortfolio {
+  name:    string;
+  tickers: string[];
+}
+
 interface AuthContextValue {
-  user:        User | null;
-  loading:     boolean;
-  savedStocks: SavedStock[];
-  isSaved:     (symbol: string) => boolean;
-  toggleSave:  (stock: SavedStock) => Promise<void>;
-  trackClick:  (symbol: string) => Promise<void>;
-  logout:      () => Promise<void>;
+  user:             User | null;
+  loading:          boolean;
+  savedStocks:      SavedStock[];
+  savedPortfolios:  SavedPortfolio[];
+  isSaved:          (symbol: string) => boolean;
+  toggleSave:       (stock: SavedStock) => Promise<void>;
+  savePortfolio:    (name: string, tickers: string[]) => Promise<void>;
+  deletePortfolio:  (name: string) => Promise<void>;
+  trackClick:       (symbol: string) => Promise<void>;
+  logout:           () => Promise<void>;
 }
 
 // ── Context ───────────────────────────────────────────────────────────────────
 
 const AuthContext = createContext<AuthContextValue>({
-  user:        null,
-  loading:     true,
-  savedStocks: [],
-  isSaved:     () => false,
-  toggleSave:  async () => {},
-  trackClick:  async () => {},
-  logout:      async () => {},
+  user:             null,
+  loading:          true,
+  savedStocks:      [],
+  savedPortfolios:  [],
+  isSaved:          () => false,
+  toggleSave:       async () => {},
+  savePortfolio:    async () => {},
+  deletePortfolio:  async () => {},
+  trackClick:       async () => {},
+  logout:           async () => {},
 });
 
 export function useAuth() {
@@ -56,21 +67,24 @@ export function useAuth() {
 // ── Provider ──────────────────────────────────────────────────────────────────
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user,        setUser]        = useState<User | null>(null);
-  const [loading,     setLoading]     = useState(true);
-  const [savedStocks, setSavedStocks] = useState<SavedStock[]>([]);
+  const [user,             setUser]             = useState<User | null>(null);
+  const [loading,          setLoading]          = useState(true);
+  const [savedStocks,      setSavedStocks]      = useState<SavedStock[]>([]);
+  const [savedPortfolios,  setSavedPortfolios]  = useState<SavedPortfolio[]>([]);
 
-  // Load saved stocks from Firestore and pre-warm cache for top-clicked stocks
+  // Load saved stocks + portfolios from Firestore and pre-warm cache
   const loadUserData = useCallback(async (uid: string) => {
     const ref  = doc(db, "users", uid);
     const snap = await getDoc(ref);
 
     if (snap.exists()) {
-      setSavedStocks((snap.data().savedStocks as SavedStock[]) ?? []);
+      setSavedStocks(    (snap.data().savedStocks     as SavedStock[])     ?? []);
+      setSavedPortfolios((snap.data().savedPortfolios as SavedPortfolio[]) ?? []);
     } else {
       // First login — create user document
-      await setDoc(ref, { savedStocks: [], clickedStocks: {} });
+      await setDoc(ref, { savedStocks: [], clickedStocks: {}, savedPortfolios: [] });
       setSavedStocks([]);
+      setSavedPortfolios([]);
     }
 
     // Pre-warm: call the backend API for top-clicked stocks.
@@ -87,6 +101,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         await loadUserData(firebaseUser.uid);
       } else {
         setSavedStocks([]);
+        setSavedPortfolios([]);
       }
       setLoading(false);
     });
@@ -111,6 +126,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [user, savedStocks]);
 
   /**
+   * Upsert a named portfolio — creates it if the name is new, replaces it if
+   * the name already exists. Writes the full updated array to Firestore.
+   */
+  const savePortfolio = useCallback(async (name: string, tickers: string[]) => {
+    if (!user) return;
+    const ref     = doc(db, "users", user.uid);
+    const updated = [
+      ...savedPortfolios.filter(p => p.name !== name),
+      { name, tickers },
+    ];
+    setSavedPortfolios(updated);
+    await setDoc(ref, { savedPortfolios: updated }, { merge: true });
+  }, [user, savedPortfolios]);
+
+  /**
+   * Delete a named portfolio by name.
+   */
+  const deletePortfolio = useCallback(async (name: string) => {
+    if (!user) return;
+    const ref     = doc(db, "users", user.uid);
+    const updated = savedPortfolios.filter(p => p.name !== name);
+    setSavedPortfolios(updated);
+    await setDoc(ref, { savedPortfolios: updated }, { merge: true });
+  }, [user, savedPortfolios]);
+
+  /**
    * Call when a user opens a stock modal.
    * Records the click in Firestore and triggers a background backend fetch
    * (which also warms the Firestore OHLCV cache) for next time.
@@ -126,6 +167,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const logout = useCallback(async () => {
     await signOut(auth);
     setSavedStocks([]);
+    setSavedPortfolios([]);
   }, []);
 
   const isSaved = useCallback(
@@ -134,7 +176,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   return (
-    <AuthContext.Provider value={{ user, loading, savedStocks, isSaved, toggleSave, trackClick, logout }}>
+    <AuthContext.Provider value={{
+      user, loading,
+      savedStocks, savedPortfolios,
+      isSaved, toggleSave,
+      savePortfolio, deletePortfolio,
+      trackClick, logout,
+    }}>
       {children}
     </AuthContext.Provider>
   );

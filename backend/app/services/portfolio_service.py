@@ -192,6 +192,7 @@ def run_portfolio_analysis(
     analysis_mode: str = "broad_market",
     top_n: int = 10,
     min_signal: float = 55.0,
+    dcor_threshold: float = 0.3,
 ) -> dict:
     from app.services.portfolio_engine import (
         _normalize_tickers,
@@ -200,6 +201,7 @@ def run_portfolio_analysis(
         get_signal_recommendations,
         get_independent_recommendations,
         get_holdings_sectors,
+        compute_dcor_filtered_pool,
     )
     from dataclasses import asdict
 
@@ -214,6 +216,7 @@ def run_portfolio_analysis(
             "signal_recommendations":      [],
             "independent_recommendations": [],
             "holdings_sectors":            {},
+            "dcor_filtered_candidates":    [],
         }
 
     # Fetch only the rows that involve the user's tickers — fast targeted query
@@ -223,9 +226,8 @@ def run_portfolio_analysis(
     known   = [t for t in normalized if t in meta.index]
     unknown = [t for t in normalized if t not in meta.index]
 
-    # For independent recommendations we need a broader universe of tickers
-    # that have NO relationship with the user's holdings.
-    # Fetch a compact metadata table (ticker, sector, centrality) for this.
+    # For independent recommendations and the dCor-filtered pool we need a broader
+    # universe of tickers.  Fetch a compact metadata table (ticker, sector, centrality).
     as_of_date = _get_latest_as_of_date(table_name)
     universe_meta_df = _get_universe_metadata(as_of_date, table_name)
 
@@ -240,4 +242,8 @@ def run_portfolio_analysis(
         "signal_recommendations":      [asdict(r) for r in get_signal_recommendations(normalized, df, top_n=top_n, min_signal_strength=effective_min_signal)],
         "independent_recommendations": [asdict(r) for r in get_independent_recommendations(normalized, df, top_n=top_n, universe_meta_df=universe_meta_df)],
         "holdings_sectors":            get_holdings_sectors(normalized, df),
+        # Component 1 — dCor-filtered candidate pool for clustering + Monte Carlo
+        "dcor_filtered_candidates":    [asdict(c) for c in compute_dcor_filtered_pool(
+            normalized, df, universe_meta_df=universe_meta_df, dcor_threshold=dcor_threshold,
+        )],
     }

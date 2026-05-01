@@ -25,8 +25,9 @@ export default function CreateAccountPage() {
       await updateProfile(cred.user, { displayName: name });
       // Create Firestore user doc
       await setDoc(doc(db, "users", cred.user.uid), {
-        savedStocks: [],
-        clickedStocks: {},
+        savedStocks:     [],
+        clickedStocks:   {},
+        savedPortfolios: [],
       });
       document.cookie = "ll_authed=1; path=/; max-age=86400";
       router.push("/dashboard");

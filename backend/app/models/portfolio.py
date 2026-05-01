@@ -54,6 +54,31 @@ class IndependentRecommendation(BaseModel):
     reasoning:         str
 
 
+class DcorCandidate(BaseModel):
+    """
+    Component 1 output — a candidate stock that passed the dCor threshold filter.
+
+    mean_dcor_to_portfolio is the average pairwise dCor between this stock and
+    all user portfolio holdings for which a network pair exists.  Stocks with no
+    network pairs at all are assigned 0.0 (no detected dependency).
+
+    paired_holdings maps each portfolio holding that has a detected pair with
+    this candidate to its individual dCor value — used by the UI to annotate
+    a per-holding price comparison chart.
+
+    The list is sorted ascending by mean_dcor_to_portfolio so the most
+    independent stocks appear first.  Feed this list to Component 2 (clustering)
+    and Component 3 (Monte Carlo risk assessment).
+    """
+    ticker:                  str
+    sector:                  str
+    centrality:              float
+    mean_dcor_to_portfolio:  float
+    n_portfolio_pairs:       int
+    paired_holdings:         dict[str, float] = {}
+    reasoning:               str
+
+
 class PortfolioAnalysisResponse(BaseModel):
     tickers_analyzed:            list[str]
     unknown_tickers:             list[str]
@@ -61,3 +86,6 @@ class PortfolioAnalysisResponse(BaseModel):
     signal_recommendations:      list[Recommendation]
     independent_recommendations: list[IndependentRecommendation]
     holdings_sectors:            dict[str, str]   # {ticker: sector} for all known holdings
+    # Component 1 output — dCor-filtered diversification candidate pool
+    # sorted ascending by mean_dcor_to_portfolio (most independent first)
+    dcor_filtered_candidates:    list[DcorCandidate] = []

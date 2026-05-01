@@ -5,8 +5,9 @@ import { useRouter } from "next/navigation";
 import {
   TrendingUp, Star, User, Mail, LogOut, Loader2, BarChart2,
   LayoutDashboard, LineChart, Grid3X3, ChevronDown, Layers,
+  Briefcase, Plus, X, Trash2, ArrowRight,
 } from "lucide-react";
-import { useAuth } from "@/src/app/context/AuthContext";
+import { useAuth, type SavedPortfolio } from "@/src/app/context/AuthContext";
 import { fetchStockSummaries, type StockSummary } from "@/src/app/lib/api";
 import { SECTORS, ALL_SECTORS, filterBySector } from "@/src/app/lib/sectorData";
 
@@ -145,8 +146,204 @@ function SectorDropdown({
   );
 }
 
+// ─── Portfolio manager ────────────────────────────────────────────────────────
+function PortfolioManager({
+  portfolios,
+  onSave,
+  onDelete,
+}: {
+  portfolios: SavedPortfolio[];
+  onSave:     (name: string, tickers: string[]) => Promise<void>;
+  onDelete:   (name: string) => Promise<void>;
+}) {
+  const router = useRouter();
+  const [name,     setName]     = useState("");
+  const [tickerIn, setTickerIn] = useState("");
+  const [tickers,  setTickers]  = useState<string[]>([]);
+  const [saving,   setSaving]   = useState(false);
+  const [nameErr,  setNameErr]  = useState("");
+
+  const addTicker = (raw: string) => {
+    const parts = raw.toUpperCase().split(/[\s,]+/).filter(Boolean);
+    setTickers(prev => {
+      const next = [...prev];
+      for (const t of parts) if (t.length <= 10 && !next.includes(t)) next.push(t);
+      return next;
+    });
+    setTickerIn("");
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (["Enter", ",", " ", "Tab"].includes(e.key)) {
+      e.preventDefault();
+      if (tickerIn.trim()) addTicker(tickerIn.trim());
+    }
+    if (e.key === "Backspace" && !tickerIn && tickers.length)
+      setTickers(prev => prev.slice(0, -1));
+  };
+
+  const handleSave = async () => {
+    const trimmedName = name.trim();
+    if (!trimmedName) { setNameErr("Portfolio name is required."); return; }
+    if (!tickers.length) { setNameErr("Add at least one ticker."); return; }
+    setNameErr("");
+    setSaving(true);
+    try {
+      await onSave(trimmedName, tickers);
+      setName(""); setTickers([]); setTickerIn("");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const BG   = "hsl(213,27%,7%)";
+  const BLUE = "hsl(217,91%,60%)";
+  const GREEN= "hsl(142,71%,45%)";
+  const MUTED= "hsl(215,15%,55%)";
+  const DIM  = "hsl(215,15%,40%)";
+  const BORDER = "hsl(215,20%,18%)";
+
+  return (
+    <div className="rounded-xl mt-6" style={{ ...card, overflow: "visible" }}>
+
+      {/* Header */}
+      <div className="px-6 py-4 flex items-center justify-between"
+        style={{ borderBottom: `1px solid ${BORDER}` }}>
+        <div className="flex items-center gap-2">
+          <Briefcase className="w-4 h-4" style={{ color: BLUE }} />
+          <h2 className="text-base font-semibold" style={{ color: "hsl(210,40%,92%)" }}>
+            My Portfolios
+          </h2>
+          {portfolios.length > 0 && (
+            <span className="text-xs px-2 py-0.5 rounded-full"
+              style={{ background: "hsla(217,91%,60%,0.15)", color: BLUE }}>
+              {portfolios.length}
+            </span>
+          )}
+        </div>
+        <p className="text-xs" style={{ color: DIM }}>
+          Portfolios appear as presets on the Diversify page
+        </p>
+      </div>
+
+      {/* Existing portfolios */}
+      {portfolios.length === 0 && (
+        <div className="py-10 text-center">
+          <Briefcase className="w-9 h-9 mx-auto mb-3" style={{ color: "hsl(215,15%,28%)" }} />
+          <p className="text-sm font-medium mb-1" style={{ color: MUTED }}>No portfolios yet</p>
+          <p className="text-xs" style={{ color: DIM }}>Create one below to use it as a preset in the Diversifier.</p>
+        </div>
+      )}
+
+      {portfolios.map(p => (
+        <div key={p.name} className="px-6 py-4 flex items-start gap-3 transition-colors"
+          style={{ borderTop: `1px solid ${BORDER}` }}
+          onMouseEnter={e => (e.currentTarget.style.background = "hsl(215,25%,13%)")}
+          onMouseLeave={e => (e.currentTarget.style.background = "transparent")}>
+
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 mb-2">
+              <span className="text-sm font-semibold" style={{ color: "hsl(210,40%,92%)" }}>
+                {p.name}
+              </span>
+              <span className="text-xs px-2 py-0.5 rounded-full"
+                style={{ background: "hsla(142,71%,45%,0.12)", color: GREEN }}>
+                {p.tickers.length} stock{p.tickers.length !== 1 ? "s" : ""}
+              </span>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {p.tickers.map(t => (
+                <span key={t} className="text-xs px-2 py-0.5 rounded-md font-medium"
+                  style={{ background: "hsl(215,25%,9%)", border: `1px solid ${BORDER}`, color: MUTED }}>
+                  {t}
+                </span>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 flex-shrink-0 mt-0.5">
+            <button
+              onClick={() => router.push("/dashboard/diversify")}
+              className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg transition-colors"
+              style={{ background: "hsla(217,91%,60%,0.12)", color: BLUE, border: "1px solid hsla(217,91%,60%,0.3)" }}
+              onMouseEnter={e => (e.currentTarget.style.background = "hsla(217,91%,60%,0.2)")}
+              onMouseLeave={e => (e.currentTarget.style.background = "hsla(217,91%,60%,0.12)")}>
+              Diversify <ArrowRight className="w-3 h-3" />
+            </button>
+            <button
+              onClick={() => onDelete(p.name)}
+              className="p-1.5 rounded-lg transition-colors hover:opacity-70"
+              style={{ color: "hsl(0,84%,60%)" }}
+              aria-label={`Delete ${p.name}`}>
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+      ))}
+
+      {/* Create portfolio form */}
+      <div className="px-6 py-5" style={{ borderTop: `1px solid ${BORDER}`, background: "hsl(215,25%,9%)" }}>
+        <p className="text-xs font-semibold mb-3" style={{ color: MUTED }}>
+          CREATE NEW PORTFOLIO
+        </p>
+
+        {/* Name field */}
+        <input
+          type="text"
+          value={name}
+          onChange={e => setName(e.target.value)}
+          placeholder="Portfolio name (e.g. My Growth Picks)"
+          className="w-full px-3 py-2 rounded-lg text-sm outline-none mb-3 transition-all"
+          style={{ background: "hsl(215,25%,7%)", border: "1px solid hsl(215,20%,22%)", color: "hsl(210,40%,92%)" }}
+          onFocus={e => (e.currentTarget.style.borderColor = BLUE)}
+          onBlur={e  => (e.currentTarget.style.borderColor = "hsl(215,20%,22%)")}
+        />
+
+        {/* Ticker chip input */}
+        <div
+          className="flex flex-wrap gap-2 min-h-10 p-2 rounded-lg cursor-text mb-3"
+          style={{ background: "hsl(215,25%,7%)", border: "1px solid hsl(215,20%,22%)" }}
+          onClick={e => (e.currentTarget.querySelector("input") as HTMLInputElement)?.focus()}>
+          {tickers.map(t => (
+            <span key={t} className="flex items-center gap-1 px-2.5 py-0.5 rounded-md text-xs font-semibold"
+              style={{ background: "hsla(217,91%,60%,0.15)", color: BLUE }}>
+              {t}
+              <button onClick={() => setTickers(prev => prev.filter(x => x !== t))} className="hover:opacity-60 ml-0.5">
+                <X className="w-2.5 h-2.5" />
+              </button>
+            </span>
+          ))}
+          <input
+            value={tickerIn}
+            onChange={e => setTickerIn(e.target.value.toUpperCase())}
+            onKeyDown={handleKeyDown}
+            onBlur={() => { if (tickerIn.trim()) addTicker(tickerIn.trim()); }}
+            placeholder={tickers.length === 0 ? "Add tickers — AAPL, MSFT…" : ""}
+            className="flex-1 min-w-24 bg-transparent outline-none text-sm"
+            style={{ color: "hsl(210,40%,92%)" }}
+          />
+        </div>
+
+        {nameErr && (
+          <p className="text-xs mb-3" style={{ color: "hsl(0,84%,60%)" }}>{nameErr}</p>
+        )}
+
+        <button
+          onClick={handleSave}
+          disabled={saving}
+          className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold disabled:opacity-50 transition-opacity hover:opacity-80"
+          style={{ background: BLUE, color: "white" }}>
+          {saving
+            ? <><Loader2 className="w-4 h-4 animate-spin" /> Saving…</>
+            : <><Plus className="w-4 h-4" /> Save Portfolio</>}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function ProfilePage() {
-  const { user, savedStocks, toggleSave, trackClick, loading: authLoading, logout } = useAuth();
+  const { user, savedStocks, savedPortfolios, toggleSave, savePortfolio, deletePortfolio, trackClick, loading: authLoading, logout } = useAuth();
   const router = useRouter();
 
   const [liveData,       setLiveData]       = useState<StockSummary[]>([]);
@@ -248,9 +445,10 @@ export default function ProfilePage() {
           </div>
 
           {/* ── Stats ── */}
-          <div className="grid grid-cols-3 gap-4 mb-6">
+          <div className="grid grid-cols-4 gap-4 mb-6">
             {[
-              { label: "Saved Stocks", value: savedStocks.length.toString(), color: "hsl(217,91%,60%)" },
+              { label: "Saved Stocks", value: savedStocks.length.toString(),    color: "hsl(217,91%,60%)" },
+              { label: "My Portfolios",value: savedPortfolios.length.toString(), color: "hsl(142,71%,45%)" },
               { label: "Avg. Change",  value: avgChange, color: avgPositive ? "hsl(142,71%,45%)" : "hsl(0,84%,60%)" },
               { label: "Watchlist",    value: savedStocks.length > 0 ? "Active" : "Empty", color: "hsl(280,70%,65%)" },
             ].map(({ label, value, color }) => (
@@ -400,6 +598,13 @@ export default function ProfilePage() {
               </>
             )}
           </div>
+          {/* ── My Portfolios ── */}
+          <PortfolioManager
+            portfolios={savedPortfolios}
+            onSave={savePortfolio}
+            onDelete={deletePortfolio}
+          />
+
         </div>
       </main>
     </div>
