@@ -1,5 +1,6 @@
 // frontend/src/app/dashboard/analysis/page.tsx
 "use client";
+import MonteCarlo from "@/components/ui/MonteCarlo";
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import Sidebar from "@/components/ui/Sidebar";
 import { ChevronDown, Loader2, AlertTriangle, Search, Info } from "lucide-react";
@@ -1438,6 +1439,9 @@ export default function AnalysisPage() {
 
           {/* ── Network Graph (owns its own analysis scope) ── */}
           <LeadLagNetwork />
+
+          {/* ── Monte Carlo Lab ── */}
+          <MonteCarlo stocks={stocks} stocksLoading={stocksLoading} />
 
         </div>
       </main>
