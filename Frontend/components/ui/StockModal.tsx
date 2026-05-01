@@ -205,7 +205,7 @@ function YoYChart({ symbol }: { symbol: string }) {
             <Tooltip
               contentStyle={{ background: "hsl(215,25%,13%)", border: `1px solid ${BORDER_M}`, borderRadius: 8 }}
               labelStyle={{ color: TEXT_SEC_M, fontSize: 11 }}
-              formatter={(v: number, name: string) => [`${v.toFixed(1)}`, name]}
+              formatter={(v, name) => [v != null ? `${(v as number).toFixed(1)}` : "", String(name)]}
             />
             <ReferenceLine y={100} stroke={BORDER_M} strokeDasharray="4 4" />
             {years.map((yr, i) => (
