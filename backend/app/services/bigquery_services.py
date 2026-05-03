@@ -1,8 +1,11 @@
 # backend/app/services/bigquery_services.py
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from google.cloud import bigquery
+
+logger = logging.getLogger(__name__)
 
 from app.core.bigquery import get_bq_client
 from app.core.config import get_settings
@@ -477,8 +480,8 @@ def get_network_data(
 
     try:
         rows = list(client.query(query_with_centrality, job_config=job_config).result())
-    except Exception:
-        # centrality_i / centrality_j columns not yet present — use fixed-size fallback
+    except Exception as e:
+        logger.warning("Network centrality query failed (%s), falling back to degree-ranked query", e)
         rows = list(client.query(query_no_centrality, job_config=job_config).result())
 
     # Build node map: ticker → {sector, max centrality}
