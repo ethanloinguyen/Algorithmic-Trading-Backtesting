@@ -28,6 +28,8 @@ origins = list(set(custom_origins + [
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
+    # Matches all Vercel preview deployments for this project automatically
+    allow_origin_regex=r"https://algorithmic-trading-backtesting[^.]*\.vercel\.app",
     allow_credentials=False,
     allow_methods=["GET", "POST"],
     allow_headers=["Content-Type"],
