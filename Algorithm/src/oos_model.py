@@ -25,11 +25,11 @@ import numpy as np
 import pandas as pd
 from scipy.stats import pearsonr
 
-from src.bq_io import (get_client, full_table, write_dataframe,
+from Algorithm.src.bq_io import (get_client, full_table, write_dataframe,
                        read_oos_strategy_returns)
-from src.config_loader import get_config
-from src.dcor_engine import dcor_at_lag
-from src.windows import get_oos_windows
+from Algorithm.src.config_loader import get_config
+from Algorithm.src.dcor_engine import dcor_at_lag
+from Algorithm.src.windows import get_oos_windows
 
 logger = logging.getLogger(__name__)
 
@@ -326,7 +326,7 @@ def compute_global_oos_dcor(pairs_df: pd.DataFrame) -> pd.DataFrame:
     if pairs_df.empty:
         return pd.DataFrame(columns=["ticker_i", "ticker_j", "oos_dcor"])
 
-    from src.windows import generate_rolling_windows, get_oos_window_for
+    from Algorithm.src.windows import generate_rolling_windows, get_oos_window_for
 
     client = get_client()
 

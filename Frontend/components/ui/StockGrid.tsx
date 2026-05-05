@@ -66,8 +66,6 @@ export default function StockGrid() {
           setLoading(false);
           setFromCache(false);
           setError(null);
-          // Update Firestore cache in the background
-          setCachedSummaries(fresh);
         }
       } catch (err: unknown) {
         if (!cancelled) {

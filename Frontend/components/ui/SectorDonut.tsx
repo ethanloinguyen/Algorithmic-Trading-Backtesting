@@ -126,7 +126,7 @@ export default function SectorDonut({currentSectors,previewSector,previewTicker}
         <div className="mt-4 px-3 py-2 rounded-lg flex items-center gap-2"
           style={{background:"hsla(142,71%,45%,0.1)",border:"1px solid hsla(142,71%,45%,0.25)"}}>
           <span className="text-xs" style={{color:"hsl(142,71%,45%)"}}>
-            ✦ Adds <strong>{[...newSectors].join(", ")}</strong> — a sector not currently in your portfolio
+            ✦ Adds <strong>{Array.from(newSectors).join(", ")}</strong> — a sector not currently in your portfolio
           </span>
         </div>
       )}

@@ -32,8 +32,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from google.cloud import bigquery
 
-from src.bq_io import get_client, full_table, read_model_weights
-from src.config_loader import load_config, get_config
+from Algorithm.src.bq_io import get_client, full_table, read_model_weights
+from Algorithm.src.config_loader import load_config, get_config
 
 # ── App Setup ─────────────────────────────────────────────────────────────────
 logging.basicConfig(level=logging.INFO)
@@ -378,7 +378,7 @@ def get_cumulative_return(
     mc_cfg = get_config()["monte_carlo"]
     conf_levels = mc_cfg["confidence_levels"]
 
-    from src.monte_carlo import block_bootstrap_returns, compute_cumulative_paths, compute_cone_percentiles
+    from Algorithm.src.monte_carlo import block_bootstrap_returns, compute_cumulative_paths, compute_cone_percentiles
     import numpy as np
     rng = np.random.default_rng(42)
     sim_returns = block_bootstrap_returns(returns, 1000, mc_cfg["block_size"], len(returns), rng)

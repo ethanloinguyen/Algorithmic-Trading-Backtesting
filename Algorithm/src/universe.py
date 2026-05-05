@@ -24,8 +24,8 @@ from typing import List, Optional, Tuple
 import numpy as np
 import pandas as pd
 
-from src.bq_io import get_client, full_table, write_dataframe
-from src.config_loader import get_config
+from Algorithm.src.bq_io import get_client, full_table, write_dataframe
+from Algorithm.src.config_loader import get_config
 
 logger = logging.getLogger(__name__)
 

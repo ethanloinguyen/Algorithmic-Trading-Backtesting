@@ -18,7 +18,7 @@ from typing import Tuple
 import numpy as np
 import pandas as pd
 
-from src.config_loader import get_config
+from Algorithm.src.config_loader import get_config
 
 logger = logging.getLogger(__name__)
 
@@ -144,7 +144,7 @@ def apply_fdr_pipeline(window_start, raw_df: pd.DataFrame) -> pd.DataFrame:
     """
     Convenience wrapper: run FDR on raw pair results and return filtered DataFrame.
     """
-    from src.bq_io import write_dataframe
+    from Algorithm.src.bq_io import write_dataframe
     filtered = apply_fdr_to_window(raw_df, window_start)
     if not filtered.empty:
         write_dataframe(filtered, "pair_results_filtered")

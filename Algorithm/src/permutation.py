@@ -18,8 +18,8 @@ from typing import Tuple
 
 import numpy as np
 
-from src.config_loader import get_config
-from src.dcor_engine import dcor_at_lag
+from Algorithm.src.config_loader import get_config
+from Algorithm.src.dcor_engine import dcor_at_lag
 
 logger = logging.getLogger(__name__)
 
@@ -162,7 +162,7 @@ def test_pair_all_lags(
     -------
     dict: {lag: {"dcor": float, "p_value": float, "permutations_used": int}}
     """
-    from src.dcor_engine import dcor_at_lag
+    from Algorithm.src.dcor_engine import dcor_at_lag
     if rng is None:
         rng = np.random.default_rng()
 

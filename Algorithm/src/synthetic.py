@@ -30,11 +30,11 @@ from typing import Dict, Tuple
 import numpy as np
 import pandas as pd
 
-from src.bq_io import log_synthetic_health
-from src.config_loader import get_config
-from src.dcor_engine import dcor_at_lag, compute_sharpness, dcor_profile
-from src.fdr import benjamini_hochberg
-from src.permutation import test_pair_all_lags
+from Algorithm.src.bq_io import log_synthetic_health
+from Algorithm.src.config_loader import get_config
+from Algorithm.src.dcor_engine import dcor_at_lag, compute_sharpness, dcor_profile
+from Algorithm.src.fdr import benjamini_hochberg
+from Algorithm.src.permutation import test_pair_all_lags
 
 logger = logging.getLogger(__name__)
 
