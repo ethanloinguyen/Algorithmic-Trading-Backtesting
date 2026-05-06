@@ -348,7 +348,7 @@ function PriceChart({ symbol }: { symbol: string }) {
               contentStyle={{ background: "hsl(215,25%,13%)", border: `1px solid ${BORDER}`, borderRadius: 8 }}
               labelStyle={{ color: TEXT_SEC, fontSize: 11 }}
               itemStyle={{ fontSize: 12 }}
-              formatter={(v: number, name: string) => [`${v.toFixed(1)}`, name]}
+              formatter={(v, name) => [v != null ? `${(v as number).toFixed(1)}` : "", String(name)]}
             />
             <ReferenceLine y={100} stroke={BORDER} strokeDasharray="4 4" />
             {years.map((yr, i) => (
