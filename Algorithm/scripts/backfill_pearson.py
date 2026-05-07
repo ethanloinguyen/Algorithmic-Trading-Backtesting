@@ -62,7 +62,7 @@ def _load_significant_pairs(client, cfg: dict, window_start_filter: date = None,
 
     Returns DataFrame with: window_start, ticker_i, ticker_j, lag (best_lag)
     """
-    from src.bq_io import full_table
+    from Algorithm.src.bq_io import full_table
 
     window_clause = f"AND window_start = '{window_start_filter}'" if window_start_filter else ""
     pearson_clause = "" if force else "AND (pearson_corr IS NULL)"
@@ -86,7 +86,7 @@ def _load_residuals_for_window(client, window_start: date, tickers: list) -> pd.
     Load training-window residuals for a set of tickers.
     Uses the same window_start filter as the original dCor computation.
     """
-    from src.bq_io import full_table
+    from Algorithm.src.bq_io import full_table
 
     ticker_list = ", ".join(f"'{t}'" for t in tickers)
     query = f"""
@@ -113,7 +113,7 @@ def _compute_pearson_for_window(
     Suitable for updating both pair_results_raw (all lags) and
     pair_results_filtered (best_lag only, subset of this result).
     """
-    from src.dcor_engine import pearson_at_lag
+    from Algorithm.src.dcor_engine import pearson_at_lag
 
     records = []
     window_start = sig_pairs["window_start"].iloc[0]
@@ -159,8 +159,8 @@ def _process_window_worker(args: tuple):
     """
     window_start, window_pairs_records, lags = args
 
-    from src.bq_io import get_client
-    from src.config_loader import load_config
+    from Algorithm.src.bq_io import get_client
+    from Algorithm.src.config_loader import load_config
 
     load_config()
     client = get_client()
@@ -263,8 +263,8 @@ def run_backfill(
     force: bool = False,
     workers: int = 1,
 ) -> None:
-    from src.bq_io import get_client, full_table
-    from src.config_loader import load_config, get_config
+    from Algorithm.src.bq_io import get_client, full_table
+    from Algorithm.src.config_loader import load_config, get_config
 
     load_config()
     cfg = get_config()

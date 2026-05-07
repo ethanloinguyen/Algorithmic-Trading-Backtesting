@@ -23,11 +23,11 @@ import pandas as pd
 from scipy.optimize import curve_fit
 from scipy.stats import pearsonr
 
-from src.bq_io import (read_all_pair_results_filtered, write_dataframe,
+from Algorithm.src.bq_io import (read_all_pair_results_filtered, write_dataframe,
                        get_client, full_table)
-from src.config_loader import get_config
-from src.dcor_engine import compute_sharpness
-from src.windows import generate_rolling_windows
+from Algorithm.src.config_loader import get_config
+from Algorithm.src.dcor_engine import compute_sharpness
+from Algorithm.src.windows import generate_rolling_windows
 
 logger = logging.getLogger(__name__)
 

@@ -28,8 +28,8 @@ from typing import List
 from google.cloud import bigquery
 from google.cloud.exceptions import Conflict
 
-from src.bq_io import get_client, get_bq_dataset
-from src.config_loader import get_config
+from Algorithm.src.bq_io import get_client, get_bq_dataset
+from Algorithm.src.config_loader import get_config
 
 logger = logging.getLogger(__name__)
 

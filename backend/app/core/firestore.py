@@ -21,11 +21,11 @@ from app.core.config import get_settings
 def get_fs_client() -> firestore.Client:
     settings = get_settings()
 
-    # Ensure the service account key is on the env before constructing the client
-    os.environ.setdefault(
-        "GOOGLE_APPLICATION_CREDENTIALS",
-        settings.google_application_credentials,
-    )
+    # In Cloud Run, ADC provides credentials via the attached service account.
+    # Locally, fall back to the key file if it exists.
+    creds_file = settings.google_application_credentials
+    if creds_file and os.path.isfile(creds_file):
+        os.environ.setdefault("GOOGLE_APPLICATION_CREDENTIALS", creds_file)
 
     # Pass database explicitly — without this the client targets "(default)"
     # which does not exist in this project, causing "Database not found" errors.

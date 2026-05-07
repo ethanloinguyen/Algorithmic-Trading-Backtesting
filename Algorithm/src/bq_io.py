@@ -24,7 +24,7 @@ from google.cloud import bigquery
 from google.cloud.exceptions import NotFound
 from google.api_core.exceptions import GoogleAPICallError, ResourceExhausted
 
-from src.config_loader import get_config, get_gcp_project, get_bq_dataset
+from Algorithm.src.config_loader import get_config, get_gcp_project, get_bq_dataset
 
 logger = logging.getLogger(__name__)
 

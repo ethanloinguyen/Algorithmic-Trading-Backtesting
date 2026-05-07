@@ -9,12 +9,12 @@ from app.core.config import get_settings
 def get_bq_client() -> bigquery.Client:
     """
     Returns a cached BigQuery client.
-    Authentication is handled via GOOGLE_APPLICATION_CREDENTIALS env var,
-    which points to the service account JSON key file.
+    In Cloud Run, credentials are provided automatically via the attached
+    service account (Application Default Credentials). Locally, set
+    GOOGLE_APPLICATION_CREDENTIALS to point to a service account key file.
     """
     settings = get_settings()
-    os.environ.setdefault(
-        "GOOGLE_APPLICATION_CREDENTIALS",
-        settings.google_application_credentials,
-    )
+    creds_file = settings.google_application_credentials
+    if creds_file and os.path.isfile(creds_file):
+        os.environ.setdefault("GOOGLE_APPLICATION_CREDENTIALS", creds_file)
     return bigquery.Client(project=settings.gcp_project_id)

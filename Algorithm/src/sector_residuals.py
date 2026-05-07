@@ -34,8 +34,8 @@ from typing import List
 import numpy as np
 import pandas as pd
 
-from src.bq_io import get_client, full_table, read_daily_prices, read_ff_factors, write_residuals
-from src.config_loader import get_config
+from Algorithm.src.bq_io import get_client, full_table, read_daily_prices, read_ff_factors, write_residuals
+from Algorithm.src.config_loader import get_config
 
 logger = logging.getLogger(__name__)
 
