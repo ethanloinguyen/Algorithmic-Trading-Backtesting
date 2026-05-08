@@ -281,6 +281,7 @@ def _quality_picks_scores_schema() -> List[bigquery.SchemaField]:
         # Raw inputs kept for traceability / on-the-fly composite assembly
         bigquery.SchemaField("momentum_6m_return",        "FLOAT64"),  # raw 6-month return
         bigquery.SchemaField("centrality_raw",            "FLOAT64"),  # raw eigenvector value
+        bigquery.SchemaField("annualized_vol",            "FLOAT64"),  # 1-year annualised daily-return std
         bigquery.SchemaField("updated_at",                "DATE",    mode="REQUIRED"),
     ]
 
