@@ -39,6 +39,20 @@ export interface Recommendation {
   reasoning: string;
 }
 
+/** Quality Picks — stock scored on five portfolio-aware quality dimensions */
+export interface QualityRecommendation {
+  ticker:                          string;
+  sector:                          string;
+  centrality:                      number;
+  composite_score:                 number;
+  momentum_score:                  number;
+  fundamental_quality_score:       number;
+  sector_diversity_score:          number;
+  volatility_compatibility_score:  number;
+  centrality_score:                number;
+  reasoning:                       string;
+}
+
 /** Group B — stock with ZERO detected relationship to any of your holdings */
 export interface IndependentRecommendation {
   ticker:           string;
@@ -83,6 +97,7 @@ export interface PortfolioAnalysisResponse {
   overlaps:                    OverlapResult[];
   signal_recommendations:      Recommendation[];
   independent_recommendations: IndependentRecommendation[];
+  quality_picks:               QualityRecommendation[];
   /** Sector for each known holding — always populated regardless of overlaps */
   holdings_sectors:            Record<string, string>;
 }

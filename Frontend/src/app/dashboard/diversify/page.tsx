@@ -11,12 +11,13 @@ import {
   type OverlapResult,
   type Recommendation,
   type IndependentRecommendation,
+  type QualityRecommendation,
   type AnalysisMode,
 } from "@/src/app/lib/api";
 import {
   AlertTriangle, TrendingUp, Plus, X,
   ChevronDown, ChevronUp, Loader2, Sparkles, ArrowRight,
-  ShieldAlert, BarChart3, Unlink, Info, Zap, Globe, Link2, Layers, Timer,
+  ShieldAlert, BarChart3, Unlink, Info, Globe, Layers, Activity,
 } from "lucide-react";
 
 // ── Design tokens ─────────────────────────────────────────────────────────────
@@ -58,37 +59,37 @@ const PRESETS = [
   { label: "Healthcare", tickers: ["JNJ","UNH","MRK","PFE","ABBV"] },
 ];
 
-// ── Factor explanations — 5 factors ──────────────────────────────────────────
+// ── Factor explanations — 5 quality factors ──────────────────────────────────
 const FACTOR_EXPLANATIONS = [
   {
-    label: "Signal Strength", weight: "40%", color: BLUE, Icon: Zap,
-    what: "How statistically robust and economically meaningful the lead-lag relationship is between the candidate stock and your holdings.",
-    how: "Frequency-weighted mean signal strength across all connections — pairs that appeared consistently across more 15-year rolling windows contribute proportionally more weight.",
-    why: "A high signal score means the relationship is not a statistical fluke — it appeared reliably over time and was historically exploitable.",
+    label: "Momentum", weight: "35%", color: BLUE, Icon: TrendingUp,
+    what: "6-month price return, rank-normalised across the filtered universe of ~800 quality stocks.",
+    how: "Latest close divided by the closing price closest to 6 months ago (±7-day window), then percentile-ranked 0–100 across all stocks.",
+    why: "Momentum is one of the most empirically validated equity factors. A high score means the stock has been outperforming peers recently — a signal of positive market sentiment and trend continuation.",
   },
   {
-    label: "Signal Durability", weight: "15%", color: "hsl(195,80%,50%)", Icon: Timer,
-    what: "How long the lead-lag signal persists before decaying — the half-life of the relationship.",
-    how: "The best (longest) half-life among all connections this candidate has with your holdings, normalized 0–100 with a 252-day cap.",
-    why: "A signal that decays in 20 days gives very little time to act. One persisting 150+ days is structurally more reliable for portfolio construction.",
+    label: "Fundamental Quality", weight: "25%", color: GREEN, Icon: BarChart3,
+    what: "A blend of valuation (P/E ratio vs. sector peers) and size (log market cap), capturing 'quality at a reasonable price'.",
+    how: "50% from within-sector P/E rank (lower P/E = higher score, capped 0–100) and 50% from log market-cap rank. Missing P/E defaults to the sector median.",
+    why: "Fundamentally strong, reasonably valued companies have historically shown better long-term risk-adjusted returns than expensive or low-quality peers.",
   },
   {
-    label: "Portfolio Coverage", weight: "15%", color: AMBER, Icon: Link2,
-    what: "How many of your existing holdings this stock has a detected relationship with.",
-    how: "Count of your holdings that appear in a significant lead-lag pair with this candidate, divided by the maximum coverage across all candidates.",
-    why: "A stock that connects to four of your holdings is more efficient than one connecting to one — you gain informational coverage across more positions.",
+    label: "Sector Diversity", weight: "20%", color: AMBER, Icon: Layers,
+    what: "How much new sector exposure this stock adds relative to your current portfolio sector distribution.",
+    how: "Inverted portfolio sector weight: a stock in a sector you have 0% exposure to scores 100; a stock in your most concentrated sector scores proportionally lower.",
+    why: "Different sectors are driven by different macro factors (rates, oil, consumer spending). Adding an underrepresented sector reduces the chance a single economic event affects your whole portfolio.",
   },
   {
-    label: "Sector Diversity", weight: "20%", color: GREEN, Icon: Layers,
-    what: "How much new sector exposure this stock adds relative to what you already own.",
-    how: "A full bonus (100) if your portfolio has zero stocks in this sector. The bonus scales down proportionally as your sector concentration increases.",
-    why: "Different sectors respond to different economic drivers. Adding an underrepresented sector reduces the risk that a single macro event affects your entire portfolio.",
+    label: "Volatility Fit", weight: "10%", color: "hsl(195,80%,50%)", Icon: Activity,
+    what: "How closely this stock's annualised volatility matches the average volatility profile of your existing portfolio.",
+    how: "Absolute difference between candidate annualised vol and portfolio average vol, rank-normalised — smallest difference scores 100.",
+    why: "Adding a stock whose risk profile is compatible with your existing holdings avoids unintended volatility spikes. It's not about avoiding risk — it's about adding the type of risk you already understand.",
   },
   {
     label: "Market Centrality", weight: "10%", color: PURPLE, Icon: Globe,
     what: "How connected this stock is across the entire 2000-stock market network, not just to your holdings.",
-    how: "Normalized eigenvector centrality — stocks that are highly connected to other highly connected stocks score highest. Gracefully zeroed if centrality data is unavailable.",
-    why: "Central stocks tend to transmit information efficiently and are more likely to be reliable signal sources.",
+    how: "Eigenvector centrality from the full lead-lag network, rank-normalised 0–100. Gracefully zeroed if centrality data is unavailable.",
+    why: "Central stocks transmit and receive information efficiently across the market. They tend to be more liquid, more widely followed, and more reliably priced.",
   },
 ];
 
@@ -115,13 +116,6 @@ function SectorTag({ sector }: { sector: string }) {
   );
 }
 
-function DirectionTag({ direction }: { direction: string }) {
-  if (direction === "leads_your_holdings")
-    return <span className="text-xs px-2 py-0.5 rounded-full" style={{ background: GREEN_DIM, color: GREEN }}>Leads your stocks</span>;
-  if (direction === "follows_your_holdings")
-    return <span className="text-xs px-2 py-0.5 rounded-full" style={{ background: BLUE_DIM, color: BLUE }}>Follows your stocks</span>;
-  return <span className="text-xs px-2 py-0.5 rounded-full" style={{ background: "hsla(38,92%,50%,0.15)", color: AMBER }}>Bidirectional</span>;
-}
 
 function SectionHeader({ icon, label, count, color, dimColor, subtitle }: {
   icon: React.ReactNode; label: string; count: number;
@@ -391,6 +385,7 @@ export default function DiversifyPage() {
     overlaps:                    OverlapResult[];
     signal_recommendations:      Recommendation[];
     independent_recommendations: IndependentRecommendation[];
+    quality_picks:               QualityRecommendation[];
     holdings_sectors:            Record<string, string>;
   } | null>(null);
   const [activeSpiderIdx, setActiveSpiderIdx] = useState<number | null>(0);
@@ -398,7 +393,7 @@ export default function DiversifyPage() {
   const [modalStock,      setModalStock]      = useState<Stock | null>(null);
 
   const hoveredTicker = activeSpiderIdx !== null
-    ? (result?.signal_recommendations[activeSpiderIdx]?.ticker ?? null)
+    ? (result?.quality_picks[activeSpiderIdx]?.ticker ?? null)
     : null;
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -414,7 +409,7 @@ export default function DiversifyPage() {
     return dist;
   })();
 
-  const hoveredRec = result?.signal_recommendations.find(r => r.ticker === hoveredTicker) ?? null;
+  const hoveredRec = result?.quality_picks.find(r => r.ticker === hoveredTicker) ?? null;
 
   const addTicker = (raw: string) => {
     const parts = raw.toUpperCase().split(/[\s,]+/).filter(Boolean);
@@ -448,6 +443,7 @@ export default function DiversifyPage() {
         ...data.tickers_analyzed,
         ...data.signal_recommendations.map(r => r.ticker),
         ...data.independent_recommendations.map(r => r.ticker),
+        ...data.quality_picks.map(r => r.ticker),
       ];
       const uniqueTickers = [...new Set(allTickers)];
       if (uniqueTickers.length > 0) {
@@ -485,7 +481,7 @@ export default function DiversifyPage() {
     });
   };
 
-  const signalRecs = result?.signal_recommendations ?? [];
+  const qualityPicks = result?.quality_picks ?? [];
 
   return (
     <div className="min-h-screen" style={{ background: BG }}>
@@ -629,7 +625,7 @@ export default function DiversifyPage() {
                 {[
                   { label: "Analyzed",     value: result.tickers_analyzed.length,            color: BLUE,   icon: <BarChart3 className="w-4 h-4" /> },
                   { label: "Overlaps",     value: result.overlaps.length,                    color: result.overlaps.length > 0 ? AMBER : GREEN, icon: <ShieldAlert className="w-4 h-4" /> },
-                  { label: "Signal Picks", value: result.signal_recommendations.length,      color: BLUE,   icon: <Sparkles className="w-4 h-4" /> },
+                  { label: "Quality Picks", value: result.quality_picks.length,               color: BLUE,   icon: <Sparkles className="w-4 h-4" /> },
                   { label: "Pure Picks",   value: result.independent_recommendations.length, color: PURPLE, icon: <Unlink className="w-4 h-4" /> },
                 ].map(({ label, value, color, icon }) => (
                   <div key={label} className="rounded-xl p-4" style={CARD}>
@@ -668,18 +664,18 @@ export default function DiversifyPage() {
                 )}
               </section>
 
-              {/* Signal-connected recommendations */}
-              {signalRecs.length > 0 && (
+              {/* Quality Picks */}
+              {qualityPicks.length > 0 && (
                 <section className="mb-8">
                   <SectionHeader
                     icon={<Sparkles className="w-4 h-4" />}
-                    label="Signal-Connected Recommendations" count={signalRecs.length}
+                    label="Quality Picks" count={qualityPicks.length}
                     color={BLUE} dimColor={BLUE_DIM}
-                    subtitle="Stocks with detected lead-lag relationships to your holdings — click a ticker on the chart or in the list to explore its profile"
+                    subtitle="Top stocks ranked by five portfolio-aware quality factors — click a ticker on the chart or in the legend to explore its full profile"
                   />
                   <div className="mb-4">
                     <SpiderChart
-                      recommendations={signalRecs}
+                      recommendations={qualityPicks}
                       activeIdx={activeSpiderIdx}
                       onActiveChange={setActiveSpiderIdx}
                       onTickerClick={handleTickerClick}
