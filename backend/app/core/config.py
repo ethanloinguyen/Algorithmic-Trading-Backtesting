@@ -41,6 +41,11 @@ class Settings(BaseSettings):
     def fq_ticker_metadata(self) -> str:
         return f"`{self.gcp_project_id}.{self.bq_dataset}.{self.bq_stocks_table}`"
 
+    @property
+    def fq_quality_picks(self) -> str:
+        """Fully-qualified path to the nightly quality_picks_scores table."""
+        return f"`{self.gcp_project_id}.{self.bq_dataset}.quality_picks_scores`"
+
 
 @lru_cache
 def get_settings() -> Settings:
