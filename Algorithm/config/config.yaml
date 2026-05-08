@@ -149,6 +149,7 @@ tables:
   final_network: "final_network"
   synthetic_health_log: "synthetic_health_log"
   pipeline_run_log: "pipeline_run_log"
+  quality_picks_scores: "quality_picks_scores"
 
 # ── API ───────────────────────────────────────────────────────
 api:
