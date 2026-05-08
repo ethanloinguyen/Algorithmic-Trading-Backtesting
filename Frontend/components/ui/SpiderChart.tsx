@@ -123,7 +123,7 @@ export default function SpiderChart({
       <div className="mb-5">
         <p className="text-sm font-semibold" style={{ color: TEXT_PRI }}>Score Comparison</p>
         <p className="text-xs mt-0.5" style={{ color: TEXT_SEC }}>
-          Click a ticker below to highlight its profile — unselected stocks show as outlines only
+          Click a ticker below to highlight its profile and composite score breakdown
         </p>
       </div>
 
@@ -228,7 +228,7 @@ export default function SpiderChart({
           {/* ── Ranked legend below the chart ── */}
           <div className="mt-3">
             <p className="text-xs font-medium mb-2" style={{ color: "hsl(215,15%,40%)" }}>
-              Ranked by composite score — click to inspect
+              Top 10 stock recommendations ranked by composite score
             </p>
             <div className="grid grid-cols-2 gap-1.5">
               {recs.map((rec, i) => (
