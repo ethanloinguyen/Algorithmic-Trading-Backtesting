@@ -212,12 +212,16 @@ export default function DashboardPage() {
   // Sector-filtered base set
   const sectorStocks = filterBySector(stocks, selectedSector);
 
-  // Filtered watchlist (sector + search)
-  const watchlist = sectorStocks.filter(
+  // Filtered watchlist (sector + search), saved stocks pinned to top
+  const watchlistFiltered = sectorStocks.filter(
     (s) =>
       s.symbol.toLowerCase().includes(search.toLowerCase()) ||
       s.name.toLowerCase().includes(search.toLowerCase()),
   );
+  const savedInList    = watchlistFiltered.filter((s) => isSaved(s.symbol));
+  const unsavedInList  = watchlistFiltered.filter((s) => !isSaved(s.symbol));
+  const watchlist      = [...savedInList, ...unsavedInList];
+  const savedCount     = savedInList.length;
 
   // Gainers / Losers (sector-scoped)
   const sorted = [...sectorStocks].sort((a, b) => {
@@ -316,19 +320,45 @@ export default function DashboardPage() {
               {/* Rows — NO sparklines */}
               {dataLoading
                 ? Array.from({ length: 8 }).map((_, i) => <SkeletonRow key={i} />)
-                : watchlist.map((stock) => {
+                : (
+                  <>
+                  {savedCount > 0 && (
+                    <div
+                      className="flex items-center gap-2 px-5 py-1.5"
+                      style={{ borderTop: "1px solid hsl(215, 20%, 16%)", background: "hsl(215, 25%, 9%)" }}
+                    >
+                      <Star className="w-3 h-3" style={{ fill: "hsl(48, 96%, 53%)", color: "hsl(48, 96%, 53%)" }} />
+                      <span className="text-xs font-medium" style={{ color: "hsl(48, 96%, 53%)" }}>
+                        Saved
+                      </span>
+                    </div>
+                  )}
+                  {watchlist.map((stock, idx) => {
                     const saved = isSaved(stock.symbol);
+                    // Divider label that appears just before the first unsaved row
+                    const showDivider = savedCount > 0 && idx === savedCount;
                     return (
+                      <div key={stock.symbol}>
+                        {showDivider && (
+                          <div
+                            className="flex items-center gap-2 px-5 py-1.5"
+                            style={{ borderTop: "1px solid hsl(215, 20%, 20%)", background: "hsl(215, 25%, 9%)" }}
+                          >
+                            <span className="text-xs font-medium" style={{ color: "hsl(215, 15%, 38%)" }}>
+                              All stocks
+                            </span>
+                          </div>
+                        )}
                       <div
-                        key={stock.symbol}
                         onClick={() => handleRowClick(stock)}
                         className="grid px-5 py-3.5 items-center cursor-pointer transition-colors"
                         style={{
                           gridTemplateColumns: "1fr 1fr 1fr 1fr 36px",
                           borderTop:           "1px solid hsl(215, 20%, 16%)",
+                          background: saved ? "hsla(48, 96%, 53%, 0.03)" : "transparent",
                         }}
                         onMouseEnter={(e) => (e.currentTarget.style.background = "hsl(215, 25%, 14%)")}
-                        onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+                        onMouseLeave={(e) => (e.currentTarget.style.background = saved ? "hsla(48, 96%, 53%, 0.03)" : "transparent")}
                       >
                         {/* Ticker + company name */}
                         <div className="flex flex-col min-w-0">
@@ -388,8 +418,11 @@ export default function DashboardPage() {
                           </button>
                         </div>
                       </div>
+                      </div>
                     );
                   })}
+                  </>
+                )}
             </div>
 
             {/* Right column */}

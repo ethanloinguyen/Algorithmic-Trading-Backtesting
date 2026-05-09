@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import {
   TrendingUp, Star, User, Mail, LogOut, Loader2, BarChart2,
   LayoutDashboard, LineChart, Grid3X3, ChevronDown, Layers,
+  FolderPlus, Trash2, X, Plus, Briefcase,
 } from "lucide-react";
 import { useAuth } from "@/src/app/context/AuthContext";
 import { fetchStockSummaries, type StockSummary } from "@/src/app/lib/api";
@@ -146,13 +147,20 @@ function SectorDropdown({
 }
 
 export default function ProfilePage() {
-  const { user, savedStocks, toggleSave, trackClick, loading: authLoading, logout } = useAuth();
+  const { user, savedStocks, toggleSave, trackClick, loading: authLoading, logout, customPortfolios, addPortfolio, removePortfolio } = useAuth();
   const router = useRouter();
 
   const [liveData,       setLiveData]       = useState<StockSummary[]>([]);
   const [pricesLoading,  setPricesLoading]  = useState(false);
   const [pricesError,    setPricesError]    = useState(false);
   const [selectedSector, setSelectedSector] = useState(ALL_SECTORS);
+
+  // Custom portfolio form state
+  const [portfolioName,    setPortfolioName]    = useState("");
+  const [portfolioTickers, setPortfolioTickers] = useState<string[]>([]);
+  const [portfolioInput,   setPortfolioInput]   = useState("");
+  const [savingPortfolio,  setSavingPortfolio]  = useState(false);
+  const portfolioInputRef = useRef<HTMLInputElement>(null);
 
   // Redirect unauthenticated
   useEffect(() => {
@@ -400,6 +408,189 @@ export default function ProfilePage() {
               </>
             )}
           </div>
+
+          {/* ── Custom Portfolios ── */}
+          <div className="mt-6">
+            <div className="flex items-center gap-2 mb-4">
+              <Briefcase className="w-4 h-4" style={{ color: "hsl(217,91%,60%)" }} />
+              <h2 className="text-base font-semibold" style={{ color: "hsl(210,40%,92%)" }}>
+                Custom Portfolios
+              </h2>
+              <span
+                className="text-xs px-2 py-0.5 rounded-full"
+                style={{ background: "hsla(217,91%,60%,0.15)", color: "hsl(217,91%,70%)" }}
+              >
+                {customPortfolios.length} saved
+              </span>
+            </div>
+            <p className="text-xs mb-4" style={{ color: "hsl(215,15%,45%)" }}>
+              Create named portfolios and they&apos;ll appear as presets on the Diversify page.
+            </p>
+
+            {/* Existing portfolios */}
+            {customPortfolios.length > 0 && (
+              <div className="space-y-2 mb-5">
+                {customPortfolios.map((portfolio) => (
+                  <div
+                    key={portfolio.id}
+                    className="rounded-xl px-5 py-4 flex items-center justify-between gap-4"
+                    style={{ background: "hsl(215,25%,11%)", border: "1px solid hsl(215,20%,18%)" }}
+                  >
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-semibold mb-1" style={{ color: "hsl(210,40%,92%)" }}>
+                        {portfolio.name}
+                      </p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {portfolio.tickers.map((t) => (
+                          <span
+                            key={t}
+                            className="text-xs px-2 py-0.5 rounded-md font-semibold"
+                            style={{ background: "hsla(217,91%,60%,0.15)", color: "hsl(217,91%,70%)" }}
+                          >
+                            {t}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => removePortfolio(portfolio.id)}
+                      className="p-2 rounded-lg transition-all hover:opacity-70 flex-shrink-0"
+                      style={{ color: "hsl(0,84%,60%)", background: "hsla(0,84%,60%,0.1)" }}
+                      aria-label="Delete portfolio"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Create new portfolio form */}
+            <div className="rounded-xl p-5" style={{ background: "hsl(215,25%,11%)", border: "1px solid hsl(215,20%,18%)" }}>
+              <p className="text-xs font-medium mb-3" style={{ color: "hsl(215,15%,55%)" }}>
+                <FolderPlus className="w-3.5 h-3.5 inline mr-1.5 relative" style={{ top: -1 }} />
+                CREATE NEW PORTFOLIO
+              </p>
+
+              {/* Name input */}
+              <input
+                type="text"
+                placeholder="Portfolio name (e.g. Growth Picks)"
+                value={portfolioName}
+                onChange={(e) => setPortfolioName(e.target.value)}
+                className="w-full px-4 py-2 rounded-lg text-sm mb-3 outline-none transition-all"
+                style={{
+                  background: "hsl(215,25%,8%)",
+                  border: "1px solid hsl(215,20%,20%)",
+                  color: "hsl(210,40%,85%)",
+                }}
+                onFocus={(e) => (e.currentTarget.style.borderColor = "hsl(217,91%,60%)")}
+                onBlur={(e) => (e.currentTarget.style.borderColor = "hsl(215,20%,20%)")}
+              />
+
+              {/* Ticker tag input */}
+              <div
+                className="flex flex-wrap gap-2 min-h-10 p-2 rounded-lg cursor-text mb-3"
+                style={{ background: "hsl(215,25%,8%)", border: "1px solid hsl(215,20%,20%)" }}
+                onClick={() => portfolioInputRef.current?.focus()}
+              >
+                {portfolioTickers.map((t) => (
+                  <span
+                    key={t}
+                    className="flex items-center gap-1 px-2.5 py-0.5 rounded-md text-xs font-semibold"
+                    style={{ background: "hsla(217,91%,60%,0.15)", color: "hsl(217,91%,70%)" }}
+                  >
+                    {t}
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setPortfolioTickers(prev => prev.filter(x => x !== t)); }}
+                      className="hover:opacity-60 ml-0.5"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </span>
+                ))}
+                <input
+                  ref={portfolioInputRef}
+                  value={portfolioInput}
+                  onChange={(e) => setPortfolioInput(e.target.value.toUpperCase())}
+                  onKeyDown={(e) => {
+                    if (["Enter", ",", " ", "Tab"].includes(e.key)) {
+                      e.preventDefault();
+                      const val = portfolioInput.trim();
+                      if (val && !portfolioTickers.includes(val) && val.length <= 10) {
+                        setPortfolioTickers(prev => [...prev, val]);
+                      }
+                      setPortfolioInput("");
+                    }
+                    if (e.key === "Backspace" && !portfolioInput && portfolioTickers.length) {
+                      setPortfolioTickers(prev => prev.slice(0, -1));
+                    }
+                  }}
+                  onBlur={() => {
+                    const val = portfolioInput.trim();
+                    if (val && !portfolioTickers.includes(val) && val.length <= 10) {
+                      setPortfolioTickers(prev => [...prev, val]);
+                      setPortfolioInput("");
+                    }
+                  }}
+                  placeholder={portfolioTickers.length === 0 ? "Type tickers, press Enter or comma" : ""}
+                  className="flex-1 min-w-24 bg-transparent outline-none text-sm"
+                  style={{ color: "hsl(210,40%,85%)" }}
+                />
+              </div>
+
+              {/* Add from saved stocks shortcut */}
+              {savedStocks.length > 0 && (
+                <div className="flex items-center gap-2 mb-3 flex-wrap">
+                  <span className="text-xs" style={{ color: "hsl(215,15%,45%)" }}>Add from saved:</span>
+                  {savedStocks.slice(0, 8).map((s) => (
+                    <button
+                      key={s.symbol}
+                      onClick={() => {
+                        if (!portfolioTickers.includes(s.symbol)) {
+                          setPortfolioTickers(prev => [...prev, s.symbol]);
+                        }
+                      }}
+                      disabled={portfolioTickers.includes(s.symbol)}
+                      className="text-xs px-2 py-0.5 rounded-md transition-colors"
+                      style={{
+                        background: portfolioTickers.includes(s.symbol) ? "hsla(217,91%,60%,0.08)" : "hsl(215,25%,14%)",
+                        border: "1px solid hsl(215,20%,20%)",
+                        color: portfolioTickers.includes(s.symbol) ? "hsl(215,15%,38%)" : "hsl(210,40%,75%)",
+                        cursor: portfolioTickers.includes(s.symbol) ? "default" : "pointer",
+                      }}
+                    >
+                      <Plus className="w-2.5 h-2.5 inline mr-1" style={{ position: "relative", top: -0.5 }} />
+                      {s.symbol}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              <button
+                onClick={async () => {
+                  const finalTickers = portfolioInput.trim()
+                    ? [...portfolioTickers, portfolioInput.trim().toUpperCase()].filter((v, i, a) => a.indexOf(v) === i)
+                    : portfolioTickers;
+                  if (!portfolioName.trim() || finalTickers.length === 0) return;
+                  setSavingPortfolio(true);
+                  await addPortfolio(portfolioName, finalTickers);
+                  setPortfolioName("");
+                  setPortfolioTickers([]);
+                  setPortfolioInput("");
+                  setSavingPortfolio(false);
+                }}
+                disabled={savingPortfolio || !portfolioName.trim() || (portfolioTickers.length === 0 && !portfolioInput.trim())}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold disabled:opacity-40 transition-opacity"
+                style={{ background: "hsl(217,91%,60%)", color: "white" }}
+              >
+                {savingPortfolio
+                  ? <><Loader2 className="w-4 h-4 animate-spin" /> Saving…</>
+                  : <><FolderPlus className="w-4 h-4" /> Save Portfolio</>}
+              </button>
+            </div>
+          </div>
+
         </div>
       </main>
     </div>

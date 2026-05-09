@@ -1,6 +1,7 @@
 // Frontend/src/app/dashboard/diversify/page.tsx
 "use client";
 import { useState, useRef, useEffect } from "react";
+import { useAuth } from "@/src/app/context/AuthContext";
 import Sidebar from "@/components/ui/Sidebar";
 import SpiderChart from "@/components/ui/SpiderChart";
 import SectorDonut from "@/components/ui/SectorDonut";
@@ -379,6 +380,7 @@ function IndependentRecCard({ rec, rank, companyNames, onTickerClick }: {
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 export default function DiversifyPage() {
+  const { customPortfolios } = useAuth();
   const [analysisMode,  setAnalysisMode]  = useState<AnalysisMode>("broad_market");
   const [resultMode,    setResultMode]    = useState<AnalysisMode>("broad_market");
   const [inputVal,      setInputVal]      = useState("");
@@ -545,6 +547,23 @@ export default function DiversifyPage() {
                   {p.label}
                 </button>
               ))}
+              {customPortfolios.length > 0 && (
+                <>
+                  <span className="text-xs" style={{ color: "hsl(215,20%,28%)" }}>|</span>
+                  <span className="text-xs" style={{ color: TEXT_MUT }}>My portfolios:</span>
+                  {customPortfolios.map(p => (
+                    <button
+                      key={p.id}
+                      onClick={() => { setTickers(p.tickers); setResult(null); }}
+                      className="text-xs px-2.5 py-1 rounded-md transition-colors"
+                      style={{ background: "hsla(217,91%,60%,0.1)", border: "1px solid hsla(217,91%,60%,0.3)", color: "hsl(217,91%,70%)" }}
+                      onMouseEnter={e => (e.currentTarget.style.background = "hsla(217,91%,60%,0.2)")}
+                      onMouseLeave={e => (e.currentTarget.style.background = "hsla(217,91%,60%,0.1)")}>
+                      {p.name}
+                    </button>
+                  ))}
+                </>
+              )}
             </div>
 
             {/* Analysis mode toggle */}
