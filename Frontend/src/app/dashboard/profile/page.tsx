@@ -3,65 +3,14 @@
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import {
-  TrendingUp, Star, User, Mail, LogOut, Loader2, BarChart2,
-  LayoutDashboard, LineChart, Grid3X3, ChevronDown, Layers,
+  Star, User, Mail, LogOut, Loader2,
+  ChevronDown, Layers,
   FolderPlus, Trash2, X, Plus, Briefcase,
 } from "lucide-react";
+import Sidebar from "@/components/ui/Sidebar";
 import { useAuth } from "@/src/app/context/AuthContext";
 import { fetchStockSummaries, type StockSummary } from "@/src/app/lib/api";
 import { SECTORS, ALL_SECTORS, filterBySector } from "@/src/app/lib/sectorData";
-
-// ─── Shared nav (no sidebar — using top nav like dashboard) ──────────────────
-function Navbar({ displayName, onLogout }: { displayName: string; onLogout: () => void }) {
-  const router = useRouter();
-  const navItems = [
-    { label: "Dashboard", icon: LayoutDashboard, href: "/dashboard" },
-    { label: "Analysis",  icon: LineChart,       href: "/dashboard/analysis" },
-    { label: "Model",     icon: BarChart2,       href: "/dashboard/model" },
-    { label: "Heatmap",   icon: Grid3X3,         href: "/dashboard/heatmap" },
-  ];
-  return (
-    <header
-      className="fixed top-0 left-0 right-0 z-40 flex items-center justify-between px-6 h-14"
-      style={{ background: "hsl(215, 25%, 10%)", borderBottom: "1px solid hsl(215, 20%, 17%)" }}
-    >
-      <div className="flex items-center gap-2">
-        <div className="w-7 h-7 rounded-md flex items-center justify-center" style={{ background: "hsl(217, 91%, 60%)" }}>
-          <TrendingUp className="w-3.5 h-3.5 text-white" strokeWidth={2.5} />
-        </div>
-        <span className="text-base font-bold" style={{ color: "hsl(217, 91%, 60%)" }}>LagLens</span>
-      </div>
-      <nav className="flex items-center gap-1">
-        {navItems.map(({ label, icon: Icon, href }) => (
-          <button
-            key={label}
-            onClick={() => router.push(href)}
-            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-sm font-medium transition-all"
-            style={{ color: "hsl(215, 15%, 55%)" }}
-            onMouseEnter={(e) => (e.currentTarget.style.color = "hsl(210, 40%, 85%)")}
-            onMouseLeave={(e) => (e.currentTarget.style.color = "hsl(215, 15%, 55%)")}
-          >
-            <Icon className="w-3.5 h-3.5" />
-            {label}
-          </button>
-        ))}
-      </nav>
-      <div className="flex items-center gap-3">
-        <button
-          onClick={() => router.push("/dashboard/profile")}
-          className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm transition-all"
-          style={{ background: "hsl(217, 91%, 60% / 0.15)", border: "1px solid hsl(217, 91%, 60% / 0.3)", color: "hsl(217, 91%, 70%)" }}
-        >
-          <User className="w-3.5 h-3.5" />
-          {displayName}
-        </button>
-        <button onClick={onLogout} className="p-2 rounded-lg transition-all hover:opacity-70" style={{ color: "hsl(215, 15%, 50%)" }} aria-label="Sign out">
-          <LogOut className="w-4 h-4" />
-        </button>
-      </div>
-    </header>
-  );
-}
 
 const card = { background: "hsl(215, 25%, 11%)", border: "1px solid hsl(215, 20%, 18%)" };
 
@@ -218,7 +167,7 @@ export default function ProfilePage() {
 
   return (
     <div className="min-h-screen" style={{ background: "hsl(213, 27%, 7%)" }}>
-      <Navbar displayName={displayName} onLogout={handleLogout} />
+      <Sidebar />
 
       <main className="pt-14">
         <div className="max-w-4xl mx-auto px-6 py-8">
