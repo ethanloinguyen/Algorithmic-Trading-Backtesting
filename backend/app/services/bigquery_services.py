@@ -81,7 +81,10 @@ def get_ohlcv(symbol: str, range_: TimeRange) -> list[OHLCVCandle]:
     """
     Fetch OHLCV candles for a single symbol over the requested time range.
 
-    Confirmed BigQuery schema for market_data (capstone-487001):
+    Checks market_data (lead-lag universe) first, then falls back to
+    general_market_data (extra stocks like GOOG, PLTR, LMND).
+
+    Confirmed BigQuery schema for both tables (capstone-487001):
         date        DATETIME   ← DATETIME not DATE — must use DATETIME_SUB
         adj_close   FLOAT
         close       FLOAT
@@ -104,10 +107,17 @@ def get_ohlcv(symbol: str, range_: TimeRange) -> list[OHLCVCandle]:
             low,
             close,
             volume
-        FROM {settings.fq_market_data}
-        WHERE
-            ticker = @symbol
-            AND date >= DATETIME_SUB(CURRENT_DATETIME(), INTERVAL @days DAY)
+        FROM (
+            SELECT date, open, high, low, close, volume
+            FROM {settings.fq_market_data}
+            WHERE ticker = @symbol
+              AND date >= DATETIME_SUB(CURRENT_DATETIME(), INTERVAL @days DAY)
+            UNION ALL
+            SELECT date, open, high, low, close, volume
+            FROM {settings.fq_general_market_data}
+            WHERE ticker = @symbol
+              AND date >= DATETIME_SUB(CURRENT_DATETIME(), INTERVAL @days DAY)
+        )
         ORDER BY date ASC
     """
 
@@ -178,7 +188,18 @@ def get_stock_summaries(symbols: list[str]) -> list[StockSummary]:
     settings = get_settings()
 
     query = f"""
-        WITH ranked AS (
+        WITH combined AS (
+            -- Universe stocks (lead-lag analysis set)
+            SELECT ticker, date, close, volume
+            FROM {settings.fq_market_data}
+            WHERE ticker IN UNNEST(@symbols)
+            UNION ALL
+            -- General extra stocks (GOOG, PLTR, LMND, etc.)
+            SELECT ticker, date, close, volume
+            FROM {settings.fq_general_market_data}
+            WHERE ticker IN UNNEST(@symbols)
+        ),
+        ranked AS (
             SELECT
                 o.ticker,
                 COALESCE(s.company_name, o.ticker) AS company_name,
@@ -186,9 +207,8 @@ def get_stock_summaries(symbols: list[str]) -> list[StockSummary]:
                 o.close,
                 o.volume,
                 ROW_NUMBER() OVER (PARTITION BY o.ticker ORDER BY o.date DESC) AS rn
-            FROM {settings.fq_market_data} o
+            FROM combined o
             LEFT JOIN {settings.fq_ticker_metadata} s ON o.ticker = s.ticker
-            WHERE o.ticker IN UNNEST(@symbols)
         ),
         today AS (
             SELECT ticker, company_name,
@@ -270,9 +290,15 @@ def get_stock_detail(symbol: str) -> StockDetail:
             SELECT
                 MAX(close) AS high_52w,
                 MIN(close) AS low_52w
-            FROM {settings.fq_market_data}
-            WHERE ticker = @symbol
-              AND date >= DATE_SUB(CURRENT_DATE(), INTERVAL 365 DAY)
+            FROM (
+                SELECT close FROM {settings.fq_market_data}
+                WHERE ticker = @symbol
+                  AND date >= DATE_SUB(CURRENT_DATE(), INTERVAL 365 DAY)
+                UNION ALL
+                SELECT close FROM {settings.fq_general_market_data}
+                WHERE ticker = @symbol
+                  AND date >= DATE_SUB(CURRENT_DATE(), INTERVAL 365 DAY)
+            )
         ) w
     """
 
