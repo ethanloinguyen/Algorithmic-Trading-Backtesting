@@ -288,7 +288,7 @@ function ConeChart({
                 fontSize: 11,
               }}
               labelStyle={{ color: TEXT_SEC, marginBottom: 4 }}
-              formatter={(value: ValueType, name: NameType) => {
+              formatter={(value: ValueType | undefined, name: NameType) => {
                 const labels: Record<string, string> = {
                   train:  "Historical",
                   p50:    "Median",
