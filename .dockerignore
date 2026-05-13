@@ -1,0 +1,10 @@
+**/__pycache__
+**/*.pyc
+**/*.pyo
+backend/.env
+backend/.env.*
+backend/secrets/
+backend/data/
+.git
+.gitignore
+monte-carlo/charts/

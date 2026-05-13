@@ -9,3 +9,6 @@ pandas>=2.2.2
 db-dtypes
 numpy
 scipy
+yfinance
+scikit-learn
+matplotlib
