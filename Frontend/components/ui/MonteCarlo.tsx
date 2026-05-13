@@ -19,6 +19,7 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, ReferenceLine, Legend,
 } from "recharts";
+import type { ValueType, NameType } from "recharts/types/component/DefaultTooltipContent";
 import { Loader2, AlertTriangle, FlaskConical, TrendingUp, ArrowRight } from "lucide-react";
 import type { StockSummary } from "@/src/app/lib/api";
 
@@ -287,7 +288,7 @@ function ConeChart({
                 fontSize: 11,
               }}
               labelStyle={{ color: TEXT_SEC, marginBottom: 4 }}
-              formatter={(value: number | string | undefined, name: string) => {
+              formatter={(value: ValueType, name: NameType) => {
                 const labels: Record<string, string> = {
                   train:  "Historical",
                   p50:    "Median",
@@ -296,7 +297,7 @@ function ConeChart({
                   p16:    "16th pct",
                 };
                 const num = typeof value === "number" ? value : parseFloat(String(value ?? 0));
-                return [`$${num.toFixed(2)}`, labels[name] ?? name];
+                return [`$${num.toFixed(2)}`, labels[String(name)] ?? String(name)];
               }}
             />
 
