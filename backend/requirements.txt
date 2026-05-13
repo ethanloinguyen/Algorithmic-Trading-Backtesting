@@ -9,3 +9,5 @@ pandas>=2.2.2
 db-dtypes
 numpy
 scipy
+httpx>=0.27.0
+yfinance>=0.2.40
