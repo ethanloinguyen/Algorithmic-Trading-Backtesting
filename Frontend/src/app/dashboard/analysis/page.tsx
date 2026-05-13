@@ -439,7 +439,8 @@ function TickerInput({
 
 // ─── Lag Alignment Lab ────────────────────────────────────────────────────────
 
-function LagAlignmentLab({ analysisMode }: { analysisMode: AnalysisMode }) {
+function LagAlignmentLab() {
+  const [analysisMode, setAnalysisMode] = useState<AnalysisMode>("broad_market");
   const [stockA, setStockA] = useState("MSFT");
   const [stockB, setStockB] = useState("AAPL");
   const [lagRange, setLagRange] = useState<LagRange>("3M");
@@ -520,9 +521,25 @@ function LagAlignmentLab({ analysisMode }: { analysisMode: AnalysisMode }) {
         style={{ borderBottom: `1px solid ${BORDER}` }}>
         <div>
           <h2 className="text-base font-bold" style={{ color: TEXT_PRI }}>Lead-Lag Hypothesis Lab</h2>
-          <p className="text-xs mt-0.5" style={{ color: TEXT_MUT }}>
-            Enter two stocks — analysis determines which leads and which follows
+          <p className="text-xs mt-0.5 mb-3" style={{ color: TEXT_MUT }}>
+            Enter two stocks and press "Analyze" to determine which stock leads and which one follows
           </p>
+          {/* Analysis scope toggle — scoped to this lab */}
+          <div className="flex items-center gap-2">
+            <span className="text-xs" style={{ color: TEXT_MUT }}>Scope:</span>
+            <div className="flex items-center p-0.5 rounded-lg"
+              style={{ background: "hsl(215,25%,9%)", border: `1px solid ${BORDER}` }}>
+              {(["broad_market", "in_sector"] as const).map(mode => (
+                <button key={mode} onClick={() => setAnalysisMode(mode)}
+                  className="px-3 py-1 rounded-md text-xs font-semibold transition-colors"
+                  style={analysisMode === mode
+                    ? { background: BLUE, color: "white" }
+                    : { color: TEXT_SEC, background: "transparent" }}>
+                  {mode === "broad_market" ? "Broad Market" : "In-Sector"}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
 
         <div className="flex items-end gap-4 p-3 rounded-lg"
@@ -803,7 +820,8 @@ const ZOOM_MIN   = 0.25;
 const ZOOM_MAX   = 3.0;
 const ZOOM_INIT  = 0.5;
 
-function LeadLagNetwork({ analysisMode }: { analysisMode: AnalysisMode }) {
+function LeadLagNetwork() {
+  const [analysisMode, setAnalysisMode] = useState<AnalysisMode>("broad_market");
   const canvasRef  = useRef<HTMLCanvasElement>(null);
   const animRef    = useRef<number>(0);
   const isDragging = useRef(false);
@@ -875,14 +893,11 @@ function LeadLagNetwork({ analysisMode }: { analysisMode: AnalysisMode }) {
 
     const N = allNodes.length;
 
-    // Scale sim space, repulsion, and link distance proportionally to node count
-    // so sparse graphs are tighter and dense graphs have more breathing room.
-    const SW        = Math.round(700  + N * 30);
-    const SH        = Math.round(450  + N * 18);
-    const charge    = -(220 + N * 14);
-    const linkDist  = 110 + N * 2.5;
-    const ringRadX  = SW * 0.30;
-    const ringRadY  = SH * 0.30;
+    // Scale sim space, repulsion, and link distance proportionally to node count.
+    const SW       = Math.round(1000 + N * 42);
+    const SH       = Math.round(650  + N * 26);
+    const charge   = -(350 + N * 22);
+    const linkDist = 160 + N * 4.0;
     simDimsRef.current = { w: SW, h: SH };
 
     // Total degree per node across ALL edges (used for collide radius)
@@ -893,8 +908,20 @@ function LeadLagNetwork({ analysisMode }: { analysisMode: AnalysisMode }) {
       allDeg[e.target] = (allDeg[e.target] ?? 0) + 1;
     });
 
-    // Assign each unique sector a position around a ring
+    // Derive sector list FIRST so ring radius can scale with sector count.
+    // With 1 sector (in-sector mode) the ring offset is nearly zero — cluster stays
+    // centered and can't be pushed against the boundary. With many sectors (broad
+    // market mode) the ring expands to spread clusters across the sim space.
     const sectors = [...new Set(allNodes.map(n => n.sector))].filter(Boolean);
+    const ringFrac = sectors.length <= 1
+      ? 0.0                                              // single cluster → centered
+      : Math.min(0.36, 0.10 + sectors.length * 0.032);  // 2 → ~0.16 … 8+ → 0.36
+    const ringRadX = SW * ringFrac;
+    const ringRadY = SH * ringFrac;
+
+    // Initial scatter also scales down when few sectors, keeping the cluster contained
+    const scatter = sectors.length <= 2 ? 180 : 320;
+
     const sectorCenter: Record<string, { x: number; y: number }> = {};
     sectors.forEach((s, i) => {
       const angle = (i / sectors.length) * Math.PI * 2 - Math.PI / 2;
@@ -909,8 +936,8 @@ function LeadLagNetwork({ analysisMode }: { analysisMode: AnalysisMode }) {
       return {
         ...n,
         degree: allDeg[n.id] ?? 0,
-        x: base.x + (Math.random() - 0.5) * 200,
-        y: base.y + (Math.random() - 0.5) * 200,
+        x: base.x + (Math.random() - 0.5) * scatter,
+        y: base.y + (Math.random() - 0.5) * scatter,
       };
     });
     const idSet    = new Set(simNodes.map((n: any) => n.id));
@@ -920,20 +947,21 @@ function LeadLagNetwork({ analysisMode }: { analysisMode: AnalysisMode }) {
 
     const sim = (d3 as any)
       .forceSimulation(simNodes)
-      .force("link",    (d3 as any).forceLink(simLinks).id((d: any) => d.id).distance(linkDist).strength(0.12))
+      .force("link",    (d3 as any).forceLink(simLinks).id((d: any) => d.id).distance(linkDist).strength(0.10))
       .force("charge",  (d3 as any).forceManyBody().strength(charge))
-      .force("x",       (d3 as any).forceX((d: any) => sectorCenter[d.sector]?.x ?? SW / 2).strength(0.07))
-      .force("y",       (d3 as any).forceY((d: any) => sectorCenter[d.sector]?.y ?? SH / 2).strength(0.07))
-      .force("collide", (d3 as any).forceCollide().radius((d: any) => nodeRadiusByDegree(d.degree) + 32));
+      .force("x",       (d3 as any).forceX((d: any) => sectorCenter[d.sector]?.x ?? SW / 2).strength(0.06))
+      .force("y",       (d3 as any).forceY((d: any) => sectorCenter[d.sector]?.y ?? SH / 2).strength(0.06))
+      .force("collide", (d3 as any).forceCollide().radius((d: any) => nodeRadiusByDegree(d.degree) + 52)); // was: +32
 
-    sim.tick(600);
+    sim.tick(800);  // was: 600 — more iterations to converge with stiffer forces
     sim.stop();
 
+    const CLAMP = 100;  // was: 40 — wider margin keeps dense clusters off the edge
     const pos: Record<string, { x: number; y: number }> = {};
     simNodes.forEach((n: any) => {
       pos[n.id] = {
-        x: Math.max(40, Math.min(SW - 40, n.x ?? SW / 2)),
-        y: Math.max(40, Math.min(SH - 40, n.y ?? SH / 2)),
+        x: Math.max(CLAMP, Math.min(SW - CLAMP, n.x ?? SW / 2)),
+        y: Math.max(CLAMP, Math.min(SH - CLAMP, n.y ?? SH / 2)),
       };
     });
     setPositions(pos);
@@ -1201,9 +1229,25 @@ function LeadLagNetwork({ analysisMode }: { analysisMode: AnalysisMode }) {
         style={{ borderBottom: `1px solid ${BORDER}` }}>
         <div>
           <h2 className="text-base font-bold" style={{ color: TEXT_PRI }}>Lead-Lag Network Analytics Lab</h2>
-          <p className="text-xs mt-0.5" style={{ color: TEXT_MUT }}>
-            Top 50 stocks · node color = net leadership · node size = connections · nodes clustered by sector · drag to pan · +/− to zoom
+          <p className="text-xs mt-0.5 mb-3" style={{ color: TEXT_MUT }}>
+            Displays top 50 stocks by centrality | node color = net leadership | node size = connections | nodes clustered by sector | drag to pan | +/− to zoom
           </p>
+          {/* Analysis scope toggle — scoped to this lab */}
+          <div className="flex items-center gap-2">
+            <span className="text-xs" style={{ color: TEXT_MUT }}>Scope:</span>
+            <div className="flex items-center p-0.5 rounded-lg"
+              style={{ background: "hsl(215,25%,9%)", border: `1px solid ${BORDER}` }}>
+              {(["broad_market", "in_sector"] as const).map(mode => (
+                <button key={mode} onClick={() => setAnalysisMode(mode)}
+                  className="px-3 py-1 rounded-md text-xs font-semibold transition-colors"
+                  style={analysisMode === mode
+                    ? { background: BLUE, color: "white" }
+                    : { color: TEXT_SEC, background: "transparent" }}>
+                  {mode === "broad_market" ? "Broad Market" : "In-Sector"}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
         {/* Net leadership color scale */}
         <div className="flex items-center gap-2 flex-shrink-0">
@@ -1361,7 +1405,6 @@ function LeadLagNetwork({ analysisMode }: { analysisMode: AnalysisMode }) {
 
 export default function AnalysisPage() {
   const [selectedStock, setSelectedStock] = useState("AAPL");
-  const [analysisMode,  setAnalysisMode]  = useState<AnalysisMode>("broad_market");
   const [stocks,        setStocks]        = useState<StockSummary[]>([]);
   const [stocksLoading, setStocksLoading] = useState(true);
 
@@ -1378,27 +1421,10 @@ export default function AnalysisPage() {
       <main className="pt-14">
         <div className="max-w-7xl mx-auto px-6 py-6 space-y-6">
 
-          {/* ── Top bar ── */}
+          {/* ── Top bar — stock picker only ── */}
           <div className="flex items-center gap-4 flex-wrap">
             <StockDropdown value={selectedStock} onChange={setSelectedStock}
               stocks={stocks} loading={stocksLoading} />
-
-            {/* Analysis mode toggle */}
-            <div className="ml-auto flex items-center gap-2">
-              <span className="text-xs" style={{ color: TEXT_MUT }}>Analysis scope:</span>
-              <div className="flex items-center p-0.5 rounded-lg"
-                style={{ background: "hsl(215,25%,9%)", border: `1px solid ${BORDER}` }}>
-                {(["broad_market", "in_sector"] as const).map(mode => (
-                  <button key={mode} onClick={() => setAnalysisMode(mode)}
-                    className="px-3 py-1.5 rounded-md text-xs font-semibold"
-                    style={analysisMode === mode
-                      ? { background: BLUE, color: "white" }
-                      : { color: TEXT_SEC, background: "transparent" }}>
-                    {mode === "broad_market" ? "Broad Market" : "In-Sector"}
-                  </button>
-                ))}
-              </div>
-            </div>
           </div>
 
           {/* ── Price Chart + Fundamentals ── */}
@@ -1407,11 +1433,11 @@ export default function AnalysisPage() {
             <FundamentalsPanel symbol={selectedStock} />
           </div>
 
-          {/* ── Lag Alignment Lab ── */}
-          <LagAlignmentLab analysisMode={analysisMode} />
+          {/* ── Lag Alignment Lab (owns its own analysis scope) ── */}
+          <LagAlignmentLab />
 
-          {/* ── Network Graph ── */}
-          <LeadLagNetwork analysisMode={analysisMode} />
+          {/* ── Network Graph (owns its own analysis scope) ── */}
+          <LeadLagNetwork />
 
         </div>
       </main>
