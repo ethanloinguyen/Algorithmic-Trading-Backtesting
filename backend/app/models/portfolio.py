@@ -1,5 +1,5 @@
 # backend/app/models/portfolio.py
-from typing import Literal
+from typing import Any, Literal
 from pydantic import BaseModel
 
 
@@ -61,3 +61,33 @@ class PortfolioAnalysisResponse(BaseModel):
     signal_recommendations:      list[Recommendation]
     independent_recommendations: list[IndependentRecommendation]
     holdings_sectors:            dict[str, str]   # {ticker: sector} for all known holdings
+
+
+# ---------------------------------------------------------------------------
+# Pipeline: hierarchical clustering → Monte Carlo risk assessment
+# ---------------------------------------------------------------------------
+
+class PipelineRequest(BaseModel):
+    tickers:           list[str]
+    horizon_days:      Literal[21, 63, 126, 252] = 63
+    n_sims:            int = 1000
+    target_return:     float = 0.10
+    confidence_levels: list[float] = [0.95, 0.99]
+    seed:              int = 42
+
+
+class ClusteringRecommendation(BaseModel):
+    sector:                str
+    stock:                 str
+    cluster:               int
+    is_medoid:             bool
+    avg_dcor_to_portfolio: float
+    mean_intra_dist:       float
+    n_sector_candidates:   int
+    cluster_size:          int
+
+
+class PipelineResponse(BaseModel):
+    user_portfolio:  list[str]
+    recommendations: list[ClusteringRecommendation]
+    risk:            dict[str, Any]  # full mc_engine output — see mc_engine.py docstring

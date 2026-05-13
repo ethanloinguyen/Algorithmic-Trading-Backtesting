@@ -9,15 +9,19 @@ import StockModal, { type Stock } from "@/components/ui/StockModal";
 import {
   analyzePortfolio,
   fetchStockSummaries,
+  runRiskPipeline,
   type OverlapResult,
   type Recommendation,
   type IndependentRecommendation,
   type AnalysisMode,
+  type RiskPipelineResult,
+  type ClusteringPick,
 } from "@/src/app/lib/api";
 import {
   AlertTriangle, TrendingUp, Plus, X,
   ChevronDown, ChevronUp, Loader2, Sparkles, ArrowRight,
   ShieldAlert, BarChart3, Unlink, Info, Zap, Globe, Link2, Layers, Timer,
+  Activity,
 } from "lucide-react";
 
 // ── Design tokens ─────────────────────────────────────────────────────────────
@@ -378,6 +382,127 @@ function IndependentRecCard({ rec, rank, companyNames, onTickerClick }: {
   );
 }
 
+// ── Risk Assessment panel ─────────────────────────────────────────────────────
+function RiskResultPanel({ result, onTickerClick }: {
+  result: RiskPipelineResult;
+  onTickerClick: (ticker: string) => void;
+}) {
+  const { recommendations, risk } = result;
+  const p = risk.portfolio;
+  const pct = (v: number) => `${(v * 100).toFixed(1)}%`;
+  const lossColor = RED;
+  const benefitColor = (v: number) => v > 0 ? GREEN : RED;
+
+  const portfolioMetrics = [
+    { label: "VaR 95%",             value: pct(p.var_95),                       color: lossColor,              hint: "Worst loss 95% of the time" },
+    { label: "CVaR 95%",            value: pct(p.cvar_95),                      color: lossColor,              hint: "Avg loss in worst 5% of scenarios" },
+    { label: "Expected Drawdown",   value: pct(p.expected_max_drawdown),        color: lossColor,              hint: "Average peak-to-trough decline" },
+    { label: "Prob of Loss",        value: pct(p.prob_loss),                    color: p.prob_loss > 0.5 ? RED : AMBER, hint: "Probability of any loss at horizon" },
+    { label: "Diversif. Benefit",   value: pct(p.diversification_benefit_95),   color: benefitColor(p.diversification_benefit_95), hint: "VaR improvement vs. equal-weight avg" },
+    { label: "Worst-Case DD p95",   value: pct(p.worst_case_max_drawdown_p95),  color: lossColor,              hint: "Drawdown exceeded only 5% of paths" },
+  ];
+
+  return (
+    <>
+      {/* Sector picks grid */}
+      <div className="grid grid-cols-3 gap-3 mb-5">
+        {recommendations.map((rec: ClusteringPick) => (
+          <div key={rec.stock} className="rounded-xl p-4 flex flex-col gap-2" style={CARD}>
+            <div className="flex items-center justify-between">
+              <button className="text-sm font-bold hover:underline" style={{ color: TEXT_PRI }}
+                onClick={() => onTickerClick(rec.stock)}>
+                {rec.stock}
+                {rec.is_medoid && <span className="ml-1 text-xs" style={{ color: AMBER }}>★</span>}
+              </button>
+              <span className="text-xs px-1.5 py-0.5 rounded font-mono"
+                style={{ background: GREEN_DIM, color: GREEN }}>
+                {rec.avg_dcor_to_portfolio.toFixed(3)}
+              </span>
+            </div>
+            <SectorTag sector={rec.sector} />
+          </div>
+        ))}
+      </div>
+
+      {/* Portfolio risk metrics */}
+      <div className="rounded-xl p-5 mb-4" style={CARD}>
+        <p className="text-xs font-semibold mb-4 tracking-wide" style={{ color: TEXT_SEC }}>
+          PORTFOLIO METRICS — {risk.horizon_days}-DAY HORIZON · {risk.n_simulations.toLocaleString()} PATHS
+        </p>
+        <div className="grid grid-cols-3 gap-3">
+          {portfolioMetrics.map(({ label, value, color, hint }) => (
+            <div key={label} className="rounded-lg p-3"
+              style={{ background: "hsl(215,25%,9%)", border: `1px solid ${BORDER_D}` }}>
+              <p className="text-xs mb-1" style={{ color: TEXT_MUT }}>{label}</p>
+              <p className="text-xl font-bold" style={{ color }}>{value}</p>
+              <p className="text-xs mt-1 leading-tight" style={{ color: TEXT_MUT }}>{hint}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Per-stock risk table */}
+      <div className="rounded-xl overflow-hidden" style={CARD}>
+        <div className="px-5 py-3" style={{ borderBottom: `1px solid ${BORDER_D}` }}>
+          <p className="text-xs font-semibold tracking-wide" style={{ color: TEXT_SEC }}>PER-STOCK RISK</p>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr style={{ borderBottom: `1px solid ${BORDER_D}` }}>
+                {["Ticker", "Sector", "VaR 95%", "CVaR 95%", "Prob Loss", "Max Drawdown"].map(h => (
+                  <th key={h} className="px-4 py-2 text-left font-medium" style={{ color: TEXT_MUT }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {risk.tickers.map((ticker, i) => {
+                const s = risk.per_stock[ticker];
+                if (!s) return null;
+                const rec = recommendations.find((r: ClusteringPick) => r.stock === ticker);
+                return (
+                  <tr key={ticker}
+                    style={{ borderBottom: i < risk.tickers.length - 1 ? `1px solid ${BORDER_D}` : "none" }}
+                    onMouseEnter={e => (e.currentTarget.style.background = CARD_H)}
+                    onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
+                  >
+                    <td className="px-4 py-2.5">
+                      <button className="font-bold hover:underline" style={{ color: TEXT_PRI }}
+                        onClick={() => onTickerClick(ticker)}>
+                        {ticker}
+                      </button>
+                    </td>
+                    <td className="px-4 py-2.5">
+                      {rec && <SectorTag sector={rec.sector} />}
+                    </td>
+                    <td className="px-4 py-2.5 font-mono" style={{ color: RED }}>{pct(s.var_95)}</td>
+                    <td className="px-4 py-2.5 font-mono" style={{ color: RED }}>{pct(s.cvar_95)}</td>
+                    <td className="px-4 py-2.5 font-mono"
+                      style={{ color: s.prob_loss > 0.5 ? RED : AMBER }}>{pct(s.prob_loss)}</td>
+                    <td className="px-4 py-2.5 font-mono" style={{ color: RED }}>{pct(s.expected_max_drawdown)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {risk.missing.length > 0 && (
+        <p className="text-xs mt-3 px-1" style={{ color: TEXT_MUT }}>
+          ★ = cluster medoid &nbsp;·&nbsp; dcor badge = decorrelation from your portfolio (lower is better)
+          &nbsp;·&nbsp; {risk.missing.length} ticker{risk.missing.length > 1 ? "s" : ""} unavailable: {risk.missing.join(", ")}
+        </p>
+      )}
+      {risk.missing.length === 0 && (
+        <p className="text-xs mt-3 px-1" style={{ color: TEXT_MUT }}>
+          ★ = cluster medoid &nbsp;·&nbsp; dcor badge = decorrelation from your portfolio (lower is better)
+        </p>
+      )}
+    </>
+  );
+}
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 export default function DiversifyPage() {
   const { customPortfolios } = useAuth();
@@ -398,6 +523,9 @@ export default function DiversifyPage() {
   const [activeSpiderIdx, setActiveSpiderIdx] = useState<number | null>(0);
   const [companyNames,    setCompanyNames]    = useState<Record<string, string>>({});
   const [modalStock,      setModalStock]      = useState<Stock | null>(null);
+  const [riskResult,      setRiskResult]      = useState<RiskPipelineResult | null>(null);
+  const [riskLoading,     setRiskLoading]     = useState(false);
+  const [riskError,       setRiskError]       = useState<string | null>(null);
 
   const hoveredTicker = activeSpiderIdx !== null
     ? (result?.signal_recommendations[activeSpiderIdx]?.ticker ?? null)
@@ -442,6 +570,7 @@ export default function DiversifyPage() {
       : tickers;
     if (!toAnalyze.length) return;
     setLoading(true); setError(null); setResult(null); setActiveSpiderIdx(0);
+    setRiskResult(null); setRiskLoading(true); setRiskError(null);
     try {
       const data = await analyzePortfolio(toAnalyze, analysisMode);
       setResult(data);
@@ -461,8 +590,14 @@ export default function DiversifyPage() {
           })
           .catch(() => {});
       }
+      // Fire risk pipeline in background — portfolio analysis results show immediately
+      runRiskPipeline(toAnalyze)
+        .then(riskData => setRiskResult(riskData))
+        .catch(err => setRiskError(err instanceof Error ? err.message : "Risk assessment failed."))
+        .finally(() => setRiskLoading(false));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong.");
+      setRiskLoading(false);
     } finally {
       setLoading(false);
     }
@@ -471,6 +606,7 @@ export default function DiversifyPage() {
   const reset = () => {
     setTickers([]); setInputVal(""); setResult(null); setError(null);
     setActiveSpiderIdx(null); setCompanyNames({}); setModalStock(null);
+    setRiskResult(null); setRiskLoading(false); setRiskError(null);
     setTimeout(() => inputRef.current?.focus(), 0);
   };
 
@@ -745,6 +881,56 @@ export default function DiversifyPage() {
                   </div>
                 )}
               </section>
+
+              {/* Risk Assessment */}
+              {(riskLoading || riskResult !== null || riskError !== null) && (
+                <section className="mb-8">
+                  <div className="flex items-center gap-2 mb-1">
+                    <Activity className="w-4 h-4" style={{ color: GREEN }} />
+                    <h2 className="text-base font-semibold" style={{ color: TEXT_PRI }}>Risk Assessment</h2>
+                    {riskResult && (
+                      <span className="text-xs px-2 py-0.5 rounded-full ml-1"
+                        style={{ background: GREEN_DIM, color: GREEN }}>
+                        {riskResult.recommendations.length} sector picks
+                      </span>
+                    )}
+                    {riskLoading && (
+                      <span className="text-xs px-2 py-0.5 rounded-full ml-1 flex items-center gap-1"
+                        style={{ background: BLUE_DIM, color: BLUE }}>
+                        <Loader2 className="w-3 h-3 animate-spin" />running
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs mb-4" style={{ color: TEXT_MUT }}>
+                    K-Medoids sector picks decorrelated from your portfolio · Monte Carlo simulation ({riskResult?.risk.horizon_days ?? 63}-day horizon, {(riskResult?.risk.n_simulations ?? 1000).toLocaleString()} paths)
+                  </p>
+
+                  {riskLoading && !riskResult && (
+                    <div className="rounded-xl px-6 py-10 text-center" style={CARD}>
+                      <Loader2 className="w-8 h-8 mx-auto mb-3 animate-spin" style={{ color: BLUE }} />
+                      <p className="text-sm font-medium mb-1" style={{ color: TEXT_PRI }}>Running clustering and simulation</p>
+                      <p className="text-xs leading-relaxed max-w-xs mx-auto" style={{ color: TEXT_SEC }}>
+                        Querying BigQuery, running K-Medoids sweep, and simulating Monte Carlo paths — typically 30–60 seconds
+                      </p>
+                    </div>
+                  )}
+
+                  {riskError && (
+                    <div className="rounded-xl px-5 py-4 flex items-center gap-3"
+                      style={{ background: "hsla(0,84%,60%,0.1)", border: "1px solid hsla(0,84%,60%,0.3)" }}>
+                      <AlertTriangle className="w-4 h-4 flex-shrink-0" style={{ color: RED }} />
+                      <p className="text-sm" style={{ color: RED }}>{riskError}</p>
+                    </div>
+                  )}
+
+                  {riskResult && (
+                    <RiskResultPanel
+                      result={riskResult}
+                      onTickerClick={handleTickerClick}
+                    />
+                  )}
+                </section>
+              )}
             </div>
           )}
 

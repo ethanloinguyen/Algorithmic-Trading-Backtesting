@@ -48,22 +48,22 @@ def _load_gcp_config() -> dict:
             cfg = yaml.safe_load(f)
         gcp = cfg["gcp"]
         return {
-            "project_id":     gcp["project_id"],
-            "source_dataset": gcp.get("source_dataset", "yfinance_stocks_data"),
-            "table":          cfg["tables"].get("market_data", "market_data"),
+            "project_id": gcp["project_id"],
+            "dataset":    gcp.get("bq_dataset", "output_results"),
+            "table":      cfg["tables"].get("market_data", "market_data"),
         }
     except Exception as exc:
         logger.warning(f"Could not read config.yaml ({exc}); using defaults.")
         return {
-            "project_id":     "capstone-487001",
-            "source_dataset": "yfinance_stocks_data",
-            "table":          "market_data",
+            "project_id": "capstone-487001",
+            "dataset":    "output_results",
+            "table":      "market_data",
         }
 
 
 _GCP = _load_gcp_config()
 _FULL_TABLE = (
-    f"{_GCP['project_id']}.{_GCP['source_dataset']}.{_GCP['table']}"
+    f"{_GCP['project_id']}.{_GCP['dataset']}.{_GCP['table']}"
 )
 
 
