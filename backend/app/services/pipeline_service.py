@@ -101,8 +101,8 @@ def run_risk_pipeline(
     if not rec_tickers:
         raise ValueError("Hierarchical clustering returned no recommendations.")
 
-    logger.info("Pipeline step 2: running Monte Carlo risk for %s", rec_tickers)
-    risk = run_portfolio_risk(
+    logger.info("Pipeline step 2a: running Monte Carlo per-stock risk for recommendations %s", rec_tickers)
+    rec_risk = run_portfolio_risk(
         tickers=rec_tickers,
         horizon_days=horizon_days,
         n_sims=n_sims,
@@ -110,6 +110,23 @@ def run_risk_pipeline(
         confidence_levels=confidence_levels,
         seed=seed,
     )
+
+    logger.info("Pipeline step 2b: running Monte Carlo portfolio risk for user holdings %s", list(user_portfolio))
+    user_risk = run_portfolio_risk(
+        tickers=list(user_portfolio),
+        horizon_days=horizon_days,
+        n_sims=n_sims,
+        target_return=target_return,
+        confidence_levels=confidence_levels,
+        seed=seed,
+    )
+
+    # per_stock metrics come from the clustering recommendations;
+    # portfolio-level metrics (VaR, CVaR, drawdown, etc.) come from the user's own holdings.
+    risk = {
+        **rec_risk,
+        "portfolio": user_risk["portfolio"],
+    }
 
     return {
         "user_portfolio":  user_portfolio,
