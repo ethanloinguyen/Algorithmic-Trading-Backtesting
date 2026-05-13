@@ -421,53 +421,6 @@ function RiskResultPanel({ result, onTickerClick }: {
         </div>
       </div>
 
-      {/* Per-stock risk table */}
-      <div className="rounded-xl overflow-hidden" style={CARD}>
-        <div className="px-5 py-3" style={{ borderBottom: `1px solid ${BORDER_D}` }}>
-          <p className="text-xs font-semibold tracking-wide" style={{ color: TEXT_SEC }}>PER-STOCK RISK</p>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-xs">
-            <thead>
-              <tr style={{ borderBottom: `1px solid ${BORDER_D}` }}>
-                {["Ticker", "Sector", "VaR 95%", "CVaR 95%", "Prob Loss", "Max Drawdown"].map(h => (
-                  <th key={h} className="px-4 py-2 text-left font-medium" style={{ color: TEXT_MUT }}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {risk.tickers.map((ticker, i) => {
-                const s = risk.per_stock[ticker];
-                if (!s) return null;
-                const rec = recommendations.find((r: ClusteringPick) => r.stock === ticker);
-                return (
-                  <tr key={ticker}
-                    style={{ borderBottom: i < risk.tickers.length - 1 ? `1px solid ${BORDER_D}` : "none" }}
-                    onMouseEnter={e => (e.currentTarget.style.background = CARD_H)}
-                    onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
-                  >
-                    <td className="px-4 py-2.5">
-                      <button className="font-bold hover:underline" style={{ color: TEXT_PRI }}
-                        onClick={() => onTickerClick(ticker)}>
-                        {ticker}
-                      </button>
-                    </td>
-                    <td className="px-4 py-2.5">
-                      {rec && <SectorTag sector={rec.sector} />}
-                    </td>
-                    <td className="px-4 py-2.5 font-mono" style={{ color: RED }}>{pct(s.var_95)}</td>
-                    <td className="px-4 py-2.5 font-mono" style={{ color: RED }}>{pct(s.cvar_95)}</td>
-                    <td className="px-4 py-2.5 font-mono"
-                      style={{ color: s.prob_loss > 0.5 ? RED : AMBER }}>{pct(s.prob_loss)}</td>
-                    <td className="px-4 py-2.5 font-mono" style={{ color: RED }}>{pct(s.expected_max_drawdown)}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
     </>
   );
 }
@@ -870,6 +823,54 @@ export default function DiversifyPage() {
                       </div>
                     ))}
                   </div>
+                  {/* Per-stock risk table */}
+                  <div className="rounded-xl overflow-hidden mt-4" style={CARD}>
+                    <div className="px-5 py-3" style={{ borderBottom: `1px solid ${BORDER_D}` }}>
+                      <p className="text-xs font-semibold tracking-wide" style={{ color: TEXT_SEC }}>PER-STOCK RISK</p>
+                    </div>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr style={{ borderBottom: `1px solid ${BORDER_D}` }}>
+                            {["Ticker", "Sector", "VaR 95%", "CVaR 95%", "Prob Loss", "Max Drawdown"].map(h => (
+                              <th key={h} className="px-4 py-2 text-left font-medium" style={{ color: TEXT_MUT }}>{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {riskResult.risk.tickers.map((ticker, i) => {
+                            const s = riskResult.risk.per_stock[ticker];
+                            if (!s) return null;
+                            const rec = riskResult.recommendations.find((r: ClusteringPick) => r.stock === ticker);
+                            const pct = (v: number) => `${(v * 100).toFixed(1)}%`;
+                            return (
+                              <tr key={ticker}
+                                style={{ borderBottom: i < riskResult.risk.tickers.length - 1 ? `1px solid ${BORDER_D}` : "none" }}
+                                onMouseEnter={e => (e.currentTarget.style.background = CARD_H)}
+                                onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
+                              >
+                                <td className="px-4 py-2.5">
+                                  <button className="font-bold hover:underline" style={{ color: TEXT_PRI }}
+                                    onClick={() => handleTickerClick(ticker)}>
+                                    {ticker}
+                                  </button>
+                                </td>
+                                <td className="px-4 py-2.5">
+                                  {rec && <SectorTag sector={rec.sector} />}
+                                </td>
+                                <td className="px-4 py-2.5 font-mono" style={{ color: RED }}>{pct(s.var_95)}</td>
+                                <td className="px-4 py-2.5 font-mono" style={{ color: RED }}>{pct(s.cvar_95)}</td>
+                                <td className="px-4 py-2.5 font-mono"
+                                  style={{ color: s.prob_loss > 0.5 ? RED : AMBER }}>{pct(s.prob_loss)}</td>
+                                <td className="px-4 py-2.5 font-mono" style={{ color: RED }}>{pct(s.expected_max_drawdown)}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
                   {riskResult.risk.missing.length > 0 ? (
                     <p className="text-xs mt-3 px-1" style={{ color: TEXT_MUT }}>
                       ★ = cluster medoid &nbsp;·&nbsp; dcor badge = decorrelation from your portfolio (lower is better)
