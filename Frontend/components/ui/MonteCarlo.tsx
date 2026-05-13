@@ -287,7 +287,7 @@ function ConeChart({
                 fontSize: 11,
               }}
               labelStyle={{ color: TEXT_SEC, marginBottom: 4 }}
-              formatter={(value: number, name: string) => {
+              formatter={(value: number | string | undefined, name: string) => {
                 const labels: Record<string, string> = {
                   train:  "Historical",
                   p50:    "Median",
@@ -295,7 +295,8 @@ function ConeChart({
                   p84:    "84th pct",
                   p16:    "16th pct",
                 };
-                return [`$${value?.toFixed(2)}`, labels[name] ?? name];
+                const num = typeof value === "number" ? value : parseFloat(String(value ?? 0));
+                return [`$${num.toFixed(2)}`, labels[name] ?? name];
               }}
             />
 
