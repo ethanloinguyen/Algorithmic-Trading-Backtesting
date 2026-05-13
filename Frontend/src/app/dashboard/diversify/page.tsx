@@ -404,26 +404,6 @@ function RiskResultPanel({ result, onTickerClick }: {
 
   return (
     <>
-      {/* Sector picks grid */}
-      <div className="grid grid-cols-3 gap-3 mb-5">
-        {recommendations.map((rec: ClusteringPick) => (
-          <div key={rec.stock} className="rounded-xl p-4 flex flex-col gap-2" style={CARD}>
-            <div className="flex items-center justify-between">
-              <button className="text-sm font-bold hover:underline" style={{ color: TEXT_PRI }}
-                onClick={() => onTickerClick(rec.stock)}>
-                {rec.stock}
-                {rec.is_medoid && <span className="ml-1 text-xs" style={{ color: AMBER }}>★</span>}
-              </button>
-              <span className="text-xs px-1.5 py-0.5 rounded font-mono"
-                style={{ background: GREEN_DIM, color: GREEN }}>
-                {rec.avg_dcor_to_portfolio.toFixed(3)}
-              </span>
-            </div>
-            <SectorTag sector={rec.sector} />
-          </div>
-        ))}
-      </div>
-
       {/* Portfolio risk metrics */}
       <div className="rounded-xl p-5 mb-4" style={CARD}>
         <p className="text-xs font-semibold mb-4 tracking-wide" style={{ color: TEXT_SEC }}>
@@ -488,17 +468,6 @@ function RiskResultPanel({ result, onTickerClick }: {
         </div>
       </div>
 
-      {risk.missing.length > 0 && (
-        <p className="text-xs mt-3 px-1" style={{ color: TEXT_MUT }}>
-          ★ = cluster medoid &nbsp;·&nbsp; dcor badge = decorrelation from your portfolio (lower is better)
-          &nbsp;·&nbsp; {risk.missing.length} ticker{risk.missing.length > 1 ? "s" : ""} unavailable: {risk.missing.join(", ")}
-        </p>
-      )}
-      {risk.missing.length === 0 && (
-        <p className="text-xs mt-3 px-1" style={{ color: TEXT_MUT }}>
-          ★ = cluster medoid &nbsp;·&nbsp; dcor badge = decorrelation from your portfolio (lower is better)
-        </p>
-      )}
     </>
   );
 }
@@ -772,12 +741,6 @@ export default function DiversifyPage() {
                   <div className="flex items-center gap-2 mb-1">
                     <Activity className="w-4 h-4" style={{ color: GREEN }} />
                     <h2 className="text-base font-semibold" style={{ color: TEXT_PRI }}>Risk Assessment</h2>
-                    {riskResult && (
-                      <span className="text-xs px-2 py-0.5 rounded-full ml-1"
-                        style={{ background: GREEN_DIM, color: GREEN }}>
-                        {riskResult.recommendations.length} sector picks
-                      </span>
-                    )}
                     {riskLoading && (
                       <span className="text-xs px-2 py-0.5 rounded-full ml-1 flex items-center gap-1"
                         style={{ background: BLUE_DIM, color: BLUE }}>
@@ -874,6 +837,51 @@ export default function DiversifyPage() {
                   </div>
                 )}
               </section>
+
+              {/* K-Medoids Sector Picks */}
+              {riskResult && riskResult.recommendations.length > 0 && (
+                <section className="mb-8">
+                  <div className="flex items-center gap-2 mb-1">
+                    <Sparkles className="w-4 h-4" style={{ color: GREEN }} />
+                    <h2 className="text-base font-semibold" style={{ color: TEXT_PRI }}>K-Medoids Sector Picks</h2>
+                    <span className="text-xs px-2 py-0.5 rounded-full ml-1"
+                      style={{ background: GREEN_DIM, color: GREEN }}>
+                      {riskResult.recommendations.length} picks
+                    </span>
+                  </div>
+                  <p className="text-xs mb-4" style={{ color: TEXT_MUT }}>
+                    Stocks selected via K-Medoids clustering — decorrelated from your portfolio by sector
+                  </p>
+                  <div className="grid grid-cols-3 gap-3">
+                    {riskResult.recommendations.map((rec: ClusteringPick) => (
+                      <div key={rec.stock} className="rounded-xl p-4 flex flex-col gap-2" style={CARD}>
+                        <div className="flex items-center justify-between">
+                          <button className="text-sm font-bold hover:underline" style={{ color: TEXT_PRI }}
+                            onClick={() => handleTickerClick(rec.stock)}>
+                            {rec.stock}
+                            {rec.is_medoid && <span className="ml-1 text-xs" style={{ color: AMBER }}>★</span>}
+                          </button>
+                          <span className="text-xs px-1.5 py-0.5 rounded font-mono"
+                            style={{ background: GREEN_DIM, color: GREEN }}>
+                            {rec.avg_dcor_to_portfolio.toFixed(3)}
+                          </span>
+                        </div>
+                        <SectorTag sector={rec.sector} />
+                      </div>
+                    ))}
+                  </div>
+                  {riskResult.risk.missing.length > 0 ? (
+                    <p className="text-xs mt-3 px-1" style={{ color: TEXT_MUT }}>
+                      ★ = cluster medoid &nbsp;·&nbsp; dcor badge = decorrelation from your portfolio (lower is better)
+                      &nbsp;·&nbsp; {riskResult.risk.missing.length} ticker{riskResult.risk.missing.length > 1 ? "s" : ""} unavailable: {riskResult.risk.missing.join(", ")}
+                    </p>
+                  ) : (
+                    <p className="text-xs mt-3 px-1" style={{ color: TEXT_MUT }}>
+                      ★ = cluster medoid &nbsp;·&nbsp; dcor badge = decorrelation from your portfolio (lower is better)
+                    </p>
+                  )}
+                </section>
+              )}
 
             </div>
           )}
