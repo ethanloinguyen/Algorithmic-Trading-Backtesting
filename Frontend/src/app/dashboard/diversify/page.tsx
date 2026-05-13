@@ -702,26 +702,7 @@ export default function DiversifyPage() {
               )}
             </div>
 
-            {/* Analysis mode toggle */}
-            <div className="flex items-center gap-2 mt-4">
-              <span className="text-xs" style={{ color: TEXT_MUT }}>Analysis scope:</span>
-              <div className="flex items-center p-0.5 rounded-lg"
-                style={{ background: "hsl(215,25%,9%)", border: `1px solid ${BORDER}` }}>
-                {(["broad_market", "in_sector"] as const).map(mode => (
-                  <button
-                    key={mode}
-                    onClick={() => { setAnalysisMode(mode); setResult(null); }}
-                    className="px-3 py-1.5 rounded-md text-xs font-semibold transition-colors"
-                    style={analysisMode === mode
-                      ? { background: BLUE, color: "white" }
-                      : { color: TEXT_SEC, background: "transparent" }}>
-                    {mode === "broad_market" ? "Broad Market" : "In-Sector"}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="flex items-center gap-3 mt-3">
+            <div className="flex items-center gap-3 mt-4">
               <button onClick={handleAnalyze}
                 disabled={loading || (tickers.length === 0 && !inputVal.trim())}
                 className="flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-semibold disabled:opacity-40"
@@ -754,21 +735,6 @@ export default function DiversifyPage() {
           {/* Results */}
           {hasResult && result && (
             <div>
-              {/* Active mode banner */}
-              <div className="rounded-xl px-5 py-3 mb-4 flex items-center gap-2"
-                style={{
-                  background: resultMode === "in_sector" ? "hsla(270,70%,65%,0.08)" : BLUE_DIM,
-                  border: `1px solid ${resultMode === "in_sector" ? "hsla(270,70%,65%,0.3)" : "hsla(217,91%,60%,0.3)"}`,
-                }}>
-                <BarChart3 className="w-4 h-4 flex-shrink-0"
-                  style={{ color: resultMode === "in_sector" ? PURPLE : BLUE }} />
-                <p className="text-xs" style={{ color: resultMode === "in_sector" ? PURPLE : BLUE }}>
-                  {resultMode === "in_sector"
-                    ? "In-Sector analysis — pairs are residualized against both market and sector returns, and only stocks within the same sector can form relationships."
-                    : "Broad Market analysis — pairs are residualized against market returns across all sectors."}
-                </p>
-              </div>
-
               {result.unknown_tickers.length > 0 && (
                 <div className="rounded-xl px-5 py-3 mb-4 flex items-center gap-2"
                   style={{ background: "hsla(38,92%,50%,0.1)", border: "1px solid hsla(38,92%,50%,0.3)" }}>
@@ -800,28 +766,55 @@ export default function DiversifyPage() {
               {/* Factor explanations — new version's layout */}
               <FactorExplanations />
 
-              {/* Concentration Risk */}
-              <section className="mb-8">
-                <SectionHeader
-                  icon={<ShieldAlert className="w-4 h-4" />}
-                  label="Hidden Concentration Risk" count={result.overlaps.length}
-                  color={AMBER} dimColor="hsla(38,92%,50%,0.15)"
-                  subtitle="Lead-lag relationships detected within your existing holdings — you may be less diversified than you think"
-                />
-                {result.overlaps.length === 0 ? (
-                  <div className="rounded-xl px-6 py-8 text-center" style={CARD}>
-                    <TrendingUp className="w-8 h-8 mx-auto mb-3" style={{ color: GREEN }} />
-                    <p className="text-sm font-medium mb-1" style={{ color: TEXT_PRI }}>No significant overlaps found</p>
-                    <p className="text-xs" style={{ color: TEXT_SEC }}>Your holdings don't show strong lead-lag dependencies.</p>
+              {/* Risk Assessment */}
+              {(riskLoading || riskResult !== null || riskError !== null) && (
+                <section className="mb-8">
+                  <div className="flex items-center gap-2 mb-1">
+                    <Activity className="w-4 h-4" style={{ color: GREEN }} />
+                    <h2 className="text-base font-semibold" style={{ color: TEXT_PRI }}>Risk Assessment</h2>
+                    {riskResult && (
+                      <span className="text-xs px-2 py-0.5 rounded-full ml-1"
+                        style={{ background: GREEN_DIM, color: GREEN }}>
+                        {riskResult.recommendations.length} sector picks
+                      </span>
+                    )}
+                    {riskLoading && (
+                      <span className="text-xs px-2 py-0.5 rounded-full ml-1 flex items-center gap-1"
+                        style={{ background: BLUE_DIM, color: BLUE }}>
+                        <Loader2 className="w-3 h-3 animate-spin" />running
+                      </span>
+                    )}
                   </div>
-                ) : (
-                  <div className="space-y-2">
-                    {result.overlaps.map((o, i) => (
-                      <OverlapCard key={i} overlap={o} companyNames={companyNames} onTickerClick={handleTickerClick} />
-                    ))}
-                  </div>
-                )}
-              </section>
+                  <p className="text-xs mb-4" style={{ color: TEXT_MUT }}>
+                    K-Medoids sector picks decorrelated from your portfolio · Monte Carlo simulation ({riskResult?.risk.horizon_days ?? 63}-day horizon, {(riskResult?.risk.n_simulations ?? 1000).toLocaleString()} paths)
+                  </p>
+
+                  {riskLoading && !riskResult && (
+                    <div className="rounded-xl px-6 py-10 text-center" style={CARD}>
+                      <Loader2 className="w-8 h-8 mx-auto mb-3 animate-spin" style={{ color: BLUE }} />
+                      <p className="text-sm font-medium mb-1" style={{ color: TEXT_PRI }}>Running clustering and simulation</p>
+                      <p className="text-xs leading-relaxed max-w-xs mx-auto" style={{ color: TEXT_SEC }}>
+                        Querying BigQuery, running K-Medoids sweep, and simulating Monte Carlo paths — typically 30–60 seconds
+                      </p>
+                    </div>
+                  )}
+
+                  {riskError && (
+                    <div className="rounded-xl px-5 py-4 flex items-center gap-3"
+                      style={{ background: "hsla(0,84%,60%,0.1)", border: "1px solid hsla(0,84%,60%,0.3)" }}>
+                      <AlertTriangle className="w-4 h-4 flex-shrink-0" style={{ color: RED }} />
+                      <p className="text-sm" style={{ color: RED }}>{riskError}</p>
+                    </div>
+                  )}
+
+                  {riskResult && (
+                    <RiskResultPanel
+                      result={riskResult}
+                      onTickerClick={handleTickerClick}
+                    />
+                  )}
+                </section>
+              )}
 
               {/* Signal-connected recommendations */}
               {signalRecs.length > 0 && (
@@ -882,55 +875,6 @@ export default function DiversifyPage() {
                 )}
               </section>
 
-              {/* Risk Assessment */}
-              {(riskLoading || riskResult !== null || riskError !== null) && (
-                <section className="mb-8">
-                  <div className="flex items-center gap-2 mb-1">
-                    <Activity className="w-4 h-4" style={{ color: GREEN }} />
-                    <h2 className="text-base font-semibold" style={{ color: TEXT_PRI }}>Risk Assessment</h2>
-                    {riskResult && (
-                      <span className="text-xs px-2 py-0.5 rounded-full ml-1"
-                        style={{ background: GREEN_DIM, color: GREEN }}>
-                        {riskResult.recommendations.length} sector picks
-                      </span>
-                    )}
-                    {riskLoading && (
-                      <span className="text-xs px-2 py-0.5 rounded-full ml-1 flex items-center gap-1"
-                        style={{ background: BLUE_DIM, color: BLUE }}>
-                        <Loader2 className="w-3 h-3 animate-spin" />running
-                      </span>
-                    )}
-                  </div>
-                  <p className="text-xs mb-4" style={{ color: TEXT_MUT }}>
-                    K-Medoids sector picks decorrelated from your portfolio · Monte Carlo simulation ({riskResult?.risk.horizon_days ?? 63}-day horizon, {(riskResult?.risk.n_simulations ?? 1000).toLocaleString()} paths)
-                  </p>
-
-                  {riskLoading && !riskResult && (
-                    <div className="rounded-xl px-6 py-10 text-center" style={CARD}>
-                      <Loader2 className="w-8 h-8 mx-auto mb-3 animate-spin" style={{ color: BLUE }} />
-                      <p className="text-sm font-medium mb-1" style={{ color: TEXT_PRI }}>Running clustering and simulation</p>
-                      <p className="text-xs leading-relaxed max-w-xs mx-auto" style={{ color: TEXT_SEC }}>
-                        Querying BigQuery, running K-Medoids sweep, and simulating Monte Carlo paths — typically 30–60 seconds
-                      </p>
-                    </div>
-                  )}
-
-                  {riskError && (
-                    <div className="rounded-xl px-5 py-4 flex items-center gap-3"
-                      style={{ background: "hsla(0,84%,60%,0.1)", border: "1px solid hsla(0,84%,60%,0.3)" }}>
-                      <AlertTriangle className="w-4 h-4 flex-shrink-0" style={{ color: RED }} />
-                      <p className="text-sm" style={{ color: RED }}>{riskError}</p>
-                    </div>
-                  )}
-
-                  {riskResult && (
-                    <RiskResultPanel
-                      result={riskResult}
-                      onTickerClick={handleTickerClick}
-                    />
-                  )}
-                </section>
-              )}
             </div>
           )}
 
