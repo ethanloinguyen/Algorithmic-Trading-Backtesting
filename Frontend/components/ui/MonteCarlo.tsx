@@ -85,12 +85,12 @@ export interface PairMonteCarloResult {
   without:  MonteCarloResult;   // WITHOUT (pure GBM)
 }
 
-// ─── API stubs — replace with real calls from lib/api.ts ─────────────────────
-// These are thin wrappers so the component compiles independently.
-// Move the actual implementations into lib/api.ts.
+// ─── API helpers ─────────────────────────────────────────────────────────────
+
+const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
 
 async function fetchMonteCarlo(symbol: string): Promise<MonteCarloResult> {
-  const res = await fetch(`/api/montecarlo/single?symbol=${encodeURIComponent(symbol)}`);
+  const res = await fetch(`${BASE}/api/montecarlo/single?symbol=${encodeURIComponent(symbol)}`);
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
@@ -99,7 +99,7 @@ async function fetchPairMonteCarlo(
   leader: string, follower: string
 ): Promise<PairMonteCarloResult> {
   const res = await fetch(
-    `/api/montecarlo/pair?leader=${encodeURIComponent(leader)}&follower=${encodeURIComponent(follower)}`
+    `${BASE}/api/montecarlo/pair?leader=${encodeURIComponent(leader)}&follower=${encodeURIComponent(follower)}`
   );
   if (!res.ok) throw new Error(await res.text());
   return res.json();
