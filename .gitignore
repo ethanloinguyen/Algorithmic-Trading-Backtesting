@@ -5,6 +5,7 @@
 .env.*.local
 bin
 lib
+capstone-487001-67dc66175c53.json
 
 # Python
 __pycache__/
