@@ -21,7 +21,7 @@ import {
 import {
   AlertTriangle, TrendingUp, Plus, X,
   ChevronDown, ChevronUp, Loader2, Sparkles, ArrowRight,
-  ShieldAlert, BarChart3, Unlink, Info, Zap, Globe, Link2, Layers, Timer,
+  ShieldAlert, BarChart3, Info, Zap, Globe, Link2, Layers, Timer,
   Activity,
 } from "lucide-react";
 
@@ -495,7 +495,6 @@ export default function DiversifyPage() {
       const allTickers = [
         ...data.tickers_analyzed,
         ...data.signal_recommendations.map(r => r.ticker),
-        ...data.independent_recommendations.map(r => r.ticker),
         ...(data.quality_picks ?? []).map(r => r.ticker),
       ];
       const uniqueTickers = [...new Set(allTickers)];
@@ -664,12 +663,11 @@ export default function DiversifyPage() {
               )}
 
               {/* ── Stat cards — original design with icons fully restored ── */}
-              <div className="grid grid-cols-4 gap-3 mb-6">
+              <div className="grid grid-cols-3 gap-3 mb-6">
                 {[
-                  { label: "Analyzed",     value: result.tickers_analyzed.length,            color: BLUE,   icon: <BarChart3 className="w-4 h-4" /> },
-                  { label: "Overlaps",     value: result.overlaps.length,                    color: result.overlaps.length > 0 ? AMBER : GREEN, icon: <ShieldAlert className="w-4 h-4" /> },
-                  { label: "Quality Picks", value: qualityPicks.length,                        color: BLUE,   icon: <Sparkles className="w-4 h-4" /> },
-                  { label: "Pure Picks",   value: result.independent_recommendations.length, color: PURPLE, icon: <Unlink className="w-4 h-4" /> },
+                  { label: "Analyzed",      value: result.tickers_analyzed.length, color: BLUE,  icon: <BarChart3 className="w-4 h-4" /> },
+                  { label: "Overlaps",      value: result.overlaps.length,         color: result.overlaps.length > 0 ? AMBER : GREEN, icon: <ShieldAlert className="w-4 h-4" /> },
+                  { label: "Quality Picks", value: qualityPicks.length,            color: BLUE,  icon: <Sparkles className="w-4 h-4" /> },
                 ].map(({ label, value, color, icon }) => (
                   <div key={label} className="rounded-xl p-4" style={CARD}>
                     <div className="flex items-center gap-2 mb-2">
@@ -755,37 +753,6 @@ export default function DiversifyPage() {
                   </div>
                 </section>
               )}
-
-              {/* Independent recommendations */}
-              <section className="mb-8">
-                <SectionHeader
-                  icon={<Unlink className="w-4 h-4" />}
-                  label="Independent Recommendations" count={result.independent_recommendations.length}
-                  color={PURPLE} dimColor={PURPLE_DIM}
-                  subtitle="Stocks with zero detected lead-lag relationships to your holdings — ranked by sector gap (70%) and market centrality (30%)"
-                />
-                {result.independent_recommendations.length > 0 && (
-                  <p className="text-xs mb-4 px-1 leading-relaxed" style={{ color: TEXT_MUT }}>
-                    These stocks have no detected relationship to your holdings, so signal strength,
-                    durability, and coverage are not applicable. Ranked purely by new sector exposure
-                    and market network centrality.
-                  </p>
-                )}
-                {result.independent_recommendations.length === 0 ? (
-                  <div className="rounded-xl px-6 py-8 text-center" style={CARD}>
-                    <p className="text-sm" style={{ color: TEXT_SEC }}>No independent stocks found.</p>
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    {result.independent_recommendations.map((rec, i) => (
-                      <IndependentRecCard
-                        key={rec.ticker} rec={rec} rank={i + 1}
-                        companyNames={companyNames} onTickerClick={handleTickerClick}
-                      />
-                    ))}
-                  </div>
-                )}
-              </section>
 
               {/* K-Medoids Sector Picks */}
               {riskResult && riskResult.recommendations.length > 0 && (

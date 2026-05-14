@@ -18,8 +18,11 @@ Performance optimizations vs. naive SELECT *:
 """
 from __future__ import annotations
 
+import logging
 import time
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 # ── Table name mapping ────────────────────────────────────────────────────────
 _TABLE_NAMES = {
@@ -236,7 +239,11 @@ def run_portfolio_analysis(
     # would filter everything out at 55.0, so bypass it until backfill is complete.
     effective_min_signal = 0.0 if analysis_mode == "in_sector" else min_signal
 
-    quality_picks = get_quality_picks(known if known else normalized, top_n=top_n)
+    try:
+        quality_picks = get_quality_picks(known if known else normalized, top_n=top_n)
+    except Exception as exc:
+        logger.warning("get_quality_picks failed (%s) — returning empty list", exc)
+        quality_picks = []
 
     return {
         "tickers_analyzed":            known,
