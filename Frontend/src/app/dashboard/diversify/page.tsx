@@ -496,7 +496,7 @@ export default function DiversifyPage() {
         ...data.tickers_analyzed,
         ...data.signal_recommendations.map(r => r.ticker),
         ...data.independent_recommendations.map(r => r.ticker),
-        ...data.quality_picks.map(r => r.ticker),
+        ...(data.quality_picks ?? []).map(r => r.ticker),
       ];
       const uniqueTickers = [...new Set(allTickers)];
       if (uniqueTickers.length > 0) {
@@ -668,7 +668,7 @@ export default function DiversifyPage() {
                 {[
                   { label: "Analyzed",     value: result.tickers_analyzed.length,            color: BLUE,   icon: <BarChart3 className="w-4 h-4" /> },
                   { label: "Overlaps",     value: result.overlaps.length,                    color: result.overlaps.length > 0 ? AMBER : GREEN, icon: <ShieldAlert className="w-4 h-4" /> },
-                  { label: "Quality Picks", value: result.quality_picks.length,               color: BLUE,   icon: <Sparkles className="w-4 h-4" /> },
+                  { label: "Quality Picks", value: qualityPicks.length,                        color: BLUE,   icon: <Sparkles className="w-4 h-4" /> },
                   { label: "Pure Picks",   value: result.independent_recommendations.length, color: PURPLE, icon: <Unlink className="w-4 h-4" /> },
                 ].map(({ label, value, color, icon }) => (
                   <div key={label} className="rounded-xl p-4" style={CARD}>
