@@ -82,6 +82,7 @@ class PortfolioAnalysisResponse(BaseModel):
     overlaps:                    list[OverlapResult]
     signal_recommendations:      list[Recommendation]
     independent_recommendations: list[IndependentRecommendation]
+    quality_picks:               list[QualityRecommendation]
     holdings_sectors:            dict[str, str]   # {ticker: sector} for all known holdings
 
 
@@ -113,5 +114,3 @@ class PipelineResponse(BaseModel):
     user_portfolio:  list[str]
     recommendations: list[ClusteringRecommendation]
     risk:            dict[str, Any]  # full mc_engine output — see mc_engine.py docstring
-    quality_picks:               list[QualityRecommendation]
-    holdings_sectors:            dict[str, str]   # {ticker: sector} for all known holdings

@@ -445,7 +445,7 @@ export default function DiversifyPage() {
   const [riskError,       setRiskError]       = useState<string | null>(null);
 
   const hoveredTicker = activeSpiderIdx !== null
-    ? (result?.quality_picks[activeSpiderIdx]?.ticker ?? null)
+    ? (result?.quality_picks?.[activeSpiderIdx]?.ticker ?? null)
     : null;
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -461,7 +461,7 @@ export default function DiversifyPage() {
     return dist;
   })();
 
-  const hoveredRec = result?.quality_picks.find(r => r.ticker === hoveredTicker) ?? null;
+  const hoveredRec = result?.quality_picks?.find(r => r.ticker === hoveredTicker) ?? null;
 
   const addTicker = (raw: string) => {
     const parts = raw.toUpperCase().split(/[\s,]+/).filter(Boolean);
