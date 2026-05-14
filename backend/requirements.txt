@@ -12,3 +12,4 @@ scipy
 yfinance
 scikit-learn
 matplotlib
+pyyaml

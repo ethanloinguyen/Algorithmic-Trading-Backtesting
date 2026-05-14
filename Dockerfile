@@ -6,14 +6,14 @@ FROM python:3.11-slim
 #     which is where model/ and monte-carlo/ are copied
 WORKDIR /app/backend
 
-COPY backend/requirements.txt .
+COPY Backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # FastAPI application
-COPY backend/ .
+COPY Backend/ .
 
 # Model and simulation code imported at runtime by pipeline_service.py
-COPY model/ /app/model/
+COPY Model/ /app/model/
 COPY monte-carlo/ /app/monte-carlo/
 
 EXPOSE 8080
