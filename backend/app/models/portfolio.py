@@ -54,6 +54,28 @@ class IndependentRecommendation(BaseModel):
     reasoning:         str
 
 
+class QualityRecommendation(BaseModel):
+    """
+    Quality Picks — stock scored on five portfolio-aware quality dimensions.
+    Three scores (momentum, fundamental_quality, centrality) are precomputed
+    nightly; two (sector_diversity, volatility_compatibility) are computed
+    on-the-fly per user request.
+
+    Weights: momentum 35% · fundamental_quality 25% · sector_diversity 20%
+             · volatility_compatibility 10% · centrality 10%
+    """
+    ticker:                          str
+    sector:                          str
+    centrality:                      float   # raw eigenvector centrality
+    composite_score:                 float
+    momentum_score:                  float
+    fundamental_quality_score:       float
+    sector_diversity_score:          float
+    volatility_compatibility_score:  float
+    centrality_score:                float
+    reasoning:                       str
+
+
 class PortfolioAnalysisResponse(BaseModel):
     tickers_analyzed:            list[str]
     unknown_tickers:             list[str]
@@ -91,3 +113,5 @@ class PipelineResponse(BaseModel):
     user_portfolio:  list[str]
     recommendations: list[ClusteringRecommendation]
     risk:            dict[str, Any]  # full mc_engine output — see mc_engine.py docstring
+    quality_picks:               list[QualityRecommendation]
+    holdings_sectors:            dict[str, str]   # {ticker: sector} for all known holdings

@@ -205,6 +205,8 @@ def run_portfolio_analysis(
 
     table_name = _TABLE_NAMES.get(analysis_mode, "final_network")
 
+    from app.services.bigquery_services import get_quality_picks
+
     normalized = _normalize_tickers(tickers)
     if not normalized:
         return {
@@ -213,6 +215,7 @@ def run_portfolio_analysis(
             "overlaps":                    [],
             "signal_recommendations":      [],
             "independent_recommendations": [],
+            "quality_picks":               [],
             "holdings_sectors":            {},
         }
 
@@ -233,11 +236,14 @@ def run_portfolio_analysis(
     # would filter everything out at 55.0, so bypass it until backfill is complete.
     effective_min_signal = 0.0 if analysis_mode == "in_sector" else min_signal
 
+    quality_picks = get_quality_picks(known if known else normalized, top_n=top_n)
+
     return {
         "tickers_analyzed":            known,
         "unknown_tickers":             unknown,
         "overlaps":                    [asdict(o) for o in analyze_portfolio_overlap(normalized, df)],
         "signal_recommendations":      [asdict(r) for r in get_signal_recommendations(normalized, df, top_n=top_n, min_signal_strength=effective_min_signal)],
         "independent_recommendations": [asdict(r) for r in get_independent_recommendations(normalized, df, top_n=top_n, universe_meta_df=universe_meta_df)],
+        "quality_picks":               quality_picks,
         "holdings_sectors":            get_holdings_sectors(normalized, df),
     }

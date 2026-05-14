@@ -81,7 +81,10 @@ def get_ohlcv(symbol: str, range_: TimeRange) -> list[OHLCVCandle]:
     """
     Fetch OHLCV candles for a single symbol over the requested time range.
 
-    Confirmed BigQuery schema for market_data (capstone-487001):
+    Checks market_data (lead-lag universe) first, then falls back to
+    general_market_data (extra stocks like GOOG, PLTR, LMND).
+
+    Confirmed BigQuery schema for both tables (capstone-487001):
         date        DATETIME   ← DATETIME not DATE — must use DATETIME_SUB
         adj_close   FLOAT
         close       FLOAT
@@ -104,10 +107,17 @@ def get_ohlcv(symbol: str, range_: TimeRange) -> list[OHLCVCandle]:
             low,
             close,
             volume
-        FROM {settings.fq_market_data}
-        WHERE
-            ticker = @symbol
-            AND date >= DATETIME_SUB(CURRENT_DATETIME(), INTERVAL @days DAY)
+        FROM (
+            SELECT date, open, high, low, close, volume
+            FROM {settings.fq_market_data}
+            WHERE ticker = @symbol
+              AND date >= DATETIME_SUB(CURRENT_DATETIME(), INTERVAL @days DAY)
+            UNION ALL
+            SELECT date, open, high, low, close, volume
+            FROM {settings.fq_general_market_data}
+            WHERE ticker = @symbol
+              AND date >= DATETIME_SUB(CURRENT_DATETIME(), INTERVAL @days DAY)
+        )
         ORDER BY date ASC
     """
 
@@ -178,7 +188,18 @@ def get_stock_summaries(symbols: list[str]) -> list[StockSummary]:
     settings = get_settings()
 
     query = f"""
-        WITH ranked AS (
+        WITH combined AS (
+            -- Universe stocks (lead-lag analysis set)
+            SELECT ticker, date, close, volume
+            FROM {settings.fq_market_data}
+            WHERE ticker IN UNNEST(@symbols)
+            UNION ALL
+            -- General extra stocks (GOOG, PLTR, LMND, etc.)
+            SELECT ticker, date, close, volume
+            FROM {settings.fq_general_market_data}
+            WHERE ticker IN UNNEST(@symbols)
+        ),
+        ranked AS (
             SELECT
                 o.ticker,
                 COALESCE(s.company_name, o.ticker) AS company_name,
@@ -186,9 +207,8 @@ def get_stock_summaries(symbols: list[str]) -> list[StockSummary]:
                 o.close,
                 o.volume,
                 ROW_NUMBER() OVER (PARTITION BY o.ticker ORDER BY o.date DESC) AS rn
-            FROM {settings.fq_market_data} o
+            FROM combined o
             LEFT JOIN {settings.fq_ticker_metadata} s ON o.ticker = s.ticker
-            WHERE o.ticker IN UNNEST(@symbols)
         ),
         today AS (
             SELECT ticker, company_name,
@@ -270,9 +290,15 @@ def get_stock_detail(symbol: str) -> StockDetail:
             SELECT
                 MAX(close) AS high_52w,
                 MIN(close) AS low_52w
-            FROM {settings.fq_market_data}
-            WHERE ticker = @symbol
-              AND date >= DATE_SUB(CURRENT_DATE(), INTERVAL 365 DAY)
+            FROM (
+                SELECT close FROM {settings.fq_market_data}
+                WHERE ticker = @symbol
+                  AND date >= DATE_SUB(CURRENT_DATE(), INTERVAL 365 DAY)
+                UNION ALL
+                SELECT close FROM {settings.fq_general_market_data}
+                WHERE ticker = @symbol
+                  AND date >= DATE_SUB(CURRENT_DATE(), INTERVAL 365 DAY)
+            )
         ) w
     """
 
@@ -525,3 +551,178 @@ def get_network_data(
         analysis_mode = analysis_mode,
         min_signal    = min_signal,
     )
+
+
+# ── Quality Picks ─────────────────────────────────────────────────────────────
+
+def get_quality_picks(holdings: list[str], top_n: int = 10) -> list[dict]:
+    """
+    Return top-N Quality Picks for a given portfolio of holdings.
+
+    Three scores (momentum, fundamental_quality, centrality) are fetched from
+    the precomputed quality_picks_scores table.  Two portfolio-specific scores
+    (sector_diversity, volatility_compatibility) are computed on-the-fly.
+
+    Weights: momentum 35% · fundamental_quality 25% · sector_diversity 20%
+             · volatility_compatibility 10% · centrality 10%
+    """
+    settings  = get_settings()
+    client    = get_bq_client()
+    holdings_upper = [t.upper() for t in holdings]
+
+    # ── 1. Fetch all precomputed scores ───────────────────────────────────────
+    query = f"""
+        SELECT
+            ticker,
+            sector,
+            centrality_raw,
+            momentum_score,
+            fundamental_quality_score,
+            centrality_score,
+            annualized_vol
+        FROM {settings.fq_quality_picks}
+        WHERE DATE(updated_at) = (
+            SELECT MAX(DATE(updated_at)) FROM {settings.fq_quality_picks}
+        )
+    """
+    rows = list(client.query(query).result())
+    if not rows:
+        logger.warning("quality_picks_scores table is empty — returning empty list")
+        return []
+
+    import math
+
+    # Build a records list, exclude user holdings
+    records: list[dict] = []
+    for r in rows:
+        ticker = r["ticker"]
+        if ticker in holdings_upper:
+            continue
+        records.append({
+            "ticker":                    ticker,
+            "sector":                    r["sector"] or "Unknown",
+            "centrality_raw":            float(r["centrality_raw"] or 0.0),
+            "momentum_score":            float(r["momentum_score"] or 50.0),
+            "fundamental_quality_score": float(r["fundamental_quality_score"] or 50.0),
+            "centrality_score":          float(r["centrality_score"] or 50.0),
+            "annualized_vol":            r["annualized_vol"],  # may be None
+        })
+
+    if not records:
+        return []
+
+    # ── 2. Sector diversity score ─────────────────────────────────────────────
+    # Holdings sector distribution
+    holdings_sector_query = f"""
+        SELECT ticker, sector
+        FROM {settings.fq_ticker_metadata}
+        WHERE ticker IN UNNEST(@tickers)
+    """
+    job_cfg = bigquery.QueryJobConfig(
+        query_parameters=[bigquery.ArrayQueryParameter("tickers", "STRING", holdings_upper)]
+    )
+    holdings_meta = list(client.query(holdings_sector_query, job_config=job_cfg).result())
+    holdings_sectors: dict[str, int] = {}
+    for row in holdings_meta:
+        sec = row["sector"] or "Unknown"
+        holdings_sectors[sec] = holdings_sectors.get(sec, 0) + 1
+
+    total_holdings = max(len(holdings_upper), 1)
+    holdings_sector_weights = {s: c / total_holdings for s, c in holdings_sectors.items()}
+
+    def _sector_diversity(candidate_sector: str) -> float:
+        """Higher score → candidate sector is underrepresented in portfolio."""
+        weight = holdings_sector_weights.get(candidate_sector, 0.0)
+        # Invert: 0 overlap → max diversity (100); full overlap → 0
+        return round((1.0 - weight) * 100.0, 2)
+
+    # ── 3. Volatility compatibility score ─────────────────────────────────────
+    # Portfolio average annualized vol from precomputed table (holdings that exist)
+    holdings_vol_query = f"""
+        SELECT AVG(annualized_vol) AS avg_vol
+        FROM {settings.fq_quality_picks}
+        WHERE ticker IN UNNEST(@tickers)
+          AND annualized_vol IS NOT NULL
+          AND DATE(updated_at) = (
+              SELECT MAX(DATE(updated_at)) FROM {settings.fq_quality_picks}
+          )
+    """
+    vol_job_cfg = bigquery.QueryJobConfig(
+        query_parameters=[bigquery.ArrayQueryParameter("tickers", "STRING", holdings_upper)]
+    )
+    vol_rows = list(client.query(holdings_vol_query, job_config=vol_job_cfg).result())
+    portfolio_avg_vol: float = float(vol_rows[0]["avg_vol"] or 0.20) if vol_rows else 0.20
+
+    # Collect raw vol differences for candidates that have vol data
+    vol_diffs: list[tuple[int, float]] = []
+    for idx, rec in enumerate(records):
+        v = rec["annualized_vol"]
+        if v is not None:
+            vol_diffs.append((idx, abs(float(v) - portfolio_avg_vol)))
+
+    # Rank-normalize: smaller diff → higher compatibility (closer to 100)
+    if vol_diffs:
+        sorted_diffs = sorted(vol_diffs, key=lambda x: x[1])
+        n_valid = len(sorted_diffs)
+        rank_map: dict[int, float] = {}
+        for rank, (idx, _) in enumerate(sorted_diffs):
+            # rank 0 = smallest diff → score 100; rank n-1 → score ~0
+            rank_map[idx] = round((1.0 - rank / max(n_valid - 1, 1)) * 100.0, 2)
+    else:
+        rank_map = {}
+
+    # ── 4. Composite score + reasoning ────────────────────────────────────────
+    W_MOM  = 0.35
+    W_FUND = 0.25
+    W_DIV  = 0.20
+    W_VOL  = 0.10
+    W_CENT = 0.10
+
+    results: list[dict] = []
+    for idx, rec in enumerate(records):
+        sdiv  = _sector_diversity(rec["sector"])
+        vcomp = rank_map.get(idx, 50.0)   # fallback 50 if vol missing
+
+        composite = (
+            W_MOM  * rec["momentum_score"] +
+            W_FUND * rec["fundamental_quality_score"] +
+            W_DIV  * sdiv +
+            W_VOL  * vcomp +
+            W_CENT * rec["centrality_score"]
+        )
+
+        # Build concise reasoning
+        top_factors = sorted(
+            [
+                ("Momentum",            rec["momentum_score"]),
+                ("Fundamental Quality", rec["fundamental_quality_score"]),
+                ("Sector Diversity",    sdiv),
+                ("Volatility Fit",      vcomp),
+                ("Market Centrality",   rec["centrality_score"]),
+            ],
+            key=lambda x: x[1],
+            reverse=True,
+        )
+        top2 = [f[0] for f in top_factors[:2]]
+        reasoning = (
+            f"Strong {top2[0]} ({top_factors[0][1]:.0f}/100) and "
+            f"{top2[1]} ({top_factors[1][1]:.0f}/100) scores drive this pick. "
+            f"Composite: {composite:.1f}/100."
+        )
+
+        results.append({
+            "ticker":                         rec["ticker"],
+            "sector":                         rec["sector"],
+            "centrality":                     rec["centrality_raw"],
+            "composite_score":                round(composite, 2),
+            "momentum_score":                 rec["momentum_score"],
+            "fundamental_quality_score":      rec["fundamental_quality_score"],
+            "sector_diversity_score":         sdiv,
+            "volatility_compatibility_score": vcomp,
+            "centrality_score":               rec["centrality_score"],
+            "reasoning":                      reasoning,
+        })
+
+    # ── 5. Return top-N by composite score ────────────────────────────────────
+    results.sort(key=lambda x: x["composite_score"], reverse=True)
+    return results[:top_n]
