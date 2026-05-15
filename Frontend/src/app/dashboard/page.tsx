@@ -17,12 +17,32 @@ import { getCachedSummaries, getCachedIndices } from "@/src/app/lib/stockCache";
 import StockModal, { type Stock } from "@/components/ui/StockModal";
 import { SECTORS, ALL_SECTORS, filterBySector } from "@/src/app/lib/sectorData";
 
+// ─── Index display names ──────────────────────────────────────────────────────
+const INDEX_NAMES: Record<string, string> = {
+  SPX:  "S&P 500 Index",
+  IXIC: "NASDAQ Composite",
+  DJI:  "Dow Jones Industrial Average",
+};
+
 // ─── Index card ───────────────────────────────────────────────────────────────
-function IndexCard({ idx }: { idx: IndexSummary }) {
+function IndexCard({ idx, onClick }: { idx: IndexSummary; onClick: () => void }) {
+  const green = "hsl(142, 71%, 45%)";
+  const red   = "hsl(0, 84%, 60%)";
+  const color = idx.positive ? green : red;
+
   return (
-    <div
-      className="rounded-xl px-5 py-4 flex-1 min-w-0"
-      style={{ background: "hsl(215, 25%, 11%)", border: "1px solid hsl(215, 20%, 18%)" }}
+    <button
+      onClick={onClick}
+      className="rounded-xl px-5 py-4 flex-1 min-w-0 text-left transition-all"
+      style={{ background: "hsl(215, 25%, 11%)", border: "1px solid hsl(215, 20%, 18%)", cursor: "pointer" }}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.background = "hsl(215, 25%, 14%)";
+        e.currentTarget.style.border     = "1px solid hsl(215, 20%, 26%)";
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.background = "hsl(215, 25%, 11%)";
+        e.currentTarget.style.border     = "1px solid hsl(215, 20%, 18%)";
+      }}
     >
       <p className="text-xs font-medium mb-1.5" style={{ color: "hsl(215, 15%, 50%)" }}>
         {idx.symbol}
@@ -32,12 +52,9 @@ function IndexCard({ idx }: { idx: IndexSummary }) {
       </p>
       <div className="flex items-center gap-1.5">
         {idx.positive
-          ? <TrendingUp  className="w-3 h-3" style={{ color: "hsl(142, 71%, 45%)" }} />
-          : <TrendingDown className="w-3 h-3" style={{ color: "hsl(0, 84%, 60%)" }} />}
-        <p
-          className="text-sm font-semibold"
-          style={{ color: idx.positive ? "hsl(142, 71%, 45%)" : "hsl(0, 84%, 60%)" }}
-        >
+          ? <TrendingUp  className="w-3 h-3" style={{ color }} />
+          : <TrendingDown className="w-3 h-3" style={{ color }} />}
+        <p className="text-sm font-semibold" style={{ color }}>
           {idx.change} ({idx.pct})
         </p>
         <div className="ml-auto">
@@ -45,13 +62,12 @@ function IndexCard({ idx }: { idx: IndexSummary }) {
             <line
               x1="0"  y1={idx.positive ? "16" : "4"}
               x2="60" y2={idx.positive ? "4"  : "16"}
-              stroke={idx.positive ? "hsl(142, 71%, 45%)" : "hsl(0, 84%, 60%)"}
-              strokeWidth="1.5"
+              stroke={color} strokeWidth="1.5"
             />
           </svg>
         </div>
       </div>
-    </div>
+    </button>
   );
 }
 
@@ -170,6 +186,18 @@ export default function DashboardPage() {
   const [selectedSector, setSelectedSector] = useState(ALL_SECTORS);
   const [dataLoading,   setDataLoading]   = useState(true);
   const [selectedStock, setSelectedStock] = useState<Stock | null>(null);
+  const [selectedIndex, setSelectedIndex] = useState<Stock | null>(null);
+
+  function indexAsStock(idx: IndexSummary): Stock {
+    return {
+      symbol:   idx.symbol,
+      name:     INDEX_NAMES[idx.symbol] ?? idx.name,
+      price:    idx.price,
+      change:   idx.change,
+      volume:   "—",
+      positive: idx.positive,
+    };
+  }
 
   // Auth guard
   useEffect(() => {
@@ -187,12 +215,12 @@ export default function DashboardPage() {
       if (cachedStocks && !cachedStocks.stale) setStocks(cachedStocks.data);
       if (cachedIndices && !cachedIndices.stale) setIndices(cachedIndices.data);
 
-      const [freshStocks, freshIndices] = await Promise.all([
+      const [stocksResult, indicesResult] = await Promise.allSettled([
         fetchAllStocks(),
         fetchIndices(),
       ]);
-      setStocks(freshStocks);
-      setIndices(freshIndices);
+      if (stocksResult.status  === "fulfilled") setStocks(stocksResult.value);
+      if (indicesResult.status === "fulfilled") setIndices(indicesResult.value);
     } catch {
       // keep whatever we loaded from cache
     } finally {
@@ -212,12 +240,16 @@ export default function DashboardPage() {
   // Sector-filtered base set
   const sectorStocks = filterBySector(stocks, selectedSector);
 
-  // Filtered watchlist (sector + search)
-  const watchlist = sectorStocks.filter(
+  // Filtered watchlist (sector + search), saved stocks pinned to top
+  const watchlistFiltered = sectorStocks.filter(
     (s) =>
       s.symbol.toLowerCase().includes(search.toLowerCase()) ||
       s.name.toLowerCase().includes(search.toLowerCase()),
   );
+  const savedInList    = watchlistFiltered.filter((s) => isSaved(s.symbol));
+  const unsavedInList  = watchlistFiltered.filter((s) => !isSaved(s.symbol));
+  const watchlist      = [...savedInList, ...unsavedInList];
+  const savedCount     = savedInList.length;
 
   // Gainers / Losers (sector-scoped)
   const sorted = [...sectorStocks].sort((a, b) => {
@@ -238,7 +270,13 @@ export default function DashboardPage() {
           {/* ── Index Cards ── */}
           <div className="flex gap-4 mb-6">
             {indices.length > 0
-              ? indices.map((idx) => <IndexCard key={idx.symbol} idx={idx} />)
+              ? indices.map((idx) => (
+                  <IndexCard
+                    key={idx.symbol}
+                    idx={idx}
+                    onClick={() => setSelectedIndex(indexAsStock(idx))}
+                  />
+                ))
               : [1, 2, 3].map((i) => (
                   <div
                     key={i}
@@ -316,19 +354,45 @@ export default function DashboardPage() {
               {/* Rows — NO sparklines */}
               {dataLoading
                 ? Array.from({ length: 8 }).map((_, i) => <SkeletonRow key={i} />)
-                : watchlist.map((stock) => {
+                : (
+                  <>
+                  {savedCount > 0 && (
+                    <div
+                      className="flex items-center gap-2 px-5 py-1.5"
+                      style={{ borderTop: "1px solid hsl(215, 20%, 16%)", background: "hsl(215, 25%, 9%)" }}
+                    >
+                      <Star className="w-3 h-3" style={{ fill: "hsl(48, 96%, 53%)", color: "hsl(48, 96%, 53%)" }} />
+                      <span className="text-xs font-medium" style={{ color: "hsl(48, 96%, 53%)" }}>
+                        Saved
+                      </span>
+                    </div>
+                  )}
+                  {watchlist.map((stock, idx) => {
                     const saved = isSaved(stock.symbol);
+                    // Divider label that appears just before the first unsaved row
+                    const showDivider = savedCount > 0 && idx === savedCount;
                     return (
+                      <div key={stock.symbol}>
+                        {showDivider && (
+                          <div
+                            className="flex items-center gap-2 px-5 py-1.5"
+                            style={{ borderTop: "1px solid hsl(215, 20%, 20%)", background: "hsl(215, 25%, 9%)" }}
+                          >
+                            <span className="text-xs font-medium" style={{ color: "hsl(215, 15%, 38%)" }}>
+                              All stocks
+                            </span>
+                          </div>
+                        )}
                       <div
-                        key={stock.symbol}
                         onClick={() => handleRowClick(stock)}
                         className="grid px-5 py-3.5 items-center cursor-pointer transition-colors"
                         style={{
                           gridTemplateColumns: "1fr 1fr 1fr 1fr 36px",
                           borderTop:           "1px solid hsl(215, 20%, 16%)",
+                          background: saved ? "hsla(48, 96%, 53%, 0.03)" : "transparent",
                         }}
                         onMouseEnter={(e) => (e.currentTarget.style.background = "hsl(215, 25%, 14%)")}
-                        onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+                        onMouseLeave={(e) => (e.currentTarget.style.background = saved ? "hsla(48, 96%, 53%, 0.03)" : "transparent")}
                       >
                         {/* Ticker + company name */}
                         <div className="flex flex-col min-w-0">
@@ -388,8 +452,11 @@ export default function DashboardPage() {
                           </button>
                         </div>
                       </div>
+                      </div>
                     );
                   })}
+                  </>
+                )}
             </div>
 
             {/* Right column */}
@@ -485,6 +552,14 @@ export default function DashboardPage() {
         <StockModal
           stock={selectedStock}
           onClose={() => setSelectedStock(null)}
+        />
+      )}
+
+      {/* ── Index Modal ── */}
+      {selectedIndex && (
+        <StockModal
+          stock={selectedIndex}
+          onClose={() => setSelectedIndex(null)}
         />
       )}
     </div>

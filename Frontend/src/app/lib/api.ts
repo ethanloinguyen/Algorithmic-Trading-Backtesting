@@ -39,6 +39,20 @@ export interface Recommendation {
   reasoning: string;
 }
 
+/** Quality Picks — stock scored on five portfolio-aware quality dimensions */
+export interface QualityRecommendation {
+  ticker:                          string;
+  sector:                          string;
+  centrality:                      number;
+  composite_score:                 number;
+  momentum_score:                  number;
+  fundamental_quality_score:       number;
+  sector_diversity_score:          number;
+  volatility_compatibility_score:  number;
+  centrality_score:                number;
+  reasoning:                       string;
+}
+
 /** Group B — stock with ZERO detected relationship to any of your holdings */
 export interface IndependentRecommendation {
   ticker:           string;
@@ -83,6 +97,7 @@ export interface PortfolioAnalysisResponse {
   overlaps:                    OverlapResult[];
   signal_recommendations:      Recommendation[];
   independent_recommendations: IndependentRecommendation[];
+  quality_picks:               QualityRecommendation[];
   /** Sector for each known holding — always populated regardless of overlaps */
   holdings_sectors:            Record<string, string>;
 }
@@ -182,4 +197,64 @@ export async function analyzePortfolio(
   });
   if (!res.ok) throw new Error(`/api/portfolio/analyze → HTTP ${res.status} ${res.statusText}`);
   return res.json() as Promise<PortfolioAnalysisResponse>;
+}
+
+// ── Risk pipeline types + endpoint ────────────────────────────────────────────
+
+export interface StockRiskMetrics {
+  var_95: number;
+  cvar_95: number;
+  tail_risk_ratio_95: number;
+  var_99: number;
+  cvar_99: number;
+  tail_risk_ratio_99: number;
+  expected_max_drawdown: number;
+  worst_case_max_drawdown_p95: number;
+  prob_loss: number;
+  prob_return_above_10pct: number;
+  skewness: number;
+  avg_recovery_days: number | null;
+  sortino_ratio_historical_252d: number | null;
+}
+
+export interface PortfolioRiskMetrics extends StockRiskMetrics {
+  diversification_benefit_95: number;
+  diversification_benefit_99: number;
+  risk_contribution_per_stock_95: Record<string, number>;
+  risk_contribution_per_stock_99: Record<string, number>;
+}
+
+export interface ClusteringPick {
+  sector: string;
+  stock: string;
+  cluster: number;
+  is_medoid: boolean;
+  avg_dcor_to_portfolio: number;
+  mean_intra_dist: number;
+  n_sector_candidates: number;
+  cluster_size: number;
+}
+
+export interface RiskPipelineResult {
+  user_portfolio: string[];
+  recommendations: ClusteringPick[];
+  risk: {
+    tickers: string[];
+    missing: string[];
+    weights: Record<string, number>;
+    horizon_days: number;
+    n_simulations: number;
+    per_stock: Record<string, StockRiskMetrics>;
+    portfolio: PortfolioRiskMetrics;
+  };
+}
+
+export async function runRiskPipeline(tickers: string[]): Promise<RiskPipelineResult> {
+  const res = await fetch(`${BASE}/api/portfolio/risk-pipeline`, {
+    method: "POST", cache: "no-store",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ tickers: tickers.map(t => t.toUpperCase()) }),
+  });
+  if (!res.ok) throw new Error(`/api/portfolio/risk-pipeline → HTTP ${res.status} ${res.statusText}`);
+  return res.json() as Promise<RiskPipelineResult>;
 }

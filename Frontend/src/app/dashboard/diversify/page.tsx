@@ -1,6 +1,7 @@
 // Frontend/src/app/dashboard/diversify/page.tsx
 "use client";
 import { useState, useRef, useEffect } from "react";
+import { useAuth } from "@/src/app/context/AuthContext";
 import Sidebar from "@/components/ui/Sidebar";
 import SpiderChart from "@/components/ui/SpiderChart";
 import SectorDonut from "@/components/ui/SectorDonut";
@@ -8,15 +9,20 @@ import StockModal, { type Stock } from "@/components/ui/StockModal";
 import {
   analyzePortfolio,
   fetchStockSummaries,
+  runRiskPipeline,
   type OverlapResult,
   type Recommendation,
   type IndependentRecommendation,
+  type QualityRecommendation,
   type AnalysisMode,
+  type RiskPipelineResult,
+  type ClusteringPick,
 } from "@/src/app/lib/api";
 import {
   AlertTriangle, TrendingUp, Plus, X,
   ChevronDown, ChevronUp, Loader2, Sparkles, ArrowRight,
-  ShieldAlert, BarChart3, Unlink, Info, Zap, Globe, Link2, Layers, Timer,
+  ShieldAlert, BarChart3, Info, Zap, Globe, Link2, Layers, Timer,
+  Activity,
 } from "lucide-react";
 
 // ── Design tokens ─────────────────────────────────────────────────────────────
@@ -58,37 +64,37 @@ const PRESETS = [
   { label: "Healthcare", tickers: ["JNJ","UNH","MRK","PFE","ABBV"] },
 ];
 
-// ── Factor explanations — 5 factors ──────────────────────────────────────────
+// ── Factor explanations — 5 quality factors ──────────────────────────────────
 const FACTOR_EXPLANATIONS = [
   {
-    label: "Signal Strength", weight: "40%", color: BLUE, Icon: Zap,
-    what: "How statistically robust and economically meaningful the lead-lag relationship is between the candidate stock and your holdings.",
-    how: "Frequency-weighted mean signal strength across all connections — pairs that appeared consistently across more 15-year rolling windows contribute proportionally more weight.",
-    why: "A high signal score means the relationship is not a statistical fluke — it appeared reliably over time and was historically exploitable.",
+    label: "Momentum", weight: "35%", color: BLUE, Icon: TrendingUp,
+    what: "6-month price return, rank-normalised across the filtered universe of ~800 quality stocks.",
+    how: "Latest close divided by the closing price closest to 6 months ago (±7-day window), then percentile-ranked 0–100 across all stocks.",
+    why: "Momentum is one of the most empirically validated equity factors. A high score means the stock has been outperforming peers recently — a signal of positive market sentiment and trend continuation.",
   },
   {
-    label: "Signal Durability", weight: "15%", color: "hsl(195,80%,50%)", Icon: Timer,
-    what: "How long the lead-lag signal persists before decaying — the half-life of the relationship.",
-    how: "The best (longest) half-life among all connections this candidate has with your holdings, normalized 0–100 with a 252-day cap.",
-    why: "A signal that decays in 20 days gives very little time to act. One persisting 150+ days is structurally more reliable for portfolio construction.",
+    label: "Fundamental Quality", weight: "25%", color: GREEN, Icon: BarChart3,
+    what: "A blend of valuation (P/E ratio vs. sector peers) and size (log market cap), capturing 'quality at a reasonable price'.",
+    how: "50% from within-sector P/E rank (lower P/E = higher score, capped 0–100) and 50% from log market-cap rank. Missing P/E defaults to the sector median.",
+    why: "Fundamentally strong, reasonably valued companies have historically shown better long-term risk-adjusted returns than expensive or low-quality peers.",
   },
   {
-    label: "Portfolio Coverage", weight: "15%", color: AMBER, Icon: Link2,
-    what: "How many of your existing holdings this stock has a detected relationship with.",
-    how: "Count of your holdings that appear in a significant lead-lag pair with this candidate, divided by the maximum coverage across all candidates.",
-    why: "A stock that connects to four of your holdings is more efficient than one connecting to one — you gain informational coverage across more positions.",
+    label: "Sector Diversity", weight: "20%", color: AMBER, Icon: Layers,
+    what: "How much new sector exposure this stock adds relative to your current portfolio sector distribution.",
+    how: "Inverted portfolio sector weight: a stock in a sector you have 0% exposure to scores 100; a stock in your most concentrated sector scores proportionally lower.",
+    why: "Different sectors are driven by different macro factors (rates, oil, consumer spending). Adding an underrepresented sector reduces the chance a single economic event affects your whole portfolio.",
   },
   {
-    label: "Sector Diversity", weight: "20%", color: GREEN, Icon: Layers,
-    what: "How much new sector exposure this stock adds relative to what you already own.",
-    how: "A full bonus (100) if your portfolio has zero stocks in this sector. The bonus scales down proportionally as your sector concentration increases.",
-    why: "Different sectors respond to different economic drivers. Adding an underrepresented sector reduces the risk that a single macro event affects your entire portfolio.",
+    label: "Volatility Fit", weight: "10%", color: "hsl(195,80%,50%)", Icon: Activity,
+    what: "How closely this stock's annualised volatility matches the average volatility profile of your existing portfolio.",
+    how: "Absolute difference between candidate annualised vol and portfolio average vol, rank-normalised — smallest difference scores 100.",
+    why: "Adding a stock whose risk profile is compatible with your existing holdings avoids unintended volatility spikes. It's not about avoiding risk — it's about adding the type of risk you already understand.",
   },
   {
     label: "Market Centrality", weight: "10%", color: PURPLE, Icon: Globe,
     what: "How connected this stock is across the entire 2000-stock market network, not just to your holdings.",
-    how: "Normalized eigenvector centrality — stocks that are highly connected to other highly connected stocks score highest. Gracefully zeroed if centrality data is unavailable.",
-    why: "Central stocks tend to transmit information efficiently and are more likely to be reliable signal sources.",
+    how: "Eigenvector centrality from the full lead-lag network, rank-normalised 0–100. Gracefully zeroed if centrality data is unavailable.",
+    why: "Central stocks transmit and receive information efficiently across the market. They tend to be more liquid, more widely followed, and more reliably priced.",
   },
 ];
 
@@ -115,13 +121,6 @@ function SectorTag({ sector }: { sector: string }) {
   );
 }
 
-function DirectionTag({ direction }: { direction: string }) {
-  if (direction === "leads_your_holdings")
-    return <span className="text-xs px-2 py-0.5 rounded-full" style={{ background: GREEN_DIM, color: GREEN }}>Leads your stocks</span>;
-  if (direction === "follows_your_holdings")
-    return <span className="text-xs px-2 py-0.5 rounded-full" style={{ background: BLUE_DIM, color: BLUE }}>Follows your stocks</span>;
-  return <span className="text-xs px-2 py-0.5 rounded-full" style={{ background: "hsla(38,92%,50%,0.15)", color: AMBER }}>Bidirectional</span>;
-}
 
 function SectionHeader({ icon, label, count, color, dimColor, subtitle }: {
   icon: React.ReactNode; label: string; count: number;
@@ -377,8 +376,52 @@ function IndependentRecCard({ rec, rank, companyNames, onTickerClick }: {
   );
 }
 
+// ── Risk Assessment panel ─────────────────────────────────────────────────────
+function RiskResultPanel({ result, onTickerClick }: {
+  result: RiskPipelineResult;
+  onTickerClick: (ticker: string) => void;
+}) {
+  const { recommendations, risk } = result;
+  const p = risk.portfolio;
+  const pct = (v: number) => `${(v * 100).toFixed(1)}%`;
+  const lossColor = RED;
+  const benefitColor = (v: number) => v > 0 ? GREEN : RED;
+
+  const portfolioMetrics = [
+    { label: "VaR 95%",             value: pct(p.var_95),                       color: lossColor,              hint: "Worst loss 95% of the time" },
+    { label: "CVaR 95%",            value: pct(p.cvar_95),                      color: lossColor,              hint: "Avg loss in worst 5% of scenarios" },
+    { label: "Expected Drawdown",   value: pct(p.expected_max_drawdown),        color: lossColor,              hint: "Average peak-to-trough decline" },
+    { label: "Prob of Loss",        value: pct(p.prob_loss),                    color: p.prob_loss > 0.5 ? RED : AMBER, hint: "Probability of any loss at horizon" },
+    { label: "Diversif. Benefit",   value: pct(p.diversification_benefit_95),   color: benefitColor(p.diversification_benefit_95), hint: "VaR improvement vs. equal-weight avg" },
+    { label: "Worst-Case DD p95",   value: pct(p.worst_case_max_drawdown_p95),  color: lossColor,              hint: "Drawdown exceeded only 5% of paths" },
+  ];
+
+  return (
+    <>
+      {/* Portfolio risk metrics */}
+      <div className="rounded-xl p-5 mb-4" style={CARD}>
+        <p className="text-xs font-semibold mb-4 tracking-wide" style={{ color: TEXT_SEC }}>
+          PORTFOLIO METRICS — {risk.horizon_days}-DAY HORIZON · {risk.n_simulations.toLocaleString()} PATHS
+        </p>
+        <div className="grid grid-cols-3 gap-3">
+          {portfolioMetrics.map(({ label, value, color, hint }) => (
+            <div key={label} className="rounded-lg p-3"
+              style={{ background: "hsl(215,25%,9%)", border: `1px solid ${BORDER_D}` }}>
+              <p className="text-xs mb-1" style={{ color: TEXT_MUT }}>{label}</p>
+              <p className="text-xl font-bold" style={{ color }}>{value}</p>
+              <p className="text-xs mt-1 leading-tight" style={{ color: TEXT_MUT }}>{hint}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+
+    </>
+  );
+}
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 export default function DiversifyPage() {
+  const { customPortfolios } = useAuth();
   const [analysisMode,  setAnalysisMode]  = useState<AnalysisMode>("broad_market");
   const [resultMode,    setResultMode]    = useState<AnalysisMode>("broad_market");
   const [inputVal,      setInputVal]      = useState("");
@@ -391,14 +434,18 @@ export default function DiversifyPage() {
     overlaps:                    OverlapResult[];
     signal_recommendations:      Recommendation[];
     independent_recommendations: IndependentRecommendation[];
+    quality_picks:               QualityRecommendation[];
     holdings_sectors:            Record<string, string>;
   } | null>(null);
   const [activeSpiderIdx, setActiveSpiderIdx] = useState<number | null>(0);
   const [companyNames,    setCompanyNames]    = useState<Record<string, string>>({});
   const [modalStock,      setModalStock]      = useState<Stock | null>(null);
+  const [riskResult,      setRiskResult]      = useState<RiskPipelineResult | null>(null);
+  const [riskLoading,     setRiskLoading]     = useState(false);
+  const [riskError,       setRiskError]       = useState<string | null>(null);
 
   const hoveredTicker = activeSpiderIdx !== null
-    ? (result?.signal_recommendations[activeSpiderIdx]?.ticker ?? null)
+    ? (result?.quality_picks?.[activeSpiderIdx]?.ticker ?? null)
     : null;
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -414,7 +461,7 @@ export default function DiversifyPage() {
     return dist;
   })();
 
-  const hoveredRec = result?.signal_recommendations.find(r => r.ticker === hoveredTicker) ?? null;
+  const hoveredRec = result?.quality_picks?.find(r => r.ticker === hoveredTicker) ?? null;
 
   const addTicker = (raw: string) => {
     const parts = raw.toUpperCase().split(/[\s,]+/).filter(Boolean);
@@ -440,6 +487,7 @@ export default function DiversifyPage() {
       : tickers;
     if (!toAnalyze.length) return;
     setLoading(true); setError(null); setResult(null); setActiveSpiderIdx(0);
+    setRiskResult(null); setRiskLoading(true); setRiskError(null);
     try {
       const data = await analyzePortfolio(toAnalyze, analysisMode);
       setResult(data);
@@ -447,7 +495,7 @@ export default function DiversifyPage() {
       const allTickers = [
         ...data.tickers_analyzed,
         ...data.signal_recommendations.map(r => r.ticker),
-        ...data.independent_recommendations.map(r => r.ticker),
+        ...(data.quality_picks ?? []).map(r => r.ticker),
       ];
       const uniqueTickers = [...new Set(allTickers)];
       if (uniqueTickers.length > 0) {
@@ -459,8 +507,14 @@ export default function DiversifyPage() {
           })
           .catch(() => {});
       }
+      // Fire risk pipeline in background — portfolio analysis results show immediately
+      runRiskPipeline(toAnalyze)
+        .then(riskData => setRiskResult(riskData))
+        .catch(err => setRiskError(err instanceof Error ? err.message : "Risk assessment failed."))
+        .finally(() => setRiskLoading(false));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong.");
+      setRiskLoading(false);
     } finally {
       setLoading(false);
     }
@@ -469,6 +523,7 @@ export default function DiversifyPage() {
   const reset = () => {
     setTickers([]); setInputVal(""); setResult(null); setError(null);
     setActiveSpiderIdx(null); setCompanyNames({}); setModalStock(null);
+    setRiskResult(null); setRiskLoading(false); setRiskError(null);
     setTimeout(() => inputRef.current?.focus(), 0);
   };
 
@@ -485,7 +540,7 @@ export default function DiversifyPage() {
     });
   };
 
-  const signalRecs = result?.signal_recommendations ?? [];
+  const qualityPicks = result?.quality_picks ?? [];
 
   return (
     <div className="min-h-screen" style={{ background: BG }}>
@@ -545,28 +600,26 @@ export default function DiversifyPage() {
                   {p.label}
                 </button>
               ))}
+              {customPortfolios.length > 0 && (
+                <>
+                  <span className="text-xs" style={{ color: "hsl(215,20%,28%)" }}>|</span>
+                  <span className="text-xs" style={{ color: TEXT_MUT }}>My portfolios:</span>
+                  {customPortfolios.map(p => (
+                    <button
+                      key={p.id}
+                      onClick={() => { setTickers(p.tickers); setResult(null); }}
+                      className="text-xs px-2.5 py-1 rounded-md transition-colors"
+                      style={{ background: "hsla(217,91%,60%,0.1)", border: "1px solid hsla(217,91%,60%,0.3)", color: "hsl(217,91%,70%)" }}
+                      onMouseEnter={e => (e.currentTarget.style.background = "hsla(217,91%,60%,0.2)")}
+                      onMouseLeave={e => (e.currentTarget.style.background = "hsla(217,91%,60%,0.1)")}>
+                      {p.name}
+                    </button>
+                  ))}
+                </>
+              )}
             </div>
 
-            {/* Analysis mode toggle */}
-            <div className="flex items-center gap-2 mt-4">
-              <span className="text-xs" style={{ color: TEXT_MUT }}>Analysis scope:</span>
-              <div className="flex items-center p-0.5 rounded-lg"
-                style={{ background: "hsl(215,25%,9%)", border: `1px solid ${BORDER}` }}>
-                {(["broad_market", "in_sector"] as const).map(mode => (
-                  <button
-                    key={mode}
-                    onClick={() => { setAnalysisMode(mode); setResult(null); }}
-                    className="px-3 py-1.5 rounded-md text-xs font-semibold transition-colors"
-                    style={analysisMode === mode
-                      ? { background: BLUE, color: "white" }
-                      : { color: TEXT_SEC, background: "transparent" }}>
-                    {mode === "broad_market" ? "Broad Market" : "In-Sector"}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="flex items-center gap-3 mt-3">
+            <div className="flex items-center gap-3 mt-4">
               <button onClick={handleAnalyze}
                 disabled={loading || (tickers.length === 0 && !inputVal.trim())}
                 className="flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-semibold disabled:opacity-40"
@@ -599,21 +652,6 @@ export default function DiversifyPage() {
           {/* Results */}
           {hasResult && result && (
             <div>
-              {/* Active mode banner */}
-              <div className="rounded-xl px-5 py-3 mb-4 flex items-center gap-2"
-                style={{
-                  background: resultMode === "in_sector" ? "hsla(270,70%,65%,0.08)" : BLUE_DIM,
-                  border: `1px solid ${resultMode === "in_sector" ? "hsla(270,70%,65%,0.3)" : "hsla(217,91%,60%,0.3)"}`,
-                }}>
-                <BarChart3 className="w-4 h-4 flex-shrink-0"
-                  style={{ color: resultMode === "in_sector" ? PURPLE : BLUE }} />
-                <p className="text-xs" style={{ color: resultMode === "in_sector" ? PURPLE : BLUE }}>
-                  {resultMode === "in_sector"
-                    ? "In-Sector analysis — pairs are residualized against both market and sector returns, and only stocks within the same sector can form relationships."
-                    : "Broad Market analysis — pairs are residualized against market returns across all sectors."}
-                </p>
-              </div>
-
               {result.unknown_tickers.length > 0 && (
                 <div className="rounded-xl px-5 py-3 mb-4 flex items-center gap-2"
                   style={{ background: "hsla(38,92%,50%,0.1)", border: "1px solid hsla(38,92%,50%,0.3)" }}>
@@ -625,12 +663,11 @@ export default function DiversifyPage() {
               )}
 
               {/* ── Stat cards — original design with icons fully restored ── */}
-              <div className="grid grid-cols-4 gap-3 mb-6">
+              <div className="grid grid-cols-3 gap-3 mb-6">
                 {[
-                  { label: "Analyzed",     value: result.tickers_analyzed.length,            color: BLUE,   icon: <BarChart3 className="w-4 h-4" /> },
-                  { label: "Overlaps",     value: result.overlaps.length,                    color: result.overlaps.length > 0 ? AMBER : GREEN, icon: <ShieldAlert className="w-4 h-4" /> },
-                  { label: "Signal Picks", value: result.signal_recommendations.length,      color: BLUE,   icon: <Sparkles className="w-4 h-4" /> },
-                  { label: "Pure Picks",   value: result.independent_recommendations.length, color: PURPLE, icon: <Unlink className="w-4 h-4" /> },
+                  { label: "Analyzed",      value: result.tickers_analyzed.length, color: BLUE,  icon: <BarChart3 className="w-4 h-4" /> },
+                  { label: "Overlaps",      value: result.overlaps.length,         color: result.overlaps.length > 0 ? AMBER : GREEN, icon: <ShieldAlert className="w-4 h-4" /> },
+                  { label: "Quality Picks", value: qualityPicks.length,            color: BLUE,  icon: <Sparkles className="w-4 h-4" /> },
                 ].map(({ label, value, color, icon }) => (
                   <div key={label} className="rounded-xl p-4" style={CARD}>
                     <div className="flex items-center gap-2 mb-2">
@@ -645,41 +682,62 @@ export default function DiversifyPage() {
               {/* Factor explanations — new version's layout */}
               <FactorExplanations />
 
-              {/* Concentration Risk */}
-              <section className="mb-8">
-                <SectionHeader
-                  icon={<ShieldAlert className="w-4 h-4" />}
-                  label="Hidden Concentration Risk" count={result.overlaps.length}
-                  color={AMBER} dimColor="hsla(38,92%,50%,0.15)"
-                  subtitle="Lead-lag relationships detected within your existing holdings — you may be less diversified than you think"
-                />
-                {result.overlaps.length === 0 ? (
-                  <div className="rounded-xl px-6 py-8 text-center" style={CARD}>
-                    <TrendingUp className="w-8 h-8 mx-auto mb-3" style={{ color: GREEN }} />
-                    <p className="text-sm font-medium mb-1" style={{ color: TEXT_PRI }}>No significant overlaps found</p>
-                    <p className="text-xs" style={{ color: TEXT_SEC }}>Your holdings don't show strong lead-lag dependencies.</p>
+              {/* Risk Assessment */}
+              {(riskLoading || riskResult !== null || riskError !== null) && (
+                <section className="mb-8">
+                  <div className="flex items-center gap-2 mb-1">
+                    <Activity className="w-4 h-4" style={{ color: GREEN }} />
+                    <h2 className="text-base font-semibold" style={{ color: TEXT_PRI }}>Risk Assessment</h2>
+                    {riskLoading && (
+                      <span className="text-xs px-2 py-0.5 rounded-full ml-1 flex items-center gap-1"
+                        style={{ background: BLUE_DIM, color: BLUE }}>
+                        <Loader2 className="w-3 h-3 animate-spin" />running
+                      </span>
+                    )}
                   </div>
-                ) : (
-                  <div className="space-y-2">
-                    {result.overlaps.map((o, i) => (
-                      <OverlapCard key={i} overlap={o} companyNames={companyNames} onTickerClick={handleTickerClick} />
-                    ))}
-                  </div>
-                )}
-              </section>
+                  <p className="text-xs mb-4" style={{ color: TEXT_MUT }}>
+                    K-Medoids sector picks decorrelated from your portfolio · Monte Carlo simulation ({riskResult?.risk.horizon_days ?? 63}-day horizon, {(riskResult?.risk.n_simulations ?? 1000).toLocaleString()} paths)
+                  </p>
 
-              {/* Signal-connected recommendations */}
-              {signalRecs.length > 0 && (
+                  {riskLoading && !riskResult && (
+                    <div className="rounded-xl px-6 py-10 text-center" style={CARD}>
+                      <Loader2 className="w-8 h-8 mx-auto mb-3 animate-spin" style={{ color: BLUE }} />
+                      <p className="text-sm font-medium mb-1" style={{ color: TEXT_PRI }}>Running clustering and simulation</p>
+                      <p className="text-xs leading-relaxed max-w-xs mx-auto" style={{ color: TEXT_SEC }}>
+                        Querying BigQuery, running K-Medoids sweep, and simulating Monte Carlo paths — typically 30–60 seconds
+                      </p>
+                    </div>
+                  )}
+
+                  {riskError && (
+                    <div className="rounded-xl px-5 py-4 flex items-center gap-3"
+                      style={{ background: "hsla(0,84%,60%,0.1)", border: "1px solid hsla(0,84%,60%,0.3)" }}>
+                      <AlertTriangle className="w-4 h-4 flex-shrink-0" style={{ color: RED }} />
+                      <p className="text-sm" style={{ color: RED }}>{riskError}</p>
+                    </div>
+                  )}
+
+                  {riskResult && (
+                    <RiskResultPanel
+                      result={riskResult}
+                      onTickerClick={handleTickerClick}
+                    />
+                  )}
+                </section>
+              )}
+
+              {/* Quality Picks */}
+              {qualityPicks.length > 0 && (
                 <section className="mb-8">
                   <SectionHeader
                     icon={<Sparkles className="w-4 h-4" />}
-                    label="Signal-Connected Recommendations" count={signalRecs.length}
+                    label="Quality Picks" count={qualityPicks.length}
                     color={BLUE} dimColor={BLUE_DIM}
-                    subtitle="Stocks with detected lead-lag relationships to your holdings — click a ticker on the chart or in the list to explore its profile"
+                    subtitle="Top stocks ranked by five portfolio-aware quality factors — click a ticker on the chart or in the legend to explore its full profile"
                   />
                   <div className="mb-4">
                     <SpiderChart
-                      recommendations={signalRecs}
+                      recommendations={qualityPicks}
                       activeIdx={activeSpiderIdx}
                       onActiveChange={setActiveSpiderIdx}
                       onTickerClick={handleTickerClick}
@@ -696,36 +754,99 @@ export default function DiversifyPage() {
                 </section>
               )}
 
-              {/* Independent recommendations */}
-              <section className="mb-8">
-                <SectionHeader
-                  icon={<Unlink className="w-4 h-4" />}
-                  label="Independent Recommendations" count={result.independent_recommendations.length}
-                  color={PURPLE} dimColor={PURPLE_DIM}
-                  subtitle="Stocks with zero detected lead-lag relationships to your holdings — ranked by sector gap (70%) and market centrality (30%)"
-                />
-                {result.independent_recommendations.length > 0 && (
-                  <p className="text-xs mb-4 px-1 leading-relaxed" style={{ color: TEXT_MUT }}>
-                    These stocks have no detected relationship to your holdings, so signal strength,
-                    durability, and coverage are not applicable. Ranked purely by new sector exposure
-                    and market network centrality.
-                  </p>
-                )}
-                {result.independent_recommendations.length === 0 ? (
-                  <div className="rounded-xl px-6 py-8 text-center" style={CARD}>
-                    <p className="text-sm" style={{ color: TEXT_SEC }}>No independent stocks found.</p>
+              {/* K-Medoids Sector Picks */}
+              {riskResult && riskResult.recommendations.length > 0 && (
+                <section className="mb-8">
+                  <div className="flex items-center gap-2 mb-1">
+                    <Sparkles className="w-4 h-4" style={{ color: GREEN }} />
+                    <h2 className="text-base font-semibold" style={{ color: TEXT_PRI }}>K-Medoids Sector Picks</h2>
+                    <span className="text-xs px-2 py-0.5 rounded-full ml-1"
+                      style={{ background: GREEN_DIM, color: GREEN }}>
+                      {riskResult.recommendations.length} picks
+                    </span>
                   </div>
-                ) : (
-                  <div className="space-y-2">
-                    {result.independent_recommendations.map((rec, i) => (
-                      <IndependentRecCard
-                        key={rec.ticker} rec={rec} rank={i + 1}
-                        companyNames={companyNames} onTickerClick={handleTickerClick}
-                      />
+                  <p className="text-xs mb-4" style={{ color: TEXT_MUT }}>
+                    Stocks selected via K-Medoids clustering — decorrelated from your portfolio by sector
+                  </p>
+                  <div className="grid grid-cols-3 gap-3">
+                    {riskResult.recommendations.map((rec: ClusteringPick) => (
+                      <div key={rec.stock} className="rounded-xl p-4 flex flex-col gap-2" style={CARD}>
+                        <div className="flex items-center justify-between">
+                          <button className="text-sm font-bold hover:underline" style={{ color: TEXT_PRI }}
+                            onClick={() => handleTickerClick(rec.stock)}>
+                            {rec.stock}
+                            {rec.is_medoid && <span className="ml-1 text-xs" style={{ color: AMBER }}>★</span>}
+                          </button>
+                          <span className="text-xs px-1.5 py-0.5 rounded font-mono"
+                            style={{ background: GREEN_DIM, color: GREEN }}>
+                            {rec.avg_dcor_to_portfolio.toFixed(3)}
+                          </span>
+                        </div>
+                        <SectorTag sector={rec.sector} />
+                      </div>
                     ))}
                   </div>
-                )}
-              </section>
+                  {/* Per-stock risk table */}
+                  <div className="rounded-xl overflow-hidden mt-4" style={CARD}>
+                    <div className="px-5 py-3" style={{ borderBottom: `1px solid ${BORDER_D}` }}>
+                      <p className="text-xs font-semibold tracking-wide" style={{ color: TEXT_SEC }}>PER-STOCK RISK</p>
+                    </div>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr style={{ borderBottom: `1px solid ${BORDER_D}` }}>
+                            {["Ticker", "Sector", "VaR 95%", "CVaR 95%", "Prob Loss", "Max Drawdown"].map(h => (
+                              <th key={h} className="px-4 py-2 text-left font-medium" style={{ color: TEXT_MUT }}>{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {riskResult.risk.tickers.map((ticker, i) => {
+                            const s = riskResult.risk.per_stock[ticker];
+                            if (!s) return null;
+                            const rec = riskResult.recommendations.find((r: ClusteringPick) => r.stock === ticker);
+                            const pct = (v: number) => `${(v * 100).toFixed(1)}%`;
+                            return (
+                              <tr key={ticker}
+                                style={{ borderBottom: i < riskResult.risk.tickers.length - 1 ? `1px solid ${BORDER_D}` : "none" }}
+                                onMouseEnter={e => (e.currentTarget.style.background = CARD_H)}
+                                onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
+                              >
+                                <td className="px-4 py-2.5">
+                                  <button className="font-bold hover:underline" style={{ color: TEXT_PRI }}
+                                    onClick={() => handleTickerClick(ticker)}>
+                                    {ticker}
+                                  </button>
+                                </td>
+                                <td className="px-4 py-2.5">
+                                  {rec && <SectorTag sector={rec.sector} />}
+                                </td>
+                                <td className="px-4 py-2.5 font-mono" style={{ color: RED }}>{pct(s.var_95)}</td>
+                                <td className="px-4 py-2.5 font-mono" style={{ color: RED }}>{pct(s.cvar_95)}</td>
+                                <td className="px-4 py-2.5 font-mono"
+                                  style={{ color: s.prob_loss > 0.5 ? RED : AMBER }}>{pct(s.prob_loss)}</td>
+                                <td className="px-4 py-2.5 font-mono" style={{ color: RED }}>{pct(s.expected_max_drawdown)}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  {riskResult.risk.missing.length > 0 ? (
+                    <p className="text-xs mt-3 px-1" style={{ color: TEXT_MUT }}>
+                      ★ = cluster medoid &nbsp;·&nbsp; dcor badge = decorrelation from your portfolio (lower is better)
+                      &nbsp;·&nbsp; {riskResult.risk.missing.length} ticker{riskResult.risk.missing.length > 1 ? "s" : ""} unavailable: {riskResult.risk.missing.join(", ")}
+                    </p>
+                  ) : (
+                    <p className="text-xs mt-3 px-1" style={{ color: TEXT_MUT }}>
+                      ★ = cluster medoid &nbsp;·&nbsp; dcor badge = decorrelation from your portfolio (lower is better)
+                    </p>
+                  )}
+                </section>
+              )}
+
             </div>
           )}
 

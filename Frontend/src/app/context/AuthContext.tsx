@@ -27,26 +27,38 @@ export interface SavedStock {
   name:   string;
 }
 
+export interface CustomPortfolio {
+  id:      string;
+  name:    string;
+  tickers: string[];
+}
+
 interface AuthContextValue {
-  user:        User | null;
-  loading:     boolean;
-  savedStocks: SavedStock[];
-  isSaved:     (symbol: string) => boolean;
-  toggleSave:  (stock: SavedStock) => Promise<void>;
-  trackClick:  (symbol: string) => Promise<void>;
-  logout:      () => Promise<void>;
+  user:             User | null;
+  loading:          boolean;
+  savedStocks:      SavedStock[];
+  isSaved:          (symbol: string) => boolean;
+  toggleSave:       (stock: SavedStock) => Promise<void>;
+  trackClick:       (symbol: string) => Promise<void>;
+  logout:           () => Promise<void>;
+  customPortfolios: CustomPortfolio[];
+  addPortfolio:     (name: string, tickers: string[]) => Promise<void>;
+  removePortfolio:  (id: string) => Promise<void>;
 }
 
 // ── Context ───────────────────────────────────────────────────────────────────
 
 const AuthContext = createContext<AuthContextValue>({
-  user:        null,
-  loading:     true,
-  savedStocks: [],
-  isSaved:     () => false,
-  toggleSave:  async () => {},
-  trackClick:  async () => {},
-  logout:      async () => {},
+  user:             null,
+  loading:          true,
+  savedStocks:      [],
+  isSaved:          () => false,
+  toggleSave:       async () => {},
+  trackClick:       async () => {},
+  logout:           async () => {},
+  customPortfolios: [],
+  addPortfolio:     async () => {},
+  removePortfolio:  async () => {},
 });
 
 export function useAuth() {
@@ -56,9 +68,10 @@ export function useAuth() {
 // ── Provider ──────────────────────────────────────────────────────────────────
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user,        setUser]        = useState<User | null>(null);
-  const [loading,     setLoading]     = useState(true);
-  const [savedStocks, setSavedStocks] = useState<SavedStock[]>([]);
+  const [user,             setUser]             = useState<User | null>(null);
+  const [loading,          setLoading]          = useState(true);
+  const [savedStocks,      setSavedStocks]      = useState<SavedStock[]>([]);
+  const [customPortfolios, setCustomPortfolios] = useState<CustomPortfolio[]>([]);
 
   // Load saved stocks from Firestore and pre-warm cache for top-clicked stocks
   const loadUserData = useCallback(async (uid: string) => {
@@ -67,10 +80,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     if (snap.exists()) {
       setSavedStocks((snap.data().savedStocks as SavedStock[]) ?? []);
+      setCustomPortfolios((snap.data().customPortfolios as CustomPortfolio[]) ?? []);
     } else {
       // First login — create user document
-      await setDoc(ref, { savedStocks: [], clickedStocks: {} });
+      await setDoc(ref, { savedStocks: [], clickedStocks: {}, customPortfolios: [] });
       setSavedStocks([]);
+      setCustomPortfolios([]);
     }
 
     // Pre-warm: call the backend API for top-clicked stocks.
@@ -128,9 +143,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     fetchOHLCV(symbol, "1M").catch(() => {});
   }, [user]);
 
+  const addPortfolio = useCallback(async (name: string, tickers: string[]) => {
+    if (!user) return;
+    const newPortfolio: CustomPortfolio = {
+      id:      `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      name:    name.trim(),
+      tickers,
+    };
+    const updated = [...customPortfolios, newPortfolio];
+    setCustomPortfolios(updated);
+    await setDoc(doc(db, "users", user.uid), { customPortfolios: updated }, { merge: true });
+  }, [user, customPortfolios]);
+
+  const removePortfolio = useCallback(async (id: string) => {
+    if (!user) return;
+    const updated = customPortfolios.filter(p => p.id !== id);
+    setCustomPortfolios(updated);
+    await setDoc(doc(db, "users", user.uid), { customPortfolios: updated }, { merge: true });
+  }, [user, customPortfolios]);
+
   const logout = useCallback(async () => {
     await signOut(auth);
     setSavedStocks([]);
+    setCustomPortfolios([]);
   }, []);
 
   const isSaved = useCallback(
@@ -139,7 +174,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   return (
-    <AuthContext.Provider value={{ user, loading, savedStocks, isSaved, toggleSave, trackClick, logout }}>
+    <AuthContext.Provider value={{
+      user, loading, savedStocks, isSaved, toggleSave, trackClick, logout,
+      customPortfolios, addPortfolio, removePortfolio,
+    }}>
       {children}
     </AuthContext.Provider>
   );

@@ -2,7 +2,7 @@
 "use client";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { TrendingUp, BarChart2, Grid, User, LogOut, Sparkles, Cpu } from "lucide-react";
+import { TrendingUp, BarChart2, User, LogOut, Sparkles, Cpu } from "lucide-react";
 import { useAuth } from "@/src/app/context/AuthContext";
 
 export default function Sidebar({ isOpen, onClose }: { isOpen?: boolean; onClose?: () => void }) {
@@ -20,7 +20,6 @@ export default function Sidebar({ isOpen, onClose }: { isOpen?: boolean; onClose
     { href: "/dashboard",            label: "Dashboard",  icon: TrendingUp },
     { href: "/dashboard/analysis",   label: "Analysis",   icon: BarChart2  },
     { href: "/dashboard/model",      label: "Model",      icon: Cpu        },
-    { href: "/dashboard/heatmap",    label: "Heatmap",    icon: Grid       },
     { href: "/dashboard/diversify",  label: "Diversify",  icon: Sparkles   },
   ];
 

@@ -20,6 +20,7 @@ Tables:
     final_network           — Final ranked pairs for API serving
     synthetic_health_log    — Monthly synthetic check results
     pipeline_run_log        — Per-run metadata and timing
+    quality_picks_scores    — Precomputed Quality Picks factor scores (daily)
 """
 
 import logging
@@ -253,6 +254,38 @@ def _pipeline_run_log_schema() -> List[bigquery.SchemaField]:
     ]
 
 
+def _quality_picks_scores_schema() -> List[bigquery.SchemaField]:
+    """
+    Precomputed Quality Picks factor scores for every ticker in the filtered
+    universe.  Three of the five spider-chart factors are portfolio-independent
+    and therefore safe to precompute nightly:
+
+        momentum_score           — 6-month return, rank-normalised 0-100
+        fundamental_quality_score — P/E vs sector median + log market cap, 0-100
+        centrality_score         — eigenvector centrality from final_network, 0-100
+
+    The two portfolio-specific factors (sector_diversity, volatility_compatibility)
+    are computed on-the-fly per user request using this table as a base.
+
+    Refreshed nightly by quality_picks_job.py after the OHLCV/metadata ingest.
+    """
+    return [
+        bigquery.SchemaField("ticker",                    "STRING",  mode="REQUIRED"),
+        bigquery.SchemaField("sector",                    "STRING"),
+        bigquery.SchemaField("market_cap",                "FLOAT64"),
+        bigquery.SchemaField("pe_ratio",                  "FLOAT64"),
+        # Pre-computed factor scores (0–100)
+        bigquery.SchemaField("momentum_score",            "FLOAT64"),
+        bigquery.SchemaField("fundamental_quality_score", "FLOAT64"),
+        bigquery.SchemaField("centrality_score",          "FLOAT64"),
+        # Raw inputs kept for traceability / on-the-fly composite assembly
+        bigquery.SchemaField("momentum_6m_return",        "FLOAT64"),  # raw 6-month return
+        bigquery.SchemaField("centrality_raw",            "FLOAT64"),  # raw eigenvector value
+        bigquery.SchemaField("annualized_vol",            "FLOAT64"),  # 1-year annualised daily-return std
+        bigquery.SchemaField("updated_at",                "DATE",    mode="REQUIRED"),
+    ]
+
+
 # ── Table Creation ────────────────────────────────────────────────────────────
 
 def create_all_tables() -> None:
@@ -338,6 +371,12 @@ def create_all_tables() -> None:
             _pipeline_run_log_schema(),
             "run_date", ["status"],
             "Per-run pipeline metadata and timing"
+        ),
+        (
+            cfg["tables"]["quality_picks_scores"],
+            _quality_picks_scores_schema(),
+            "updated_at", ["ticker", "sector"],
+            "Nightly precomputed Quality Picks factor scores for filtered universe"
         ),
     ]
 
