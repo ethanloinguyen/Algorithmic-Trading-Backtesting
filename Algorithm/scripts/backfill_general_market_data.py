@@ -288,90 +288,152 @@ def _ensure_general_ticker_metadata_table(client: bigquery.Client) -> None:
 
 def _fetch_sp_index_tickers() -> list[str]:
     """
-    Scrape S&P 500, S&P 400, and S&P 600 constituent lists from Wikipedia.
-    Returns a deduplicated sorted list of normalised ticker symbols.
+    Fetch S&P 500, S&P 400, and S&P 600 constituent lists from iShares ETF
+    holdings CSVs (IVV, IJH, IJR). Reuses the same approach as
+    update_market_data_universe.py. No authentication required.
     """
+    import requests
+    from io import StringIO
+
     sources = [
-        ("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies", "Symbol"),
-        ("https://en.wikipedia.org/wiki/List_of_S%26P_400_companies", "Ticker"),
-        ("https://en.wikipedia.org/wiki/List_of_S%26P_600_companies", "Ticker"),
+        ("https://www.ishares.com/us/products/239726/ishares-core-sp-500-etf"
+         "/1467271812596.ajax?fileType=csv&fileName=IVV_holdings&dataType=fund",
+         "iShares IVV (S&P 500)"),
+        ("https://www.ishares.com/us/products/239763/ishares-core-sp-midcap-etf"
+         "/1467271812596.ajax?fileType=csv&fileName=IJH_holdings&dataType=fund",
+         "iShares IJH (S&P 400)"),
+        ("https://www.ishares.com/us/products/239775/ishares-core-sp-smallcap-etf"
+         "/1467271812596.ajax?fileType=csv&fileName=IJR_holdings&dataType=fund",
+         "iShares IJR (S&P 600)"),
     ]
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        ),
+        "Referer": "https://www.ishares.com",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    }
+
     tickers: set[str] = set()
-    for url, col in sources:
+    for url, label in sources:
         try:
-            tables = pd.read_html(url, attrs={"id": "constituents"})
-            if not tables:
-                tables = pd.read_html(url)
-            df = tables[0]
-            if col in df.columns:
-                raw = df[col].dropna().astype(str).tolist()
-            else:
-                best_col, best_count = None, 0
-                for c in df.columns:
-                    count = df[c].astype(str).str.match(r"^[A-Z]{1,5}$").sum()
-                    if count > best_count:
-                        best_count, best_col = count, c
-                raw = df[best_col].dropna().astype(str).tolist() if best_col else []
-            cleaned = [
-                t.strip().replace(".", "-").upper()
-                for t in raw
-                if re.match(r"^[A-Z]{1,5}(\.[A-Z])?$", t.strip().upper())
-            ]
-            before = len(tickers)
-            tickers.update(cleaned)
-            index_name = url.split("List_of_")[-1].replace("%26", "&")
-            logger.info(
-                f"  Wikipedia {index_name}: {len(cleaned)} tickers "
-                f"({len(tickers) - before} new)"
+            resp = requests.get(url, headers=headers, timeout=30)
+            resp.raise_for_status()
+
+            lines = resp.text.splitlines()
+            header_idx = next(
+                (i for i, line in enumerate(lines)
+                 if "Ticker" in line and ("Weight" in line or "Name" in line)),
+                None,
             )
+            if header_idx is None:
+                logger.warning(f"  {label}: could not locate header row")
+                continue
+
+            df = pd.read_csv(StringIO("\n".join(lines[header_idx:])))
+            if "Ticker" not in df.columns:
+                logger.warning(f"  {label}: 'Ticker' column missing")
+                continue
+
+            if "Asset Class" in df.columns:
+                df = df[df["Asset Class"].astype(str).str.strip() == "Equity"]
+
+            cleaned = (
+                df["Ticker"].dropna().astype(str)
+                .str.strip()
+                .str.replace(".", "-", regex=False)
+                .str.upper()
+            )
+            valid = cleaned[cleaned.str.match(r"^[A-Z]{1,5}(-[A-Z])?$")].tolist()
+            before = len(tickers)
+            tickers.update(valid)
+            logger.info(f"  {label}: {len(valid)} tickers ({len(tickers) - before} new)")
+
         except Exception as e:
-            logger.warning(f"  Could not scrape {url}: {e}")
+            logger.warning(f"  {label} fetch failed: {e}")
 
     return sorted(tickers)
 
 
 def _fetch_nasdaq_trader_tickers() -> list[str]:
     """
-    Download all US-listed stock tickers from NASDAQ Trader's public symbol
-    directory (no authentication required). Returns ~6,000–8,000 tickers.
+    Fetch broad US market tickers from iShares ITOT (S&P Total Market ETF).
+    Covers ~2,500 stocks including small/micro caps beyond S&P 1500.
+    Falls back to iShares IWV (Russell 3000) if ITOT is unreachable.
     """
-    NASDAQ_URL = "https://ftp.nasdaqtrader.com/SymbolDirectory/nasdaqlisted.txt"
-    OTHER_URL  = "https://ftp.nasdaqtrader.com/SymbolDirectory/otherlisted.txt"
-    configs = [
-        (NASDAQ_URL, "Symbol",     "Test Issue"),
-        (OTHER_URL,  "ACT Symbol", "Test Issue"),
+    import requests
+    from io import StringIO
+
+    sources = [
+        ("https://www.ishares.com/us/products/239724/ishares-core-sp-total-us-stock-market-etf"
+         "/1467271812596.ajax?fileType=csv&fileName=ITOT_holdings&dataType=fund",
+         "iShares ITOT (S&P Total Market, ~2500 stocks)"),
+        ("https://www.ishares.com/us/products/239726/ishares-russell-3000-etf"
+         "/1467271812596.ajax?fileType=csv&fileName=IWV_holdings&dataType=fund",
+         "iShares IWV (Russell 3000, fallback)"),
     ]
-    tickers: set[str] = set()
-    for url, sym_col, test_col in configs:
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        ),
+        "Referer": "https://www.ishares.com",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    }
+
+    for url, label in sources:
         try:
-            df = pd.read_csv(url, sep="|")
-            df = df[~df[sym_col].astype(str).str.startswith("File Creation")]
-            if test_col in df.columns:
-                df = df[df[test_col].astype(str).str.strip() == "N"]
-            valid_mask = df[sym_col].astype(str).str.match(r"^[A-Z]{1,5}$")
-            batch = df.loc[valid_mask, sym_col].astype(str).tolist()
-            before = len(tickers)
-            tickers.update(batch)
-            logger.info(
-                f"  NASDAQ Trader {url.split('/')[-1]}: "
-                f"{len(batch)} tickers ({len(tickers) - before} new)"
+            resp = requests.get(url, headers=headers, timeout=30)
+            resp.raise_for_status()
+
+            lines = resp.text.splitlines()
+            header_idx = next(
+                (i for i, line in enumerate(lines)
+                 if "Ticker" in line and ("Weight" in line or "Name" in line)),
+                None,
             )
+            if header_idx is None:
+                logger.warning(f"  {label}: could not locate header row")
+                continue
+
+            df = pd.read_csv(StringIO("\n".join(lines[header_idx:])))
+            if "Ticker" not in df.columns:
+                logger.warning(f"  {label}: 'Ticker' column missing")
+                continue
+
+            if "Asset Class" in df.columns:
+                df = df[df["Asset Class"].astype(str).str.strip() == "Equity"]
+
+            cleaned = (
+                df["Ticker"].dropna().astype(str)
+                .str.strip()
+                .str.replace(".", "-", regex=False)
+                .str.upper()
+            )
+            valid = cleaned[cleaned.str.match(r"^[A-Z]{1,5}(-[A-Z])?$")].tolist()
+            if valid:
+                logger.info(f"  {label}: {len(valid)} tickers fetched")
+                return sorted(valid)
+
         except Exception as e:
-            logger.warning(f"  Could not fetch {url}: {e}")
-    return sorted(tickers)
+            logger.warning(f"  {label} fetch failed: {e}")
+
+    logger.warning("  All broad-market sources failed — returning empty list")
+    return []
 
 
 def _build_candidate_universe(use_all_listed: bool) -> list[str]:
     """Build and return the full candidate ticker list before exclusion filtering."""
     logger.info("Building candidate ticker universe...")
     if use_all_listed:
-        logger.info("  Mode: NASDAQ Trader (all US-listed stocks)")
+        logger.info("  Mode: iShares ITOT (S&P Total Market ~2,500 stocks)")
         tickers = _fetch_nasdaq_trader_tickers()
     else:
-        logger.info("  Mode: Wikipedia S&P 500 + S&P 400 + S&P 600")
+        logger.info("  Mode: iShares IVV (S&P 500) + IJH (S&P 400) + IJR (S&P 600)")
         tickers = _fetch_sp_index_tickers()
         if not tickers:
-            logger.warning("  Wikipedia scrape returned nothing — falling back to NASDAQ Trader")
+            logger.warning("  iShares scrape returned nothing — falling back to NASDAQ Trader")
             tickers = _fetch_nasdaq_trader_tickers()
     logger.info(f"  → {len(tickers):,} candidate tickers total (before exclusion)")
     return tickers
@@ -883,7 +945,7 @@ Examples
     )
     parser.add_argument(
         "--all-listed", action="store_true",
-        help="Use NASDAQ Trader (~7,000 tickers) instead of Wikipedia S&P indices (~1,500).",
+        help="Use NASDAQ Trader (~7,000 tickers) instead of iShares S&P indices (~1,500).",
     )
     parser.add_argument(
         "--dry-run", action="store_true",
