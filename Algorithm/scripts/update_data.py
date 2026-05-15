@@ -421,11 +421,36 @@ def _upload_df(client: bigquery.Client, df: pd.DataFrame, table_id: str, dry_run
     return len(df)
 
 
+def prune_old_data(
+    client: bigquery.Client,
+    table_id: str,
+    years: int = 15,
+    dry_run: bool = False,
+) -> None:
+    """
+    Delete rows older than `years` years from table_id.
+
+    Called nightly to keep general_market_data within the 15-year rolling window.
+    BigQuery DELETE on a partitioned table is efficient — only affected partitions
+    are scanned.
+    """
+    cutoff = date.today() - timedelta(days=years * 365)
+    if dry_run:
+        count_q = f"SELECT COUNT(*) AS n FROM `{table_id}` WHERE DATE(date) < '{cutoff}'"
+        row = list(client.query(count_q).result())[0]
+        logger.info(f"  [DRY RUN] Would delete ~{row.n:,} rows older than {cutoff} from {table_id}")
+        return
+    delete_q = f"DELETE FROM `{table_id}` WHERE DATE(date) < '{cutoff}'"
+    client.query(delete_q).result()
+    logger.info(f"  ✓ Pruned rows older than {cutoff} from {table_id}")
+
+
 def update_market_data(
     client: bigquery.Client,
     table_id: str,
     dry_run: bool = False,
     extra_tickers: list[str] | None = None,
+    new_ticker_lookback_years: int = 15,
 ) -> tuple[int, int]:
     """
     Incremental OHLCV update for table_id.
@@ -436,6 +461,9 @@ def update_market_data(
     extra_tickers: if provided, these tickers are added to the download even if
                    they don't yet exist in the table (first-time ingest).
 
+    new_ticker_lookback_years: how far back to start for brand-new tickers
+                               (default 15 to match the rolling retention window).
+
     Returns (rows_written, tickers_updated).
     """
     today = date.today()
@@ -443,12 +471,16 @@ def update_market_data(
     latest_dates = _get_latest_dates(client, table_id)
     logger.info(f"  Found {len(latest_dates):,} tickers in {table_id}")
 
-    # Merge in any extra tickers not yet in the table (start from 5 years ago)
+    # Merge in any extra tickers not yet in the table
     if extra_tickers:
-        five_years_ago = today - timedelta(days=5 * 365)
-        new_tickers = {t: five_years_ago for t in extra_tickers if t not in latest_dates}
+        lookback_start = today - timedelta(days=new_ticker_lookback_years * 365)
+        new_tickers = {t: lookback_start for t in extra_tickers if t not in latest_dates}
         if new_tickers:
-            logger.info(f"  Adding {len(new_tickers)} new tickers: {list(new_tickers.keys())}")
+            logger.info(
+                f"  Adding {len(new_tickers)} new tickers "
+                f"(lookback start: {lookback_start}): {list(new_tickers.keys())[:10]}"
+                + (" ..." if len(new_tickers) > 10 else "")
+            )
             latest_dates.update(new_tickers)
 
     # Group tickers by their start date to minimise yfinance calls
@@ -859,13 +891,16 @@ def update_general_stocks(
 
     ensure_general_market_data_table(client)
 
-    # Ingest new tickers + do incremental update for existing general tickers
+    # Ingest new tickers + do incremental update for existing general tickers.
+    # new_ticker_lookback_years=15 ensures brand-new tickers (e.g. recent IPOs
+    # joining an S&P index) get the same 15-year window as the backfill.
     all_to_process = truly_new + list(already_gen)
     rows, tickers = update_market_data(
         client,
         table_id=GENERAL_DATA_TABLE,
         dry_run=dry_run,
         extra_tickers=all_to_process,
+        new_ticker_lookback_years=15,
     )
     return rows, tickers
 
@@ -878,6 +913,7 @@ def main(
     use_all_listed: bool = False,
     metadata_only: bool = False,
     seed_indices_only: bool = False,
+    prune_old: bool = False,
 ) -> None:
     logger.info("=" * 60)
     logger.info("DATA UPDATE SCRIPT — LagLens")
@@ -934,6 +970,15 @@ def main(
             f"\n  General stocks update complete: {rows3:,} rows written, "
             f"{tickers3:,} tickers updated/queued"
         )
+
+    # ── Step 4: prune old data (optional, recommended for nightly cron) ───
+    if prune_old and update_general:
+        logger.info("\n" + "=" * 60)
+        logger.info("STEP 4: Pruning general_market_data rows older than 15 years")
+        logger.info("=" * 60)
+        prune_old_data(client, GENERAL_DATA_TABLE, years=15, dry_run=dry_run)
+    elif prune_old and not update_general:
+        logger.info("\n  --prune-old requires --update-general; skipping prune step.")
 
     logger.info("\n" + "=" * 60)
     logger.info("DATA UPDATE COMPLETE")
@@ -993,6 +1038,15 @@ Examples
             "More comprehensive but significantly slower to ingest."
         ),
     )
+    parser.add_argument(
+        "--prune-old",
+        action="store_true",
+        help=(
+            "Delete rows older than 15 years from general_market_data after "
+            "updating. Recommended for the nightly cron to keep the table clean. "
+            "Requires --update-general."
+        ),
+    )
     args = parser.parse_args()
     main(
         dry_run=args.dry_run,
@@ -1000,4 +1054,5 @@ Examples
         use_all_listed=args.all_listed,
         metadata_only=args.metadata_only,
         seed_indices_only=args.seed_indices,
+        prune_old=args.prune_old,
     )
