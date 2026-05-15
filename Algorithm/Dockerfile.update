@@ -1,0 +1,50 @@
+# Algorithm/Dockerfile.update
+# ----------------------------
+# Image for daily data ingestion:
+#   - update_data.py        (daily at 12AM PST — market_data + general_market_data)
+#
+# This is intentionally lighter than Algorithm/Dockerfile:
+#   - No numba / scipy / scikit-learn / networkx (not needed for data ingestion)
+#   - Adds yfinance and lxml (for Wikipedia S&P index scraping)
+#
+# Build from repo root:
+#   docker build -f Algorithm/Dockerfile.update -t update-data:latest .
+#
+# Cloud Run Job command:
+#   python -m scripts.update_data --update-general --prune-old
+#   (add --update-general only after backfill_general_market_data.py completes)
+
+FROM python:3.11-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        curl \
+        libxml2-dev \
+        libxslt-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Minimal dependency set for data ingestion only
+RUN pip install --no-cache-dir \
+        numpy \
+        pandas \
+        pyarrow \
+        yfinance \
+        requests \
+        lxml \
+        pyyaml \
+        google-cloud-bigquery \
+        google-cloud-bigquery-storage \
+        db-dtypes \
+        pandas-gbq
+
+# Copy only the Algorithm directory (scripts/, src/, config/)
+# We don't need jobs/ or Model/ in this image
+COPY Algorithm/ /app/Algorithm/
+
+ENV PYTHONPATH=/app
+
+# Default: daily incremental update (market_data only)
+# Override in Cloud Run Job definition to add --update-general --prune-old
+# once the one-time backfill is complete.
+CMD ["python", "-m", "scripts.update_data"]
