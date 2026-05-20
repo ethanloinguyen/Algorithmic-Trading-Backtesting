@@ -68,15 +68,6 @@ GENERAL_DATA_TABLE   = f"{GCP_PROJECT}.{WRITE_DATASET}.general_market_data"
 
 BATCH_SIZE = 50   # tickers per yfinance download call
 
-# Hardcoded fallback — used only if all dynamic sources fail.
-_FALLBACK_TICKERS = [
-    "SPY", "QQQ", "IWM", "DIA", "VTI", "VOO", "GLD", "TLT",
-    "XLF", "XLK", "XLE", "XLV", "ARKK",
-    "TSM", "BABA", "NIO", "ASML", "SHOP", "SE", "SPOT", "MELI",
-    "HOOD", "COIN", "RIVN", "SOFI", "RBLX", "SNAP", "PINS", "DUOL",
-    "MSTR", "RIOT", "MARA", "ARM",  "CART",
-    "GME",  "AMC",  "TLRY", "CGC",
-]
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -98,141 +89,6 @@ def _safe_float(val) -> float | None:
 
 # ── Dynamic ticker fetching ───────────────────────────────────────────────────
 
-def _fetch_sp_index_tickers() -> list[str]:
-    """
-    Scrape S&P 500, S&P 400 (mid-cap), and S&P 600 (small-cap) constituent
-    lists from Wikipedia using pandas.read_html.
-
-    Combined this yields ~1,500 well-known tickers.  Many S&P 500 stocks will
-    already be in market_data (top 2000 R3000 includes them); the S&P 400 and
-    S&P 600 are where genuinely new stocks will come from.
-
-    Returns a deduplicated sorted list of ticker symbols.
-    """
-    sources = [
-        # (URL, column name in the Wikipedia table)
-        ("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies", "Symbol"),
-        ("https://en.wikipedia.org/wiki/List_of_S%26P_400_companies", "Ticker"),
-        ("https://en.wikipedia.org/wiki/List_of_S%26P_600_companies", "Ticker"),
-    ]
-
-    tickers: set[str] = set()
-    for url, col in sources:
-        try:
-            tables = pd.read_html(url, attrs={"id": "constituents"})
-            if not tables:
-                tables = pd.read_html(url)
-            df = tables[0]
-            # Try the expected column name, then fall back to any column that
-            # looks like it contains ticker symbols
-            if col in df.columns:
-                raw = df[col].dropna().astype(str).tolist()
-            else:
-                # Find the column with the most 1-5 letter uppercase entries
-                best_col, best_count = None, 0
-                for c in df.columns:
-                    count = df[c].astype(str).str.match(r"^[A-Z]{1,5}$").sum()
-                    if count > best_count:
-                        best_count, best_col = count, c
-                raw = df[best_col].dropna().astype(str).tolist() if best_col else []
-
-            # Normalise: BRK.B → BRK-B, strip whitespace, keep 1-5 letter only
-            cleaned = [
-                t.strip().replace(".", "-").upper()
-                for t in raw
-                if re.match(r"^[A-Z]{1,5}(\.[A-Z])?$", t.strip().upper())
-            ]
-            before = len(tickers)
-            tickers.update(cleaned)
-            logger.info(f"  Wikipedia {url.split('List_of_')[-1]}: "
-                        f"{len(cleaned)} tickers ({len(tickers) - before} new)")
-        except Exception as e:
-            logger.warning(f"  Could not scrape {url}: {e}")
-
-    return sorted(tickers)
-
-
-def _fetch_nasdaq_trader_tickers() -> list[str]:
-    """
-    Download all US-listed stock tickers from NASDAQ Trader's public symbol
-    directory (no authentication required).
-
-    Sources
-    -------
-    nasdaqlisted.txt  — all NASDAQ-listed securities
-    otherlisted.txt   — all NYSE / NYSE American / BATS-listed securities
-
-    Filters applied
-    ---------------
-    • Test issues removed (Test Issue == 'Y')
-    • Only clean tickers: 1–5 uppercase letters (removes warrants, rights,
-      preferred shares, units that carry suffixes like .WS, -WT, +, ^)
-
-    Returns ~6 000–8 000 deduplicated tickers.
-    """
-    import re as _re
-
-    NASDAQ_URL = "https://ftp.nasdaqtrader.com/SymbolDirectory/nasdaqlisted.txt"
-    OTHER_URL  = "https://ftp.nasdaqtrader.com/SymbolDirectory/otherlisted.txt"
-
-    configs = [
-        (NASDAQ_URL, "Symbol",     "Test Issue"),
-        (OTHER_URL,  "ACT Symbol", "Test Issue"),
-    ]
-
-    tickers: set[str] = set()
-    for url, sym_col, test_col in configs:
-        try:
-            df = pd.read_csv(url, sep="|")
-            # Drop the trailing metadata row NASDAQ appends
-            df = df[~df[sym_col].astype(str).str.startswith("File Creation")]
-            # Remove test issues
-            if test_col in df.columns:
-                df = df[df[test_col].astype(str).str.strip() == "N"]
-            # Keep only clean 1–5 letter tickers (common stocks + ETFs)
-            valid_mask = df[sym_col].astype(str).str.match(r"^[A-Z]{1,5}$")
-            batch = df.loc[valid_mask, sym_col].astype(str).tolist()
-            before = len(tickers)
-            tickers.update(batch)
-            logger.info(f"  NASDAQ Trader {url.split('/')[-1]}: "
-                        f"{len(batch)} tickers ({len(tickers) - before} new)")
-        except Exception as e:
-            logger.warning(f"  Could not fetch {url}: {e}")
-
-    return sorted(tickers)
-
-
-def _get_extended_ticker_list(use_all_listed: bool = False) -> list[str]:
-    """
-    Build the candidate list for general_market_data.
-
-    Strategy (with automatic fallback):
-      1. Wikipedia S&P 500 + S&P 400 + S&P 600  (~1 500 tickers, curated)
-      2. NASDAQ Trader full listing              (~7 000 tickers, exhaustive)
-         — only used when use_all_listed=True or Wikipedia scraping fails
-      3. _FALLBACK_TICKERS hardcoded list        (last resort)
-
-    Tickers already in market_data are filtered out in update_general_stocks().
-    """
-    import re  # noqa: F811 — already imported at module level but needed here too
-
-    logger.info("Building extended ticker list...")
-
-    tickers: list[str] = []
-
-    if use_all_listed:
-        logger.info("  Mode: NASDAQ Trader (all US-listed stocks)")
-        tickers = _fetch_nasdaq_trader_tickers()
-    else:
-        logger.info("  Mode: Wikipedia S&P 500 + S&P 400 + S&P 600")
-        tickers = _fetch_sp_index_tickers()
-
-    if not tickers:
-        logger.warning("  Dynamic fetch returned nothing — falling back to hardcoded list")
-        tickers = list(_FALLBACK_TICKERS)
-
-    logger.info(f"  Extended ticker list: {len(tickers):,} candidates total")
-    return tickers
 
 # ── Credentials ───────────────────────────────────────────────────────────────
 
@@ -840,68 +696,16 @@ def seed_indices(
 def update_general_stocks(
     client: bigquery.Client,
     dry_run: bool = False,
-    use_all_listed: bool = False,
 ) -> tuple[int, int]:
     """
-    Fetch a large candidate list of tickers, remove any already in market_data,
-    and do an incremental OHLCV update into general_market_data for the rest.
+    Incremental OHLCV update for all tickers already in general_market_data.
 
-    Parameters
-    ----------
-    use_all_listed : if True, use NASDAQ Trader (~7 000 tickers) instead of
-                     Wikipedia S&P indices (~1 500 tickers).  Slower but more
-                     comprehensive.
+    Reads the latest date per ticker from the table and downloads new rows
+    from (latest + 1 day) to today.  New tickers are added via the one-time
+    backfill script (backfill_general_market_data.py), not here.
     """
-    # ── Step 3a: get the full candidate list ─────────────────────────────────
-    candidates = _get_extended_ticker_list(use_all_listed=use_all_listed)
-
-    # ── Step 3b: filter out anything already in market_data ──────────────────
-    logger.info("Checking which candidates are already in market_data...")
-    universe_query = f"SELECT DISTINCT ticker FROM `{MARKET_DATA_TABLE}`"
-    universe_set = {row.ticker for row in client.query(universe_query).result()}
-
-    # Also check what's already in general_market_data (incremental-safe)
-    try:
-        gen_query = f"SELECT DISTINCT ticker FROM `{GENERAL_DATA_TABLE}`"
-        already_general = {row.ticker for row in client.query(gen_query).result()}
-    except Exception:
-        already_general = set()
-
-    truly_new    = [t for t in candidates if t not in universe_set and t not in already_general]
-    already_main = [t for t in candidates if t in universe_set]
-    already_gen  = [t for t in candidates if t in already_general]
-
-    logger.info(f"  {len(candidates):,} candidates total")
-    logger.info(f"  {len(already_main):,} already in market_data   (skipping)")
-    logger.info(f"  {len(already_gen):,}  already in general_market_data (incremental update)")
-    logger.info(f"  {len(truly_new):,}  genuinely new → will ingest into general_market_data")
-
-    if dry_run:
-        logger.info(f"  [DRY RUN] Would ingest {len(truly_new):,} new tickers. Sample:")
-        for t in truly_new[:30]:
-            logger.info(f"    {t}")
-        if len(truly_new) > 30:
-            logger.info(f"    ... and {len(truly_new) - 30} more")
-        return 0, len(truly_new)
-
-    if not truly_new and not already_gen:
-        logger.info("  Nothing to do — all candidates already covered.")
-        ensure_general_market_data_table(client)   # still create table if missing
-        return 0, 0
-
     ensure_general_market_data_table(client)
-
-    # Ingest new tickers + do incremental update for existing general tickers.
-    # new_ticker_lookback_years=15 ensures brand-new tickers (e.g. recent IPOs
-    # joining an S&P index) get the same 15-year window as the backfill.
-    all_to_process = truly_new + list(already_gen)
-    rows, tickers = update_market_data(
-        client,
-        table_id=GENERAL_DATA_TABLE,
-        dry_run=dry_run,
-        extra_tickers=all_to_process,
-        new_ticker_lookback_years=15,
-    )
+    rows, tickers = update_market_data(client, GENERAL_DATA_TABLE, dry_run=dry_run)
     return rows, tickers
 
 
@@ -910,7 +714,6 @@ def update_general_stocks(
 def main(
     dry_run: bool = False,
     update_general: bool = False,
-    use_all_listed: bool = False,
     metadata_only: bool = False,
     seed_indices_only: bool = False,
     prune_old: bool = False,
@@ -959,13 +762,10 @@ def main(
 
     # ── Step 3: general_market_data (optional) ────────────────────────────
     if update_general:
-        mode_label = "NASDAQ Trader (all US-listed)" if use_all_listed else "Wikipedia S&P 500/400/600"
         logger.info("\n" + "=" * 60)
-        logger.info(f"STEP 3: Updating general_market_data — source: {mode_label}")
+        logger.info("STEP 3: Updating general_market_data (incremental)")
         logger.info("=" * 60)
-        rows3, tickers3 = update_general_stocks(
-            client, dry_run=dry_run, use_all_listed=use_all_listed
-        )
+        rows3, tickers3 = update_general_stocks(client, dry_run=dry_run)
         logger.info(
             f"\n  General stocks update complete: {rows3:,} rows written, "
             f"{tickers3:,} tickers updated/queued"
@@ -993,17 +793,17 @@ if __name__ == "__main__":
         epilog="""
 Examples
 --------
-  # Update universe + metadata only
+  # Update market_data OHLCV + ticker_metadata only
   python -m scripts.update_data
 
-  # + general stocks from S&P 500/400/600 (~1 500 candidates)
+  # + incremental update for general_market_data stocks
   python -m scripts.update_data --update-general
 
-  # + general stocks from ALL US-listed tickers (~7 000 candidates, slower)
-  python -m scripts.update_data --update-general --all-listed
+  # + prune rows older than 15 years from general_market_data
+  python -m scripts.update_data --update-general --prune-old
 
-  # Dry run first to see what would be ingested
-  python -m scripts.update_data --dry-run --update-general --all-listed
+  # Dry run — preview without writing to BigQuery
+  python -m scripts.update_data --dry-run --update-general
 """,
     )
     parser.add_argument(
@@ -1030,15 +830,6 @@ Examples
         ),
     )
     parser.add_argument(
-        "--all-listed",
-        action="store_true",
-        help=(
-            "Use NASDAQ Trader's full US listing (~7 000 tickers) as the "
-            "candidate source instead of Wikipedia S&P indices (~1 500). "
-            "More comprehensive but significantly slower to ingest."
-        ),
-    )
-    parser.add_argument(
         "--prune-old",
         action="store_true",
         help=(
@@ -1051,7 +842,6 @@ Examples
     main(
         dry_run=args.dry_run,
         update_general=args.update_general,
-        use_all_listed=args.all_listed,
         metadata_only=args.metadata_only,
         seed_indices_only=args.seed_indices,
         prune_old=args.prune_old,

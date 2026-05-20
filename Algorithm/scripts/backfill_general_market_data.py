@@ -286,155 +286,80 @@ def _ensure_general_ticker_metadata_table(client: bigquery.Client) -> None:
 
 # ── Ticker universe ───────────────────────────────────────────────────────────
 
-def _fetch_sp_index_tickers() -> list[str]:
+
+def _load_itot_csv(path: Path) -> list[str]:
     """
-    Fetch S&P 500, S&P 400, and S&P 600 constituent lists from iShares ETF
-    holdings CSVs (IVV, IJH, IJR). Reuses the same approach as
-    update_market_data_universe.py. No authentication required.
+    Parse a locally stored iShares ITOT holdings CSV and return clean equity
+    ticker symbols.  The file has the same format as any iShares
+    'Detailed Holdings and Analytics' download:
+      - Lines 1-9: fund metadata (skipped)
+      - Line 10:   CSV header  (Ticker, Name, Asset Class, ...)
+      - Lines 11+: one holding per row, footer disclaimer at the end
+
+    on_bad_lines='skip' silently drops the multi-line footer disclaimer.
     """
-    import requests
     from io import StringIO
+    if not path.is_file():
+        return []
 
-    sources = [
-        ("https://www.ishares.com/us/products/239726/ishares-core-sp-500-etf"
-         "/1467271812596.ajax?fileType=csv&fileName=IVV_holdings&dataType=fund",
-         "iShares IVV (S&P 500)"),
-        ("https://www.ishares.com/us/products/239763/ishares-core-sp-midcap-etf"
-         "/1467271812596.ajax?fileType=csv&fileName=IJH_holdings&dataType=fund",
-         "iShares IJH (S&P 400)"),
-        ("https://www.ishares.com/us/products/239775/ishares-core-sp-smallcap-etf"
-         "/1467271812596.ajax?fileType=csv&fileName=IJR_holdings&dataType=fund",
-         "iShares IJR (S&P 600)"),
-    ]
-    headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        ),
-        "Referer": "https://www.ishares.com",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    }
+    raw = path.read_text(encoding="utf-8")
+    lines = raw.splitlines()
 
-    tickers: set[str] = set()
-    for url, label in sources:
-        try:
-            resp = requests.get(url, headers=headers, timeout=30)
-            resp.raise_for_status()
+    header_idx = next(
+        (i for i, line in enumerate(lines)
+         if "Ticker" in line and "Asset Class" in line),
+        None,
+    )
+    if header_idx is None:
+        logger.warning(f"  ITOT CSV: could not find header row in {path}")
+        return []
 
-            lines = resp.text.splitlines()
-            header_idx = next(
-                (i for i, line in enumerate(lines)
-                 if "Ticker" in line and ("Weight" in line or "Name" in line)),
-                None,
-            )
-            if header_idx is None:
-                logger.warning(f"  {label}: could not locate header row")
-                continue
+    df = pd.read_csv(
+        StringIO("\n".join(lines[header_idx:])),
+        on_bad_lines="skip",
+    )
 
-            df = pd.read_csv(StringIO("\n".join(lines[header_idx:])))
-            if "Ticker" not in df.columns:
-                logger.warning(f"  {label}: 'Ticker' column missing")
-                continue
+    # Keep only exchange-listed equities (drop futures, unlisted CVRs, cash)
+    if "Asset Class" in df.columns:
+        df = df[df["Asset Class"].astype(str).str.strip() == "Equity"]
+    if "Exchange" in df.columns:
+        df = df[~df["Exchange"].astype(str).str.contains("NO MARKET", case=False, na=False)]
 
-            if "Asset Class" in df.columns:
-                df = df[df["Asset Class"].astype(str).str.strip() == "Equity"]
-
-            cleaned = (
-                df["Ticker"].dropna().astype(str)
-                .str.strip()
-                .str.replace(".", "-", regex=False)
-                .str.upper()
-            )
-            valid = cleaned[cleaned.str.match(r"^[A-Z]{1,5}(-[A-Z])?$")].tolist()
-            before = len(tickers)
-            tickers.update(valid)
-            logger.info(f"  {label}: {len(valid)} tickers ({len(tickers) - before} new)")
-
-        except Exception as e:
-            logger.warning(f"  {label} fetch failed: {e}")
-
-    return sorted(tickers)
+    cleaned = (
+        df["Ticker"].dropna().astype(str)
+        .str.strip()
+        .str.replace(".", "-", regex=False)
+        .str.upper()
+    )
+    valid = cleaned[cleaned.str.match(r"^[A-Z]{1,5}(-[A-Z])?$")].tolist()
+    return sorted(set(valid))
 
 
-def _fetch_nasdaq_trader_tickers() -> list[str]:
+def _build_candidate_universe() -> list[str]:
     """
-    Fetch broad US market tickers from iShares ITOT (S&P Total Market ETF).
-    Covers ~2,500 stocks including small/micro caps beyond S&P 1500.
-    Falls back to iShares IWV (Russell 3000) if ITOT is unreachable.
+    Build the full candidate ticker list for general_market_data.
+
+    Source: Algorithm/data/ITOT_holdings.csv
+      The iShares ITOT 'Detailed Holdings and Analytics' CSV covers the full
+      S&P Total Market (~2,500 stocks: S&P 500 + 400 + 600 + SmallCap
+      Completion Index).  Download a fresh copy from ishares.com if needed
+      and place it at Algorithm/data/ITOT_holdings.csv.
     """
-    import requests
-    from io import StringIO
-
-    sources = [
-        ("https://www.ishares.com/us/products/239724/ishares-core-sp-total-us-stock-market-etf"
-         "/1467271812596.ajax?fileType=csv&fileName=ITOT_holdings&dataType=fund",
-         "iShares ITOT (S&P Total Market, ~2500 stocks)"),
-        ("https://www.ishares.com/us/products/239726/ishares-russell-3000-etf"
-         "/1467271812596.ajax?fileType=csv&fileName=IWV_holdings&dataType=fund",
-         "iShares IWV (Russell 3000, fallback)"),
-    ]
-    headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        ),
-        "Referer": "https://www.ishares.com",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    }
-
-    for url, label in sources:
-        try:
-            resp = requests.get(url, headers=headers, timeout=30)
-            resp.raise_for_status()
-
-            lines = resp.text.splitlines()
-            header_idx = next(
-                (i for i, line in enumerate(lines)
-                 if "Ticker" in line and ("Weight" in line or "Name" in line)),
-                None,
-            )
-            if header_idx is None:
-                logger.warning(f"  {label}: could not locate header row")
-                continue
-
-            df = pd.read_csv(StringIO("\n".join(lines[header_idx:])))
-            if "Ticker" not in df.columns:
-                logger.warning(f"  {label}: 'Ticker' column missing")
-                continue
-
-            if "Asset Class" in df.columns:
-                df = df[df["Asset Class"].astype(str).str.strip() == "Equity"]
-
-            cleaned = (
-                df["Ticker"].dropna().astype(str)
-                .str.strip()
-                .str.replace(".", "-", regex=False)
-                .str.upper()
-            )
-            valid = cleaned[cleaned.str.match(r"^[A-Z]{1,5}(-[A-Z])?$")].tolist()
-            if valid:
-                logger.info(f"  {label}: {len(valid)} tickers fetched")
-                return sorted(valid)
-
-        except Exception as e:
-            logger.warning(f"  {label} fetch failed: {e}")
-
-    logger.warning("  All broad-market sources failed — returning empty list")
-    return []
-
-
-def _build_candidate_universe(use_all_listed: bool) -> list[str]:
-    """Build and return the full candidate ticker list before exclusion filtering."""
     logger.info("Building candidate ticker universe...")
-    if use_all_listed:
-        logger.info("  Mode: iShares ITOT (S&P Total Market ~2,500 stocks)")
-        tickers = _fetch_nasdaq_trader_tickers()
-    else:
-        logger.info("  Mode: iShares IVV (S&P 500) + IJH (S&P 400) + IJR (S&P 600)")
-        tickers = _fetch_sp_index_tickers()
-        if not tickers:
-            logger.warning("  iShares scrape returned nothing — falling back to NASDAQ Trader")
-            tickers = _fetch_nasdaq_trader_tickers()
+
+    itot_path = _ALGO_DIR / "data" / "ITOT_holdings.csv"
+    tickers = _load_itot_csv(itot_path)
+
+    if not tickers:
+        raise FileNotFoundError(
+            f"ITOT_holdings.csv not found at {itot_path}.\n"
+            "Download it from iShares (Detailed Holdings and Analytics for ITOT ETF) "
+            "and place it at Algorithm/data/ITOT_holdings.csv, then re-run."
+        )
+
+    logger.info(
+        f"  Source: local ITOT CSV ({itot_path.name}) → {len(tickers):,} tickers"
+    )
     logger.info(f"  → {len(tickers):,} candidate tickers total (before exclusion)")
     return tickers
 
@@ -986,7 +911,7 @@ Examples
     logger.info("\n" + "=" * 60)
     logger.info("STEP 1: Building ticker universe")
     logger.info("=" * 60)
-    candidates_raw = _build_candidate_universe(args.all_listed)
+    candidates_raw = _build_candidate_universe()
 
     logger.info("\nLoading market_data exclusion set from BigQuery...")
     market_data_tickers = _get_market_data_tickers(client)
