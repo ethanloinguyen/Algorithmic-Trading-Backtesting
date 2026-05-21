@@ -5,7 +5,7 @@
 #
 # Intentionally lighter than Algorithm/Dockerfile:
 #   - No numba / scipy / scikit-learn / networkx (not needed for data ingestion)
-#   - Uses FMP API for S&P index constituent lists (replaces Wikipedia/lxml)
+#   - Ticker universe sourced from committed ITOT holdings CSV (no external API)
 #
 # Build from repo root:
 #   docker build -f Algorithm/Dockerfile.update -t update-data:latest .

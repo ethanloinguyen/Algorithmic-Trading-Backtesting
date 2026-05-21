@@ -407,21 +407,55 @@ def update_market_data(
 
 # ── Step 2: ticker_metadata refresh ──────────────────────────────────────────
 
-def _fetch_yf_metadata(tickers: list[str]) -> pd.DataFrame:
+def _fetch_yf_metadata(tickers: list[str], max_retries: int = 3) -> pd.DataFrame:
     """
     Fetch metadata for a list of tickers via yfinance .info.
     Returns DataFrame with columns matching the actual ticker_metadata schema:
         ticker, company_name, sector, industry, market_cap, pe_ratio,
         country, exchange, currency, website, description, employees,
         last_updated, is_active
+
+    Includes per-ticker rate-limit detection with linear back-off
+    (matching the retry pattern used in _download_batch), plus a 0.2s
+    courtesy sleep between every call to stay within Yahoo Finance limits.
     """
     now = datetime.now()
     records = []
     for i, tkr in enumerate(tickers, 1):
         if i % 50 == 0:
             logger.info(f"  Metadata: {i}/{len(tickers)} fetched...")
-        try:
-            info = yf.Ticker(tkr).info
+
+        info = None
+        for attempt in range(1, max_retries + 1):
+            try:
+                info = yf.Ticker(tkr).info
+                break  # success
+            except Exception as e:
+                err_str  = str(e)
+                exc_type = type(e).__name__
+                is_rate_limit = (
+                    "RateLimit" in exc_type
+                    or "Too Many Requests" in err_str
+                    or "rate limit" in err_str.lower()
+                )
+                if is_rate_limit:
+                    wait_sec = 60 * attempt   # 60 s, 120 s, 180 s
+                    if attempt < max_retries:
+                        logger.warning(
+                            f"  Rate limited on {tkr} (attempt {attempt}/{max_retries}). "
+                            f"Waiting {wait_sec}s before retry..."
+                        )
+                        time.sleep(wait_sec)
+                    else:
+                        logger.warning(
+                            f"  Giving up metadata for {tkr} after {max_retries} "
+                            f"rate-limit retries."
+                        )
+                else:
+                    logger.debug(f"  Could not fetch metadata for {tkr}: {e}")
+                    break  # non-rate-limit error — don't retry
+
+        if info:
             records.append({
                 "ticker":       tkr,
                 "company_name": info.get("longName") or info.get("shortName") or tkr,
@@ -438,8 +472,7 @@ def _fetch_yf_metadata(tickers: list[str]) -> pd.DataFrame:
                 "last_updated": now,
                 "is_active":    True,
             })
-        except Exception as e:
-            logger.debug(f"  Could not fetch metadata for {tkr}: {e}")
+        else:
             records.append({
                 "ticker":       tkr,
                 "company_name": tkr,
@@ -456,6 +489,9 @@ def _fetch_yf_metadata(tickers: list[str]) -> pd.DataFrame:
                 "last_updated": now,
                 "is_active":    False,
             })
+
+        time.sleep(0.2)  # courtesy pause between every ticker call
+
     return pd.DataFrame(records)
 
 
@@ -485,8 +521,9 @@ def refresh_ticker_metadata(
         logger.info(f"  [DRY RUN] Would upsert {len(meta_df):,} rows into {TICKER_META_TABLE}")
         return len(meta_df)
 
-    # Write to a staging table, then MERGE into ticker_metadata
-    staging_id = f"{GCP_PROJECT}.{WRITE_DATASET}._meta_staging_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    # Write to a fixed-name staging table (WRITE_TRUNCATE overwrites it each run,
+    # so there is never more than one staging table regardless of retries or failures).
+    staging_id = f"{GCP_PROJECT}.{WRITE_DATASET}._meta_staging"
     meta_schema = [
         bigquery.SchemaField("ticker",       "STRING"),
         bigquery.SchemaField("company_name", "STRING"),
