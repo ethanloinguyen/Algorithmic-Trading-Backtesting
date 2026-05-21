@@ -24,6 +24,35 @@ const INDEX_NAMES: Record<string, string> = {
   DJI:  "Dow Jones Industrial Average",
 };
 
+// ─── Sparkline generator ──────────────────────────────────────────────────────
+function buildSparkline(symbol: string, positive: boolean): string {
+  // Deterministic pseudo-random walk seeded by symbol so the shape is stable
+  // across re-renders while still looking like a real price trace.
+  let seed = symbol.split("").reduce((a, c) => (a * 31 + c.charCodeAt(0)) | 0, 17);
+  const rand = () => {
+    seed = (Math.imul(seed, 1664525) + 1013904223) | 0;
+    return ((seed >>> 0) / 0xffffffff);
+  };
+
+  const pts = 14;
+  const w = 60, h = 20, pad = 2;
+  const vals: number[] = [];
+  let cur = 0.5;
+  for (let i = 0; i < pts; i++) {
+    const drift = positive ? 0.04 : -0.04;
+    cur = Math.max(0.05, Math.min(0.95, cur + (rand() - 0.46) * 0.28 + drift));
+    vals.push(cur);
+  }
+  const lo = Math.min(...vals), hi = Math.max(...vals), range = hi - lo || 0.01;
+  return vals
+    .map((v, i) => {
+      const x = (i / (pts - 1)) * w;
+      const y = h - pad - ((v - lo) / range) * (h - pad * 2);
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(" ");
+}
+
 // ─── Index card ───────────────────────────────────────────────────────────────
 function IndexCard({ idx, onClick }: { idx: IndexSummary; onClick: () => void }) {
   const green = "hsl(142, 71%, 45%)";
@@ -59,10 +88,13 @@ function IndexCard({ idx, onClick }: { idx: IndexSummary; onClick: () => void })
         </p>
         <div className="ml-auto">
           <svg width="60" height="20" viewBox="0 0 60 20">
-            <line
-              x1="0"  y1={idx.positive ? "16" : "4"}
-              x2="60" y2={idx.positive ? "4"  : "16"}
-              stroke={color} strokeWidth="1.5"
+            <polyline
+              points={buildSparkline(idx.symbol, idx.positive)}
+              fill="none"
+              stroke={color}
+              strokeWidth="1.5"
+              strokeLinejoin="round"
+              strokeLinecap="round"
             />
           </svg>
         </div>
