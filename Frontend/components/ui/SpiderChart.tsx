@@ -1,44 +1,44 @@
 // Frontend/components/ui/SpiderChart.tsx
 "use client";
-import { Zap, Globe, Link2, Layers, Timer, BarChart2, ExternalLink } from "lucide-react";
-import type { Recommendation } from "@/src/app/lib/api";
+import { TrendingUp, Globe, Layers, Activity, BarChart2 } from "lucide-react";
+import type { QualityRecommendation } from "@/src/app/lib/api";
 
-// ── Axes — 5 factors, full label names ───────────────────────────────────────
+// ── Axes — 5 quality factors ──────────────────────────────────────────────────
 const AXES = [
   {
-    key:   "signal_score",
-    label: "Signal Strength",
-    short: "Signal",       // full word shown on chart
-    Icon:  Zap,
-    desc:  "Frequency-weighted mean signal strength across connections to your holdings.",
+    key:   "momentum_score",
+    label: "Momentum",
+    short: "Momentum",
+    Icon:  TrendingUp,
+    desc:  "6-month price return rank-normalised across the filtered universe. Higher = stronger recent trend.",
   },
   {
-    key:   "centrality_score",
-    label: "Market Centrality",
-    short: "Centrality",   // full word shown on chart
-    Icon:  Globe,
-    desc:  "How connected this stock is across the entire 2000-stock market network.",
-  },
-  {
-    key:   "coverage_score",
-    label: "Portfolio Coverage",
-    short: "Coverage",     // full word shown on chart
-    Icon:  Link2,
-    desc:  "How many of your existing holdings this stock has a detected relationship with.",
+    key:   "fundamental_quality_score",
+    label: "Fundamental Quality",
+    short: "Fundamentals",
+    Icon:  BarChart2,
+    desc:  "Blend of P/E ratio (vs. sector peers) and log market-cap size. Higher = better value + larger cap.",
   },
   {
     key:   "sector_diversity_score",
     label: "Sector Diversity",
-    short: "Diversity",    // full word shown on chart
+    short: "Diversity",
     Icon:  Layers,
-    desc:  "How much new sector exposure this stock adds relative to what you already own.",
+    desc:  "How much new sector exposure this stock adds relative to your existing portfolio.",
   },
   {
-    key:   "durability_score",
-    label: "Signal Durability",
-    short: "Durability",   // full word shown on chart
-    Icon:  Timer,
-    desc:  "How long the lead-lag signal persists — normalized half-life (252-day cap).",
+    key:   "volatility_compatibility_score",
+    label: "Volatility Fit",
+    short: "Vol Fit",
+    Icon:  Activity,
+    desc:  "How closely this stock's annualised volatility matches the average volatility of your portfolio.",
+  },
+  {
+    key:   "centrality_score",
+    label: "Market Centrality",
+    short: "Centrality",
+    Icon:  Globe,
+    desc:  "Eigenvector centrality in the full 2000-stock lead-lag network — how interconnected this stock is.",
   },
 ] as const;
 
@@ -77,33 +77,18 @@ function axisPoint(axisIdx: number, pct: number): [number, number] {
   ];
 }
 
-function polygonPoints(rec: Recommendation): string {
+function polygonPoints(rec: QualityRecommendation): string {
   return AXES.map((ax, i) => {
-    const val = rec[ax.key as keyof Recommendation] as number;
+    const val = rec[ax.key as keyof QualityRecommendation] as number;
     const pct = Math.min(100, Math.max(0, val)) / 100;
     const [x, y] = axisPoint(i, pct);
     return `${x},${y}`;
   }).join(" ");
 }
 
-// ── Direction badge ───────────────────────────────────────────────────────────
-function DirectionBadge({ direction }: { direction: string }) {
-  const GREEN = "hsl(142,71%,45%)";
-  const BLUE  = "hsl(217,91%,60%)";
-  const AMBER = "hsl(38,92%,50%)";
-  if (direction === "leads_your_holdings")
-    return <span className="text-xs px-2 py-0.5 rounded-full"
-      style={{ background: "hsla(142,71%,45%,0.15)", color: GREEN }}>Leads your stocks</span>;
-  if (direction === "follows_your_holdings")
-    return <span className="text-xs px-2 py-0.5 rounded-full"
-      style={{ background: "hsla(217,91%,60%,0.15)", color: BLUE }}>Follows your stocks</span>;
-  return <span className="text-xs px-2 py-0.5 rounded-full"
-    style={{ background: "hsla(38,92%,50%,0.15)", color: AMBER }}>Bidirectional</span>;
-}
-
 // ── Main component ────────────────────────────────────────────────────────────
 interface SpiderChartProps {
-  recommendations:  Recommendation[];
+  recommendations:  QualityRecommendation[];
   activeIdx:        number | null;
   onActiveChange:   (idx: number | null) => void;
   onTickerClick?:   (ticker: string) => void;
@@ -138,7 +123,7 @@ export default function SpiderChart({
       <div className="mb-5">
         <p className="text-sm font-semibold" style={{ color: TEXT_PRI }}>Score Comparison</p>
         <p className="text-xs mt-0.5" style={{ color: TEXT_SEC }}>
-          Click a ticker below to highlight its profile — unselected stocks show as outlines only
+          Click a ticker below to highlight its profile and composite score breakdown
         </p>
       </div>
 
@@ -225,7 +210,7 @@ export default function SpiderChart({
                   strokeOpacity="0.9"
                 />
                 {AXES.map((ax, i) => {
-                  const val = activeRec[ax.key as keyof Recommendation] as number;
+                  const val = activeRec[ax.key as keyof QualityRecommendation] as number;
                   const pct = Math.min(100, Math.max(0, val)) / 100;
                   const [x, y] = axisPoint(i, pct);
                   return (
@@ -243,7 +228,7 @@ export default function SpiderChart({
           {/* ── Ranked legend below the chart ── */}
           <div className="mt-3">
             <p className="text-xs font-medium mb-2" style={{ color: "hsl(215,15%,40%)" }}>
-              Ranked by composite score — click to inspect
+              Top 10 stock recommendations ranked by composite score
             </p>
             <div className="grid grid-cols-2 gap-1.5">
               {recs.map((rec, i) => (
@@ -321,15 +306,6 @@ export default function SpiderChart({
                   View Price Chart
                 </button>
 
-                <div className="flex items-center gap-2 flex-wrap mb-2">
-                  <DirectionBadge direction={activeRec.direction} />
-                </div>
-
-                <p className="text-xs" style={{ color: TEXT_SEC }}>
-                  <span style={{ color: TEXT_MUT }}>Connected to: </span>
-                  <span style={{ color: TEXT_PRI }}>{activeRec.related_holdings.join(", ")}</span>
-                </p>
-
                 {/* Summary stat pills */}
                 <div className="flex items-center gap-3 mt-3 flex-wrap">
                   <div className="text-center">
@@ -339,16 +315,17 @@ export default function SpiderChart({
                     </p>
                   </div>
                   <div className="text-center">
-                    <p className="text-xs" style={{ color: TEXT_MUT }}>Centrality</p>
+                    <p className="text-xs" style={{ color: TEXT_MUT }}>Momentum</p>
                     <p className="text-xl font-bold" style={{ color: TEXT_PRI }}>
-                      {Math.round(activeRec.centrality * 100)}
-                      <span className="text-xs font-normal" style={{ color: TEXT_MUT }}>th</span>
+                      {Math.round(activeRec.momentum_score)}
+                      <span className="text-xs font-normal" style={{ color: TEXT_MUT }}>/100</span>
                     </p>
                   </div>
                   <div className="text-center">
-                    <p className="text-xs" style={{ color: TEXT_MUT }}>Connections</p>
+                    <p className="text-xs" style={{ color: TEXT_MUT }}>Fundamentals</p>
                     <p className="text-xl font-bold" style={{ color: TEXT_PRI }}>
-                      {activeRec.n_portfolio_relationships}
+                      {Math.round(activeRec.fundamental_quality_score)}
+                      <span className="text-xs font-normal" style={{ color: TEXT_MUT }}>/100</span>
                     </p>
                   </div>
                 </div>
@@ -357,7 +334,7 @@ export default function SpiderChart({
               {/* Five factor bars with descriptions */}
               <div className="space-y-4">
                 {AXES.map(ax => {
-                  const val = activeRec[ax.key as keyof Recommendation] as number;
+                  const val = activeRec[ax.key as keyof QualityRecommendation] as number;
                   return (
                     <div key={ax.key}>
                       <div className="flex items-center justify-between mb-1">

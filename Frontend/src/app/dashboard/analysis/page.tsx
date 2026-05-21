@@ -1,6 +1,7 @@
 // frontend/src/app/dashboard/analysis/page.tsx
 "use client";
 import MonteCarlo from "@/components/ui/MonteCarlo";
+import TickerSearchInput from "@/components/ui/TickerSearchInput";
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import Sidebar from "@/components/ui/Sidebar";
 import { ChevronDown, Loader2, AlertTriangle, Search, Info } from "lucide-react";
@@ -440,7 +441,7 @@ function TickerInput({
 
 // ─── Lag Alignment Lab ────────────────────────────────────────────────────────
 
-function LagAlignmentLab() {
+function LagAlignmentLab({ stocks }: { stocks: StockSummary[] }) {
   const [analysisMode, setAnalysisMode] = useState<AnalysisMode>("broad_market");
   const [stockA, setStockA] = useState("MSFT");
   const [stockB, setStockB] = useState("AAPL");
@@ -545,9 +546,9 @@ function LagAlignmentLab() {
 
         <div className="flex items-end gap-4 p-3 rounded-lg"
           style={{ background: CARD_H, border: `1px solid ${BORDER}` }}>
-          {/* Stock inputs — no leader/follower label on the inputs themselves */}
-          <TickerInput value={stockA} onChange={setStockA} label="Stock A" placeholder="e.g. MSFT" color={LEADER_COLOR} />
-          <TickerInput value={stockB} onChange={setStockB} label="Stock B" placeholder="e.g. AAPL" color={FOLLOWER_COLOR} />
+          {/* Stock inputs — autocomplete search bar shared with profile page */}
+          <TickerSearchInput value={stockA} onChange={setStockA} stocks={stocks} label="Stock A" placeholder="e.g. MSFT" labelColor={LEADER_COLOR} />
+          <TickerSearchInput value={stockB} onChange={setStockB} stocks={stocks} label="Stock B" placeholder="e.g. AAPL" labelColor={FOLLOWER_COLOR} />
 
           <div className="flex flex-col gap-1.5">
             {/* Time range */}
@@ -1435,7 +1436,7 @@ export default function AnalysisPage() {
           </div>
 
           {/* ── Lag Alignment Lab (owns its own analysis scope) ── */}
-          <LagAlignmentLab />
+          <LagAlignmentLab stocks={stocks} />
 
           {/* ── Network Graph (owns its own analysis scope) ── */}
           <LeadLagNetwork />

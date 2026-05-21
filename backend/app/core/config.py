@@ -38,8 +38,22 @@ class Settings(BaseSettings):
         return f"`{self.gcp_project_id}.{self.bq_dataset}.{self.bq_ohlcv_table}`"
 
     @property
+    def fq_general_market_data(self) -> str:
+        """
+        Extra general stocks outside the lead-lag universe (GOOG, PLTR, LMND, etc.).
+        Lives in output_results (same dataset as market_data) so the service account
+        has write access.  Never touched by the Algorithm pipeline.
+        """
+        return f"`{self.gcp_project_id}.{self.bq_dataset}.general_market_data`"
+
+    @property
     def fq_ticker_metadata(self) -> str:
         return f"`{self.gcp_project_id}.{self.bq_dataset}.{self.bq_stocks_table}`"
+
+    @property
+    def fq_quality_picks(self) -> str:
+        """Fully-qualified path to the nightly quality_picks_scores table."""
+        return f"`{self.gcp_project_id}.{self.bq_dataset}.quality_picks_scores`"
 
 
 @lru_cache

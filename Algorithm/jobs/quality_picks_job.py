@@ -201,6 +201,54 @@ def _fetch_centrality(tickers: list) -> pd.DataFrame:
     return df
 
 
+def _fetch_annualized_vol(tickers: list) -> pd.DataFrame:
+    """
+    Compute each ticker's annualised volatility from the past 252 calendar days
+    of daily log-returns.  Uses a single BigQuery aggregation — no row-level
+    data is returned to the client.
+
+        annualized_vol = STDDEV(daily_log_return) × √252
+
+    Tickers with fewer than 50 valid return observations are excluded; they
+    will receive annualized_vol = NaN in the final table (treated as neutral
+    in volatility-compatibility scoring).
+
+    Returns
+    -------
+    DataFrame [ticker, annualized_vol]
+    """
+    client   = get_client()
+    table_id = full_table("market_data")
+    tlist    = ", ".join(f"'{t}'" for t in tickers)
+
+    query = f"""
+        WITH daily_returns AS (
+            SELECT
+                ticker,
+                LOG(close / NULLIF(
+                    LAG(close) OVER (PARTITION BY ticker ORDER BY date), 0
+                )) AS log_return
+            FROM `{table_id}`
+            WHERE DATE(date) >= DATE_SUB(CURRENT_DATE(), INTERVAL 365 DAY)
+              AND ticker IN ({tlist})
+              AND close > 0
+        )
+        SELECT
+            ticker,
+            STDDEV(log_return) * SQRT(252) AS annualized_vol
+        FROM daily_returns
+        WHERE log_return IS NOT NULL
+        GROUP BY ticker
+        HAVING COUNT(*) >= 50
+    """
+    df = client.query(query).to_dataframe()
+    logger.info(f"Annualised vol: {len(df):,} tickers computed "
+                f"(mean={df['annualized_vol'].mean():.3f}, "
+                f"min={df['annualized_vol'].min():.3f}, "
+                f"max={df['annualized_vol'].max():.3f})")
+    return df
+
+
 # ── Score Computers ───────────────────────────────────────────────────────────
 
 def _compute_momentum_score(prices_df: pd.DataFrame) -> pd.DataFrame:
@@ -358,6 +406,9 @@ def run_quality_picks_job(dry_run: bool = False) -> pd.DataFrame:
     logger.info("Step 2c: Fetching centrality from final_network...")
     centrality_raw_df = _fetch_centrality(tickers)
 
+    logger.info("Step 2d: Fetching annualised volatility from market_data...")
+    vol_df = _fetch_annualized_vol(tickers)
+
     # ── Step 3: Score computation ─────────────────────────────────────────────
     logger.info("Step 3a: Computing momentum scores...")
     momentum_df = _compute_momentum_score(prices_df)
@@ -392,28 +443,37 @@ def run_quality_picks_job(dry_run: bool = False) -> pd.DataFrame:
         .merge(momentum_df,           on="ticker", how="left")
         .merge(fundamental_df,        on="ticker", how="left")
         .merge(centrality_scored_df,  on="ticker", how="left")
+        .merge(vol_df,                on="ticker", how="left")
     )
     result["updated_at"] = today
 
     # Diagnostics
     n_missing_mom = result["momentum_score"].isna().sum()
+    n_missing_vol = result["annualized_vol"].isna().sum()
     if n_missing_mom:
         logger.warning(
             f"  {n_missing_mom:,} tickers lack momentum_score "
             f"(no price data within 6-month window)"
         )
+    if n_missing_vol:
+        logger.warning(
+            f"  {n_missing_vol:,} tickers lack annualized_vol "
+            f"(fewer than 50 trading days in past year)"
+        )
     logger.info(
         f"  Final: {len(result):,} rows — "
         f"{result['momentum_score'].notna().sum():,} with momentum, "
         f"{result['fundamental_quality_score'].notna().sum():,} with fundamental, "
-        f"{(result['centrality_raw'] > 0).sum():,} with centrality"
+        f"{(result['centrality_raw'] > 0).sum():,} with centrality, "
+        f"{result['annualized_vol'].notna().sum():,} with annualized_vol"
     )
 
     # ── Step 5: Write or dry-run ──────────────────────────────────────────────
     if dry_run:
         logger.info("DRY RUN — skipping write. Top 20 by composite (simple avg):")
         preview = result.copy()
-        score_cols = ["momentum_score", "fundamental_quality_score", "centrality_score"]
+        score_cols = ["momentum_score", "fundamental_quality_score", "centrality_score",
+                      "annualized_vol"]
         preview["avg_score"] = preview[score_cols].mean(axis=1)
         top20 = (
             preview.dropna(subset=["momentum_score"])
