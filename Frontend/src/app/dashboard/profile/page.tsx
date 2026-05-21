@@ -1,6 +1,6 @@
 // Frontend/src/app/dashboard/profile/page.tsx
 "use client";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import {
   Star, User, Mail, LogOut, Loader2,
@@ -9,7 +9,7 @@ import {
 } from "lucide-react";
 import Sidebar from "@/components/ui/Sidebar";
 import { useAuth } from "@/src/app/context/AuthContext";
-import { fetchStockSummaries, type StockSummary } from "@/src/app/lib/api";
+import { fetchStockSummaries, fetchAllStocks, type StockSummary } from "@/src/app/lib/api";
 import { SECTORS, ALL_SECTORS, filterBySector } from "@/src/app/lib/sectorData";
 
 const card = { background: "hsl(215, 25%, 11%)", border: "1px solid hsl(215, 20%, 18%)" };
@@ -96,7 +96,7 @@ function SectorDropdown({
 }
 
 export default function ProfilePage() {
-  const { user, savedStocks, toggleSave, trackClick, loading: authLoading, logout, customPortfolios, addPortfolio, removePortfolio } = useAuth();
+  const { user, savedStocks, toggleSave, trackClick, loading: authLoading, logout, customPortfolios, createPortfolio, deletePortfolio } = useAuth();
   const router = useRouter();
 
   const [liveData,       setLiveData]       = useState<StockSummary[]>([]);
@@ -109,12 +109,33 @@ export default function ProfilePage() {
   const [portfolioTickers, setPortfolioTickers] = useState<string[]>([]);
   const [portfolioInput,   setPortfolioInput]   = useState("");
   const [savingPortfolio,  setSavingPortfolio]  = useState(false);
-  const portfolioInputRef = useRef<HTMLInputElement>(null);
+  const [allStocks,        setAllStocks]        = useState<StockSummary[]>([]);
+  const [showSuggestions,  setShowSuggestions]  = useState(false);
+  const [activeSuggestion, setActiveSuggestion] = useState(-1);
+  const portfolioInputRef  = useRef<HTMLInputElement>(null);
+  const suggestionsRef     = useRef<HTMLDivElement>(null);
 
   // Redirect unauthenticated
   useEffect(() => {
     if (!authLoading && !user) router.replace("/");
   }, [user, authLoading, router]);
+
+  // Load all stocks for ticker autocomplete
+  useEffect(() => {
+    fetchAllStocks().then(setAllStocks).catch(() => {});
+  }, []);
+
+  const tickerSuggestions = useMemo(() => {
+    const q = portfolioInput.trim().toUpperCase();
+    if (!q || q.length < 1) return [];
+    return allStocks
+      .filter(
+        (s) =>
+          !portfolioTickers.includes(s.symbol) &&
+          (s.symbol.startsWith(q) || s.name.toUpperCase().includes(q))
+      )
+      .slice(0, 8);
+  }, [portfolioInput, allStocks, portfolioTickers]);
 
   // Fetch live prices whenever saved stocks change
   useEffect(() => {
@@ -402,7 +423,7 @@ export default function ProfilePage() {
                       </div>
                     </div>
                     <button
-                      onClick={() => removePortfolio(portfolio.id)}
+                      onClick={() => deletePortfolio(portfolio.id)}
                       className="p-2 rounded-lg transition-all hover:opacity-70 flex-shrink-0"
                       style={{ color: "hsl(0,84%,60%)", background: "hsla(0,84%,60%,0.1)" }}
                       aria-label="Delete portfolio"
@@ -437,55 +458,138 @@ export default function ProfilePage() {
                 onBlur={(e) => (e.currentTarget.style.borderColor = "hsl(215,20%,20%)")}
               />
 
-              {/* Ticker tag input */}
-              <div
-                className="flex flex-wrap gap-2 min-h-10 p-2 rounded-lg cursor-text mb-3"
-                style={{ background: "hsl(215,25%,8%)", border: "1px solid hsl(215,20%,20%)" }}
-                onClick={() => portfolioInputRef.current?.focus()}
-              >
-                {portfolioTickers.map((t) => (
-                  <span
-                    key={t}
-                    className="flex items-center gap-1 px-2.5 py-0.5 rounded-md text-xs font-semibold"
-                    style={{ background: "hsla(217,91%,60%,0.15)", color: "hsl(217,91%,70%)" }}
-                  >
-                    {t}
-                    <button
-                      onClick={(e) => { e.stopPropagation(); setPortfolioTickers(prev => prev.filter(x => x !== t)); }}
-                      className="hover:opacity-60 ml-0.5"
+              {/* Ticker tag input with autocomplete dropdown */}
+              <div className="relative mb-3">
+                <div
+                  className="flex flex-wrap gap-2 min-h-10 p-2 rounded-lg cursor-text"
+                  style={{ background: "hsl(215,25%,8%)", border: "1px solid hsl(215,20%,20%)" }}
+                  onClick={() => portfolioInputRef.current?.focus()}
+                >
+                  {portfolioTickers.map((t) => (
+                    <span
+                      key={t}
+                      className="flex items-center gap-1 px-2.5 py-0.5 rounded-md text-xs font-semibold"
+                      style={{ background: "hsla(217,91%,60%,0.15)", color: "hsl(217,91%,70%)" }}
                     >
-                      <X className="w-3 h-3" />
-                    </button>
-                  </span>
-                ))}
-                <input
-                  ref={portfolioInputRef}
-                  value={portfolioInput}
-                  onChange={(e) => setPortfolioInput(e.target.value.toUpperCase())}
-                  onKeyDown={(e) => {
-                    if (["Enter", ",", " ", "Tab"].includes(e.key)) {
-                      e.preventDefault();
-                      const val = portfolioInput.trim();
-                      if (val && !portfolioTickers.includes(val) && val.length <= 10) {
-                        setPortfolioTickers(prev => [...prev, val]);
+                      {t}
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setPortfolioTickers(prev => prev.filter(x => x !== t)); }}
+                        className="hover:opacity-60 ml-0.5"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </span>
+                  ))}
+                  <input
+                    ref={portfolioInputRef}
+                    value={portfolioInput}
+                    onChange={(e) => {
+                      setPortfolioInput(e.target.value.toUpperCase());
+                      setActiveSuggestion(-1);
+                      setShowSuggestions(true);
+                    }}
+                    onFocus={() => setShowSuggestions(true)}
+                    onBlur={() => {
+                      // Delay so suggestion clicks register first
+                      setTimeout(() => {
+                        setShowSuggestions(false);
+                        setActiveSuggestion(-1);
+                        const val = portfolioInput.trim();
+                        if (val && !portfolioTickers.includes(val) && val.length <= 10) {
+                          setPortfolioTickers(prev => [...prev, val]);
+                          setPortfolioInput("");
+                        }
+                      }, 150);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "ArrowDown") {
+                        e.preventDefault();
+                        setActiveSuggestion(i => Math.min(i + 1, tickerSuggestions.length - 1));
+                        return;
                       }
-                      setPortfolioInput("");
-                    }
-                    if (e.key === "Backspace" && !portfolioInput && portfolioTickers.length) {
-                      setPortfolioTickers(prev => prev.slice(0, -1));
-                    }
-                  }}
-                  onBlur={() => {
-                    const val = portfolioInput.trim();
-                    if (val && !portfolioTickers.includes(val) && val.length <= 10) {
-                      setPortfolioTickers(prev => [...prev, val]);
-                      setPortfolioInput("");
-                    }
-                  }}
-                  placeholder={portfolioTickers.length === 0 ? "Type tickers, press Enter or comma" : ""}
-                  className="flex-1 min-w-24 bg-transparent outline-none text-sm"
-                  style={{ color: "hsl(210,40%,85%)" }}
-                />
+                      if (e.key === "ArrowUp") {
+                        e.preventDefault();
+                        setActiveSuggestion(i => Math.max(i - 1, -1));
+                        return;
+                      }
+                      if (e.key === "Escape") {
+                        setShowSuggestions(false);
+                        setActiveSuggestion(-1);
+                        return;
+                      }
+                      if (["Enter", ",", " ", "Tab"].includes(e.key)) {
+                        e.preventDefault();
+                        if (activeSuggestion >= 0 && tickerSuggestions[activeSuggestion]) {
+                          const sym = tickerSuggestions[activeSuggestion].symbol;
+                          if (!portfolioTickers.includes(sym)) {
+                            setPortfolioTickers(prev => [...prev, sym]);
+                          }
+                          setPortfolioInput("");
+                          setShowSuggestions(false);
+                          setActiveSuggestion(-1);
+                          return;
+                        }
+                        const val = portfolioInput.trim();
+                        if (val && !portfolioTickers.includes(val) && val.length <= 10) {
+                          setPortfolioTickers(prev => [...prev, val]);
+                        }
+                        setPortfolioInput("");
+                        setShowSuggestions(false);
+                        setActiveSuggestion(-1);
+                        return;
+                      }
+                      if (e.key === "Backspace" && !portfolioInput && portfolioTickers.length) {
+                        setPortfolioTickers(prev => prev.slice(0, -1));
+                      }
+                    }}
+                    placeholder={portfolioTickers.length === 0 ? "Type tickers, press Enter or comma" : ""}
+                    className="flex-1 min-w-24 bg-transparent outline-none text-sm"
+                    style={{ color: "hsl(210,40%,85%)" }}
+                  />
+                </div>
+
+                {/* Autocomplete dropdown */}
+                {showSuggestions && tickerSuggestions.length > 0 && (
+                  <div
+                    ref={suggestionsRef}
+                    className="absolute left-0 right-0 top-full mt-1 rounded-xl overflow-hidden z-50"
+                    style={{
+                      background: "hsl(215,25%,11%)",
+                      border:     "1px solid hsl(215,20%,20%)",
+                      boxShadow:  "0 8px 24px rgba(0,0,0,0.4)",
+                    }}
+                  >
+                    {tickerSuggestions.map((s, i) => (
+                      <button
+                        key={s.symbol}
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          if (!portfolioTickers.includes(s.symbol)) {
+                            setPortfolioTickers(prev => [...prev, s.symbol]);
+                          }
+                          setPortfolioInput("");
+                          setShowSuggestions(false);
+                          setActiveSuggestion(-1);
+                          portfolioInputRef.current?.focus();
+                        }}
+                        className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-left transition-colors"
+                        style={{
+                          background:   i === activeSuggestion ? "hsl(215,25%,16%)" : "transparent",
+                          borderBottom: i < tickerSuggestions.length - 1 ? "1px solid hsl(215,20%,16%)" : "none",
+                        }}
+                        onMouseEnter={() => setActiveSuggestion(i)}
+                        onMouseLeave={() => setActiveSuggestion(-1)}
+                      >
+                        <span className="font-semibold" style={{ color: "hsl(217,91%,70%)", minWidth: 56 }}>
+                          {s.symbol}
+                        </span>
+                        <span className="truncate text-xs" style={{ color: "hsl(215,15%,55%)" }}>
+                          {s.name}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
 
               {/* Add from saved stocks shortcut */}
@@ -523,7 +627,7 @@ export default function ProfilePage() {
                     : portfolioTickers;
                   if (!portfolioName.trim() || finalTickers.length === 0) return;
                   setSavingPortfolio(true);
-                  await addPortfolio(portfolioName, finalTickers);
+                  await createPortfolio(portfolioName, finalTickers);
                   setPortfolioName("");
                   setPortfolioTickers([]);
                   setPortfolioInput("");

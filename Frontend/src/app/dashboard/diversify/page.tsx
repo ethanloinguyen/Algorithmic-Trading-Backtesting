@@ -1,6 +1,6 @@
 // Frontend/src/app/dashboard/diversify/page.tsx
 "use client";
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { useAuth } from "@/src/app/context/AuthContext";
 import Sidebar from "@/components/ui/Sidebar";
 import SpiderChart from "@/components/ui/SpiderChart";
@@ -9,6 +9,7 @@ import StockModal, { type Stock } from "@/components/ui/StockModal";
 import {
   analyzePortfolio,
   fetchStockSummaries,
+  fetchAllStocks,
   runRiskPipeline,
   type OverlapResult,
   type Recommendation,
@@ -17,12 +18,13 @@ import {
   type AnalysisMode,
   type RiskPipelineResult,
   type ClusteringPick,
+  type StockSummary,
 } from "@/src/app/lib/api";
 import {
   AlertTriangle, TrendingUp, Plus, X,
   ChevronDown, ChevronUp, Loader2, Sparkles, ArrowRight,
   ShieldAlert, BarChart3, Info, Zap, Globe, Link2, Layers, Timer,
-  Activity,
+  Activity, Star, Briefcase,
 } from "lucide-react";
 
 // ── Design tokens ─────────────────────────────────────────────────────────────
@@ -43,12 +45,6 @@ const BORDER_D   = "hsl(215, 20%, 16%)";
 const PURPLE     = "hsl(270, 70%, 65%)";
 const PURPLE_DIM = "hsla(270, 70%, 65%, 0.15)";
 
-const RANK_COLORS = [
-  BLUE, GREEN, AMBER, PURPLE, "hsl(195,80%,50%)",
-  "hsl(15,90%,58%)", "hsl(330,70%,60%)", "hsl(90,60%,50%)",
-  "hsl(260,60%,65%)", "hsl(50,80%,55%)",
-];
-
 const SECTOR_COLORS: Record<string, string> = {
   Technology: BLUE, Financials: GREEN, Healthcare: PURPLE,
   Energy: AMBER, Consumer: "hsl(15, 90%, 58%)",
@@ -56,7 +52,6 @@ const SECTOR_COLORS: Record<string, string> = {
 };
 const sc = (s: string) => SECTOR_COLORS[s] ?? TEXT_SEC;
 
-// ── Preset portfolios (from new version) ──────────────────────────────────────
 const PRESETS = [
   { label: "Big Tech",   tickers: ["NVDA","AMD","AAPL","MSFT","GOOGL"] },
   { label: "Financials", tickers: ["JPM","GS","MS","BAC","V"] },
@@ -64,7 +59,6 @@ const PRESETS = [
   { label: "Healthcare", tickers: ["JNJ","UNH","MRK","PFE","ABBV"] },
 ];
 
-// ── Factor explanations — 5 quality factors ──────────────────────────────────
 const FACTOR_EXPLANATIONS = [
   {
     label: "Momentum", weight: "35%", color: BLUE, Icon: TrendingUp,
@@ -121,7 +115,6 @@ function SectorTag({ sector }: { sector: string }) {
   );
 }
 
-
 function SectionHeader({ icon, label, count, color, dimColor, subtitle }: {
   icon: React.ReactNode; label: string; count: number;
   color: string; dimColor: string; subtitle: string;
@@ -140,7 +133,6 @@ function SectionHeader({ icon, label, count, color, dimColor, subtitle }: {
   );
 }
 
-// ── Factor explanations panel ─────────────────────────────────────────────────
 function FactorExplanations() {
   const [open, setOpen] = useState(false);
   return (
@@ -198,7 +190,6 @@ function FactorExplanations() {
   );
 }
 
-// ── Overlap card — original design + expanded stats from new version ───────────
 function OverlapCard({ overlap, companyNames, onTickerClick }: {
   overlap: OverlapResult;
   companyNames: Record<string, string>;
@@ -208,14 +199,12 @@ function OverlapCard({ overlap, companyNames, onTickerClick }: {
   const same = overlap.sector_leader === overlap.sector_follower;
   return (
     <div className="rounded-xl overflow-hidden" style={CARD}>
-      {/* Header row — original layout */}
       <div className="px-5 py-4 cursor-pointer" onClick={() => setOpen(o => !o)}
         onMouseEnter={e => (e.currentTarget.style.background = CARD_H)}
         onMouseLeave={e => (e.currentTarget.style.background = "transparent")}>
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2 flex-1 min-w-0">
-            <button className="text-sm font-bold hover:underline"
-              style={{ color: TEXT_PRI }}
+            <button className="text-sm font-bold hover:underline" style={{ color: TEXT_PRI }}
               onClick={e => { e.stopPropagation(); onTickerClick(overlap.ticker_leader); }}>
               {overlap.ticker_leader}
             </button>
@@ -225,8 +214,7 @@ function OverlapCard({ overlap, companyNames, onTickerClick }: {
               </span>
             )}
             <ArrowRight className="w-3.5 h-3.5 flex-shrink-0" style={{ color: AMBER }} />
-            <button className="text-sm font-bold hover:underline"
-              style={{ color: TEXT_PRI }}
+            <button className="text-sm font-bold hover:underline" style={{ color: TEXT_PRI }}
               onClick={e => { e.stopPropagation(); onTickerClick(overlap.ticker_follower); }}>
               {overlap.ticker_follower}
             </button>
@@ -248,14 +236,12 @@ function OverlapCard({ overlap, companyNames, onTickerClick }: {
             ? <ChevronUp className="w-4 h-4 flex-shrink-0" style={{ color: TEXT_MUT }} />
             : <ChevronDown className="w-4 h-4 flex-shrink-0" style={{ color: TEXT_MUT }} />}
         </div>
-        {/* Sector tags row — original */}
         <div className="flex items-center gap-2 mt-2">
           <SectorTag sector={overlap.sector_leader} />
           <ArrowRight className="w-3 h-3" style={{ color: TEXT_MUT }} />
           <SectorTag sector={overlap.sector_follower} />
         </div>
       </div>
-      {/* Expanded — 6 stats including new ones from new version */}
       {open && (
         <div className="px-5 pb-4" style={{ borderTop: `1px solid ${BORDER_D}` }}>
           <p className="text-sm mt-3 leading-relaxed" style={{ color: TEXT_SEC }}>
@@ -284,7 +270,6 @@ function OverlapCard({ overlap, companyNames, onTickerClick }: {
   );
 }
 
-// ── Independent rec card — original color + labelling fully restored ──────────
 function IndependentRecCard({ rec, rank, companyNames, onTickerClick }: {
   rec: IndependentRecommendation; rank: number;
   companyNames: Record<string, string>;
@@ -299,7 +284,6 @@ function IndependentRecCard({ rec, rank, companyNames, onTickerClick }: {
         onMouseEnter={e => (e.currentTarget.style.background = CARD_H)}
         onMouseLeave={e => (e.currentTarget.style.background = "transparent")}>
         <div className="flex items-center gap-3">
-          {/* Colored rank badge — purple for top 3 */}
           <div className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 text-xs font-bold"
             style={{
               background: rank <= 3 ? PURPLE_DIM : "hsl(215,25%,16%)",
@@ -309,23 +293,19 @@ function IndependentRecCard({ rec, rank, companyNames, onTickerClick }: {
           </div>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
-              <button className="text-sm font-bold hover:underline"
-                style={{ color: TEXT_PRI }}
+              <button className="text-sm font-bold hover:underline" style={{ color: TEXT_PRI }}
                 onClick={e => { e.stopPropagation(); onTickerClick(rec.ticker); }}>
                 {rec.ticker}
               </button>
               {companyNames[rec.ticker] && (
                 <span className="text-xs" style={{ color: TEXT_MUT }}>{companyNames[rec.ticker]}</span>
               )}
-              {/* Sector tag with sector color */}
               <SectorTag sector={rec.sector} />
-              {/* "No overlap detected" pill — purple */}
               <span className="text-xs px-2 py-0.5 rounded-full"
                 style={{ background: PURPLE_DIM, color: PURPLE }}>
                 No overlap detected
               </span>
             </div>
-            {/* Inline sub-scores row with icons — from original */}
             <div className="flex items-center gap-4 mt-1.5 flex-wrap">
               <span className="text-xs" style={{ color: TEXT_MUT }}>
                 <Layers className="w-3 h-3 inline mr-1" style={{ color: PURPLE }} />
@@ -355,8 +335,8 @@ function IndependentRecCard({ rec, rank, companyNames, onTickerClick }: {
           <p className="text-sm mt-3 leading-relaxed" style={{ color: TEXT_SEC }}>{rec.reasoning}</p>
           <div className="grid grid-cols-2 gap-3 mt-4">
             {[
-              { label: "Sector Gap",       val: rec.sector_gap_score,  desc: "How underrepresented this sector is in your portfolio (70% of score)", color: PURPLE },
-              { label: "Market Centrality", val: rec.centrality_score, desc: "How central this stock is in the market network (30% of score)",        color: TEXT_SEC },
+              { label: "Sector Gap",        val: rec.sector_gap_score,  desc: "How underrepresented this sector is (70% of score)", color: PURPLE },
+              { label: "Market Centrality", val: rec.centrality_score,  desc: "How central this stock is in the market network (30%)", color: TEXT_SEC },
             ].map(({ label, val, desc, color }) => (
               <div key={label}>
                 <div className="flex items-center justify-between mb-1">
@@ -376,55 +356,247 @@ function IndependentRecCard({ rec, rank, companyNames, onTickerClick }: {
   );
 }
 
-// ── Risk Assessment panel ─────────────────────────────────────────────────────
 function RiskResultPanel({ result, onTickerClick }: {
   result: RiskPipelineResult;
   onTickerClick: (ticker: string) => void;
 }) {
-  const { recommendations, risk } = result;
+  const { risk } = result;
   const p = risk.portfolio;
   const pct = (v: number) => `${(v * 100).toFixed(1)}%`;
   const lossColor = RED;
   const benefitColor = (v: number) => v > 0 ? GREEN : RED;
 
-  const portfolioMetrics = [
-    { label: "VaR 95%",             value: pct(p.var_95),                       color: lossColor,              hint: "Worst loss 95% of the time" },
-    { label: "CVaR 95%",            value: pct(p.cvar_95),                      color: lossColor,              hint: "Avg loss in worst 5% of scenarios" },
-    { label: "Expected Drawdown",   value: pct(p.expected_max_drawdown),        color: lossColor,              hint: "Average peak-to-trough decline" },
-    { label: "Prob of Loss",        value: pct(p.prob_loss),                    color: p.prob_loss > 0.5 ? RED : AMBER, hint: "Probability of any loss at horizon" },
-    { label: "Diversif. Benefit",   value: pct(p.diversification_benefit_95),   color: benefitColor(p.diversification_benefit_95), hint: "VaR improvement vs. equal-weight avg" },
-    { label: "Worst-Case DD p95",   value: pct(p.worst_case_max_drawdown_p95),  color: lossColor,              hint: "Drawdown exceeded only 5% of paths" },
-  ];
+  return (
+    <div className="rounded-xl p-5 mb-4" style={CARD}>
+      <p className="text-xs font-semibold mb-4 tracking-wide" style={{ color: TEXT_SEC }}>
+        PORTFOLIO METRICS — {risk.horizon_days}-DAY HORIZON · {risk.n_simulations.toLocaleString()} PATHS
+      </p>
+      <div className="grid grid-cols-3 gap-3">
+        {[
+          { label: "VaR 95%",           value: pct(p.var_95),                      color: lossColor,              hint: "Worst loss 95% of the time" },
+          { label: "CVaR 95%",          value: pct(p.cvar_95),                     color: lossColor,              hint: "Avg loss in worst 5% of scenarios" },
+          { label: "Expected Drawdown", value: pct(p.expected_max_drawdown),       color: lossColor,              hint: "Average peak-to-trough decline" },
+          { label: "Prob of Loss",      value: pct(p.prob_loss),                   color: p.prob_loss > 0.5 ? RED : AMBER, hint: "Probability of any loss at horizon" },
+          { label: "Diversif. Benefit", value: pct(p.diversification_benefit_95),  color: benefitColor(p.diversification_benefit_95), hint: "VaR improvement vs. equal-weight avg" },
+          { label: "Worst-Case DD p95", value: pct(p.worst_case_max_drawdown_p95), color: lossColor,              hint: "Drawdown exceeded only 5% of paths" },
+        ].map(({ label, value, color, hint }) => (
+          <div key={label} className="rounded-lg p-3"
+            style={{ background: "hsl(215,25%,9%)", border: `1px solid ${BORDER_D}` }}>
+            <p className="text-xs mb-1" style={{ color: TEXT_MUT }}>{label}</p>
+            <p className="text-xl font-bold" style={{ color }}>{value}</p>
+            <p className="text-xs mt-1 leading-tight" style={{ color: TEXT_MUT }}>{hint}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── Ticker input with autocomplete ────────────────────────────────────────────
+
+function TickerInput({
+  tickers,
+  onAdd,
+  onRemove,
+  allStocks,
+}: {
+  tickers:   string[];
+  onAdd:     (ticker: string) => void;
+  onRemove:  (ticker: string) => void;
+  allStocks: StockSummary[];
+}) {
+  const [inputVal,     setInputVal]     = useState("");
+  const [suggestions,  setSuggestions]  = useState<StockSummary[]>([]);
+  const [showDropdown, setShowDropdown] = useState(false);
+  const [highlighted,  setHighlighted]  = useState(-1);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => { inputRef.current?.focus(); }, []);
+
+  useEffect(() => {
+    const q = inputVal.toUpperCase().trim();
+    if (!q || allStocks.length === 0) { setSuggestions([]); setShowDropdown(false); return; }
+    const matches = allStocks
+      .filter(s =>
+        !tickers.includes(s.symbol) &&
+        (s.symbol.startsWith(q) || s.name.toUpperCase().includes(q))
+      )
+      .slice(0, 8);
+    setSuggestions(matches);
+    setShowDropdown(matches.length > 0);
+    setHighlighted(-1);
+  }, [inputVal, allStocks, tickers]);
+
+  const commitRaw = (raw: string) => {
+    const parts = raw.toUpperCase().split(/[\s,]+/).filter(Boolean);
+    parts.forEach(t => { if (t.length <= 10 && !tickers.includes(t)) onAdd(t); });
+    setInputVal("");
+    setSuggestions([]);
+    setShowDropdown(false);
+  };
+
+  const commitSuggestion = (symbol: string) => {
+    if (!tickers.includes(symbol)) onAdd(symbol);
+    setInputVal("");
+    setSuggestions([]);
+    setShowDropdown(false);
+    inputRef.current?.focus();
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (showDropdown && suggestions.length > 0) {
+      if (e.key === "ArrowDown") { e.preventDefault(); setHighlighted(h => Math.min(h + 1, suggestions.length - 1)); return; }
+      if (e.key === "ArrowUp")   { e.preventDefault(); setHighlighted(h => Math.max(h - 1, -1)); return; }
+      if (e.key === "Enter" && highlighted >= 0) { e.preventDefault(); commitSuggestion(suggestions[highlighted].symbol); return; }
+      if (e.key === "Escape") { setShowDropdown(false); return; }
+    }
+    if (["Enter", ",", " ", "Tab"].includes(e.key)) {
+      e.preventDefault();
+      if (inputVal.trim()) commitRaw(inputVal.trim());
+    }
+    if (e.key === "Backspace" && !inputVal && tickers.length) onRemove(tickers[tickers.length - 1]);
+  };
 
   return (
-    <>
-      {/* Portfolio risk metrics */}
-      <div className="rounded-xl p-5 mb-4" style={CARD}>
-        <p className="text-xs font-semibold mb-4 tracking-wide" style={{ color: TEXT_SEC }}>
-          PORTFOLIO METRICS — {risk.horizon_days}-DAY HORIZON · {risk.n_simulations.toLocaleString()} PATHS
-        </p>
-        <div className="grid grid-cols-3 gap-3">
-          {portfolioMetrics.map(({ label, value, color, hint }) => (
-            <div key={label} className="rounded-lg p-3"
-              style={{ background: "hsl(215,25%,9%)", border: `1px solid ${BORDER_D}` }}>
-              <p className="text-xs mb-1" style={{ color: TEXT_MUT }}>{label}</p>
-              <p className="text-xl font-bold" style={{ color }}>{value}</p>
-              <p className="text-xs mt-1 leading-tight" style={{ color: TEXT_MUT }}>{hint}</p>
-            </div>
-          ))}
-        </div>
+    <div className="relative">
+      <div
+        className="flex flex-wrap gap-2 min-h-12 p-2 rounded-lg cursor-text"
+        style={{ background: "hsl(215,25%,9%)", border: `1px solid ${BORDER}` }}
+        onClick={() => inputRef.current?.focus()}
+      >
+        {tickers.map(t => (
+          <span key={t} className="flex items-center gap-1 px-2.5 py-1 rounded-md text-sm font-semibold"
+            style={{ background: BLUE_DIM, color: BLUE }}>
+            {t}
+            <button onClick={e => { e.stopPropagation(); onRemove(t); }} className="hover:opacity-60 ml-0.5">
+              <X className="w-3 h-3" />
+            </button>
+          </span>
+        ))}
+        <input
+          ref={inputRef}
+          value={inputVal}
+          onChange={e => setInputVal(e.target.value.toUpperCase())}
+          onKeyDown={handleKeyDown}
+          onFocus={() => suggestions.length > 0 && setShowDropdown(true)}
+          onBlur={() => {
+            setTimeout(() => {
+              setShowDropdown(false);
+              if (inputVal.trim()) commitRaw(inputVal.trim());
+            }, 150);
+          }}
+          placeholder={tickers.length === 0 ? "AAPL, MSFT, NVDA…" : ""}
+          className="flex-1 min-w-24 bg-transparent outline-none text-sm"
+          style={{ color: TEXT_PRI }}
+        />
       </div>
 
-    </>
+      {/* Autocomplete dropdown */}
+      {showDropdown && suggestions.length > 0 && (
+        <div
+          className="absolute left-0 right-0 mt-1 rounded-xl overflow-hidden z-30"
+          style={{
+            background: "hsl(215,25%,11%)",
+            border:     `1px solid ${BORDER}`,
+            boxShadow:  "0 8px 24px rgba(0,0,0,0.4)",
+            top:        "100%",
+          }}
+        >
+          {suggestions.map((s, i) => (
+            <button
+              key={s.symbol}
+              onMouseDown={() => commitSuggestion(s.symbol)}
+              className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-left"
+              style={{
+                background:   i === highlighted ? "hsl(215,25%,16%)" : "transparent",
+                borderBottom: i < suggestions.length - 1 ? `1px solid ${BORDER_D}` : "none",
+              }}
+              onMouseEnter={() => setHighlighted(i)}
+              onMouseLeave={() => setHighlighted(-1)}
+            >
+              <span className="font-semibold" style={{ color: BLUE, minWidth: 56 }}>{s.symbol}</span>
+              <span className="truncate text-xs" style={{ color: TEXT_SEC }}>{s.name}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Portfolio dropdown ─────────────────────────────────────────────────────────
+
+function PortfolioDropdown({
+  portfolios,
+  onSelect,
+}: {
+  portfolios: { id: string; name: string; tickers: string[] }[];
+  onSelect:   (tickers: string[]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-md transition-colors"
+        style={{ background: "hsla(142,71%,45%,0.1)", border: "1px solid hsla(142,71%,45%,0.3)", color: GREEN }}
+        onMouseEnter={e => (e.currentTarget.style.background = "hsla(142,71%,45%,0.2)")}
+        onMouseLeave={e => (e.currentTarget.style.background = "hsla(142,71%,45%,0.1)")}
+      >
+        <Briefcase className="w-3 h-3" />
+        Add Portfolio
+        <ChevronDown className="w-3 h-3" style={{ transform: open ? "rotate(180deg)" : "none", transition: "transform 0.15s" }} />
+      </button>
+
+      {open && (
+        <div
+          className="absolute top-full left-0 mt-1 rounded-xl overflow-hidden z-30 min-w-48"
+          style={{ background: "hsl(215,28%,13%)", border: `1px solid ${BORDER}`, boxShadow: "0 8px 32px rgba(0,0,0,0.5)" }}
+        >
+          {portfolios.length === 0 ? (
+            <div className="px-4 py-3 text-xs" style={{ color: TEXT_MUT }}>
+              No portfolios saved yet.
+            </div>
+          ) : (
+            portfolios.map(p => (
+              <button
+                key={p.id}
+                onMouseDown={() => { onSelect(p.tickers); setOpen(false); }}
+                className="w-full text-left px-4 py-2.5 flex items-center justify-between gap-3 text-sm"
+                style={{ color: TEXT_PRI }}
+                onMouseEnter={e => (e.currentTarget.style.background = "hsl(215,25%,18%)")}
+                onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
+              >
+                <span className="font-medium">{p.name}</span>
+                <span className="text-xs px-1.5 py-0.5 rounded" style={{ background: BLUE_DIM, color: BLUE }}>
+                  {p.tickers.length}
+                </span>
+              </button>
+            ))
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
 // ── Main page ─────────────────────────────────────────────────────────────────
+
 export default function DiversifyPage() {
-  const { customPortfolios } = useAuth();
+  const { savedStocks, customPortfolios } = useAuth();
+
   const [analysisMode,  setAnalysisMode]  = useState<AnalysisMode>("broad_market");
   const [resultMode,    setResultMode]    = useState<AnalysisMode>("broad_market");
-  const [inputVal,      setInputVal]      = useState("");
   const [tickers,       setTickers]       = useState<string[]>([]);
   const [loading,       setLoading]       = useState(false);
   const [error,         setError]         = useState<string | null>(null);
@@ -443,15 +615,17 @@ export default function DiversifyPage() {
   const [riskResult,      setRiskResult]      = useState<RiskPipelineResult | null>(null);
   const [riskLoading,     setRiskLoading]     = useState(false);
   const [riskError,       setRiskError]       = useState<string | null>(null);
+  const [allStocks,       setAllStocks]       = useState<StockSummary[]>([]);
+
+  // Load autocomplete stock list
+  useEffect(() => {
+    fetchAllStocks().then(setAllStocks).catch(() => {});
+  }, []);
 
   const hoveredTicker = activeSpiderIdx !== null
     ? (result?.quality_picks?.[activeSpiderIdx]?.ticker ?? null)
     : null;
-  const inputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => { inputRef.current?.focus(); }, []);
-
-  // currentSectors from holdings_sectors — always populated, fixes blank donut
   const currentSectors = (() => {
     if (!result?.holdings_sectors) return {};
     const dist: Record<string, number> = {};
@@ -463,43 +637,56 @@ export default function DiversifyPage() {
 
   const hoveredRec = result?.quality_picks?.find(r => r.ticker === hoveredTicker) ?? null;
 
-  const addTicker = (raw: string) => {
-    const parts = raw.toUpperCase().split(/[\s,]+/).filter(Boolean);
+  const addTicker = useCallback((ticker: string) => {
     setTickers(prev => {
-      const next = [...prev];
-      for (const t of parts) if (t.length <= 10 && !next.includes(t)) next.push(t);
-      return next;
+      if (prev.includes(ticker) || ticker.length > 10) return prev;
+      return [...prev, ticker.toUpperCase()];
     });
-    setInputVal("");
-  };
+  }, []);
 
   const removeTicker = (t: string) => setTickers(prev => prev.filter(x => x !== t));
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (["Enter", ",", " ", "Tab"].includes(e.key)) { e.preventDefault(); if (inputVal.trim()) addTicker(inputVal.trim()); }
-    if (e.key === "Backspace" && !inputVal && tickers.length) setTickers(prev => prev.slice(0, -1));
+  // Add entire watchlist
+  const addWatchlist = () => {
+    if (!savedStocks.length) return;
+    setTickers(prev => {
+      const next = [...prev];
+      savedStocks.forEach(s => {
+        if (!next.includes(s.symbol)) next.push(s.symbol);
+      });
+      return next;
+    });
+    setResult(null);
+  };
+
+  // Add a named portfolio
+  const addPortfolio = (portfolioTickers: string[]) => {
+    setTickers(prev => {
+      const next = [...prev];
+      portfolioTickers.forEach(t => {
+        if (!next.includes(t)) next.push(t);
+      });
+      return next;
+    });
+    setResult(null);
   };
 
   const handleAnalyze = async () => {
-    if (inputVal.trim()) addTicker(inputVal.trim());
-    const toAnalyze = inputVal.trim()
-      ? [...tickers, ...inputVal.trim().toUpperCase().split(/[\s,]+/).filter(Boolean)]
-      : tickers;
-    if (!toAnalyze.length) return;
+    if (!tickers.length) return;
     setLoading(true); setError(null); setResult(null); setActiveSpiderIdx(0);
     setRiskResult(null); setRiskLoading(true); setRiskError(null);
     try {
-      const data = await analyzePortfolio(toAnalyze, analysisMode);
+      const data = await analyzePortfolio(tickers, analysisMode);
       setResult(data);
       setResultMode(analysisMode);
-      const allTickers = [
+      const allT = [
         ...data.tickers_analyzed,
         ...data.signal_recommendations.map(r => r.ticker),
         ...(data.quality_picks ?? []).map(r => r.ticker),
       ];
-      const uniqueTickers = [...new Set(allTickers)];
-      if (uniqueTickers.length > 0) {
-        fetchStockSummaries(uniqueTickers)
+      const unique = [...new Set(allT)];
+      if (unique.length > 0) {
+        fetchStockSummaries(unique)
           .then(summaries => {
             const names: Record<string, string> = {};
             summaries.forEach(s => { names[s.symbol] = s.name; });
@@ -507,8 +694,7 @@ export default function DiversifyPage() {
           })
           .catch(() => {});
       }
-      // Fire risk pipeline in background — portfolio analysis results show immediately
-      runRiskPipeline(toAnalyze)
+      runRiskPipeline(tickers)
         .then(riskData => setRiskResult(riskData))
         .catch(err => setRiskError(err instanceof Error ? err.message : "Risk assessment failed."))
         .finally(() => setRiskLoading(false));
@@ -521,26 +707,21 @@ export default function DiversifyPage() {
   };
 
   const reset = () => {
-    setTickers([]); setInputVal(""); setResult(null); setError(null);
+    setTickers([]); setResult(null); setError(null);
     setActiveSpiderIdx(null); setCompanyNames({}); setModalStock(null);
     setRiskResult(null); setRiskLoading(false); setRiskError(null);
-    setTimeout(() => inputRef.current?.focus(), 0);
   };
 
   const hasResult = result !== null;
+  const qualityPicks = result?.quality_picks ?? [];
 
   const handleTickerClick = (ticker: string) => {
     setModalStock({
       symbol:   ticker,
       name:     companyNames[ticker] ?? ticker,
-      price:    "—",
-      change:   "—",
-      volume:   "—",
-      positive: true,
+      price:    "—", change: "—", volume: "—", positive: true,
     });
   };
-
-  const qualityPicks = result?.quality_picks ?? [];
 
   return (
     <div className="min-h-screen" style={{ background: BG }}>
@@ -562,37 +743,26 @@ export default function DiversifyPage() {
             </p>
           </div>
 
-          {/* ── Input — always visible, even after analysis ── */}
+          {/* Input card */}
           <div className="rounded-xl p-5 mb-6" style={CARD}>
             <p className="text-xs font-medium mb-3" style={{ color: TEXT_SEC }}>
               YOUR HOLDINGS — type a ticker and press Enter, Space, or comma
             </p>
-            <div className="flex flex-wrap gap-2 min-h-12 p-2 rounded-lg cursor-text"
-              style={{ background: "hsl(215,25%,9%)", border: `1px solid ${BORDER}` }}
-              onClick={() => inputRef.current?.focus()}>
-              {tickers.map(t => (
-                <span key={t} className="flex items-center gap-1 px-2.5 py-1 rounded-md text-sm font-semibold"
-                  style={{ background: BLUE_DIM, color: BLUE }}>
-                  {t}
-                  <button onClick={e => { e.stopPropagation(); removeTicker(t); }} className="hover:opacity-60 ml-0.5">
-                    <X className="w-3 h-3" />
-                  </button>
-                </span>
-              ))}
-              <input ref={inputRef} value={inputVal}
-                onChange={e => setInputVal(e.target.value.toUpperCase())}
-                onKeyDown={handleKeyDown}
-                onBlur={() => { if (inputVal.trim()) addTicker(inputVal.trim()); }}
-                placeholder={tickers.length === 0 ? "AAPL, MSFT, NVDA..." : ""}
-                className="flex-1 min-w-24 bg-transparent outline-none text-sm"
-                style={{ color: TEXT_PRI }} />
-            </div>
 
-            {/* Preset buttons — always visible, new version style */}
+            {/* Ticker chip input with autocomplete */}
+            <TickerInput
+              tickers={tickers}
+              onAdd={addTicker}
+              onRemove={removeTicker}
+              allStocks={allStocks}
+            />
+
+            {/* Quick-add row */}
             <div className="flex items-center gap-2 mt-3 flex-wrap">
               <span className="text-xs" style={{ color: TEXT_MUT }}>Presets:</span>
               {PRESETS.map(p => (
-                <button key={p.label} onClick={() => { setTickers(p.tickers); setResult(null); }}
+                <button key={p.label}
+                  onClick={() => { setTickers(p.tickers); setResult(null); }}
                   className="text-xs px-2.5 py-1 rounded-md transition-colors"
                   style={{ background: "hsl(215,25%,14%)", border: `1px solid ${BORDER}`, color: TEXT_SEC }}
                   onMouseEnter={e => (e.currentTarget.style.background = "hsl(215,25%,18%)")}
@@ -600,28 +770,40 @@ export default function DiversifyPage() {
                   {p.label}
                 </button>
               ))}
-              {customPortfolios.length > 0 && (
-                <>
-                  <span className="text-xs" style={{ color: "hsl(215,20%,28%)" }}>|</span>
-                  <span className="text-xs" style={{ color: TEXT_MUT }}>My portfolios:</span>
-                  {customPortfolios.map(p => (
-                    <button
-                      key={p.id}
-                      onClick={() => { setTickers(p.tickers); setResult(null); }}
-                      className="text-xs px-2.5 py-1 rounded-md transition-colors"
-                      style={{ background: "hsla(217,91%,60%,0.1)", border: "1px solid hsla(217,91%,60%,0.3)", color: "hsl(217,91%,70%)" }}
-                      onMouseEnter={e => (e.currentTarget.style.background = "hsla(217,91%,60%,0.2)")}
-                      onMouseLeave={e => (e.currentTarget.style.background = "hsla(217,91%,60%,0.1)")}>
-                      {p.name}
-                    </button>
-                  ))}
-                </>
-              )}
+
+              {/* Divider */}
+              <span className="text-xs" style={{ color: "hsl(215,20%,28%)" }}>|</span>
+
+              {/* Add Watchlist button */}
+              <button
+                onClick={addWatchlist}
+                disabled={savedStocks.length === 0}
+                className="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-md transition-colors disabled:opacity-40"
+                style={{ background: "hsla(48,96%,53%,0.1)", border: "1px solid hsla(48,96%,53%,0.3)", color: "hsl(48,96%,53%)" }}
+                onMouseEnter={e => { if (savedStocks.length > 0) e.currentTarget.style.background = "hsla(48,96%,53%,0.2)"; }}
+                onMouseLeave={e => (e.currentTarget.style.background = "hsla(48,96%,53%,0.1)")}
+                title={savedStocks.length === 0 ? "Your watchlist is empty" : `Add ${savedStocks.length} watchlist stocks`}
+              >
+                <Star className="w-3 h-3" />
+                Add Watchlist
+                {savedStocks.length > 0 && (
+                  <span className="text-xs px-1 rounded" style={{ background: "hsla(48,96%,53%,0.2)" }}>
+                    {savedStocks.length}
+                  </span>
+                )}
+              </button>
+
+              {/* Add Portfolio dropdown — only shown if user has portfolios */}
+              <PortfolioDropdown
+                portfolios={customPortfolios}
+                onSelect={addPortfolio}
+              />
             </div>
 
+            {/* Action row */}
             <div className="flex items-center gap-3 mt-4">
               <button onClick={handleAnalyze}
-                disabled={loading || (tickers.length === 0 && !inputVal.trim())}
+                disabled={loading || tickers.length === 0}
                 className="flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-semibold disabled:opacity-40"
                 style={{ background: BLUE, color: "white" }}>
                 {loading
@@ -662,7 +844,6 @@ export default function DiversifyPage() {
                 </div>
               )}
 
-              {/* ── Stat cards — original design with icons fully restored ── */}
               <div className="grid grid-cols-3 gap-3 mb-6">
                 {[
                   { label: "Analyzed",      value: result.tickers_analyzed.length, color: BLUE,  icon: <BarChart3 className="w-4 h-4" /> },
@@ -679,10 +860,8 @@ export default function DiversifyPage() {
                 ))}
               </div>
 
-              {/* Factor explanations — new version's layout */}
               <FactorExplanations />
 
-              {/* Risk Assessment */}
               {(riskLoading || riskResult !== null || riskError !== null) && (
                 <section className="mb-8">
                   <div className="flex items-center gap-2 mb-1">
@@ -698,7 +877,6 @@ export default function DiversifyPage() {
                   <p className="text-xs mb-4" style={{ color: TEXT_MUT }}>
                     K-Medoids sector picks decorrelated from your portfolio · Monte Carlo simulation ({riskResult?.risk.horizon_days ?? 63}-day horizon, {(riskResult?.risk.n_simulations ?? 1000).toLocaleString()} paths)
                   </p>
-
                   {riskLoading && !riskResult && (
                     <div className="rounded-xl px-6 py-10 text-center" style={CARD}>
                       <Loader2 className="w-8 h-8 mx-auto mb-3 animate-spin" style={{ color: BLUE }} />
@@ -708,7 +886,6 @@ export default function DiversifyPage() {
                       </p>
                     </div>
                   )}
-
                   {riskError && (
                     <div className="rounded-xl px-5 py-4 flex items-center gap-3"
                       style={{ background: "hsla(0,84%,60%,0.1)", border: "1px solid hsla(0,84%,60%,0.3)" }}>
@@ -716,17 +893,10 @@ export default function DiversifyPage() {
                       <p className="text-sm" style={{ color: RED }}>{riskError}</p>
                     </div>
                   )}
-
-                  {riskResult && (
-                    <RiskResultPanel
-                      result={riskResult}
-                      onTickerClick={handleTickerClick}
-                    />
-                  )}
+                  {riskResult && <RiskResultPanel result={riskResult} onTickerClick={handleTickerClick} />}
                 </section>
               )}
 
-              {/* Quality Picks */}
               {qualityPicks.length > 0 && (
                 <section className="mb-8">
                   <SectionHeader
@@ -754,14 +924,12 @@ export default function DiversifyPage() {
                 </section>
               )}
 
-              {/* K-Medoids Sector Picks */}
               {riskResult && riskResult.recommendations.length > 0 && (
                 <section className="mb-8">
                   <div className="flex items-center gap-2 mb-1">
                     <Sparkles className="w-4 h-4" style={{ color: GREEN }} />
                     <h2 className="text-base font-semibold" style={{ color: TEXT_PRI }}>K-Medoids Sector Picks</h2>
-                    <span className="text-xs px-2 py-0.5 rounded-full ml-1"
-                      style={{ background: GREEN_DIM, color: GREEN }}>
+                    <span className="text-xs px-2 py-0.5 rounded-full ml-1" style={{ background: GREEN_DIM, color: GREEN }}>
                       {riskResult.recommendations.length} picks
                     </span>
                   </div>
@@ -786,7 +954,6 @@ export default function DiversifyPage() {
                       </div>
                     ))}
                   </div>
-                  {/* Per-stock risk table */}
                   <div className="rounded-xl overflow-hidden mt-4" style={CARD}>
                     <div className="px-5 py-3" style={{ borderBottom: `1px solid ${BORDER_D}` }}>
                       <p className="text-xs font-semibold tracking-wide" style={{ color: TEXT_SEC }}>PER-STOCK RISK</p>
@@ -795,7 +962,7 @@ export default function DiversifyPage() {
                       <table className="w-full text-xs">
                         <thead>
                           <tr style={{ borderBottom: `1px solid ${BORDER_D}` }}>
-                            {["Ticker", "Sector", "VaR 95%", "CVaR 95%", "Prob Loss", "Max Drawdown"].map(h => (
+                            {["Ticker","Sector","VaR 95%","CVaR 95%","Prob Loss","Max Drawdown"].map(h => (
                               <th key={h} className="px-4 py-2 text-left font-medium" style={{ color: TEXT_MUT }}>{h}</th>
                             ))}
                           </tr>
@@ -814,17 +981,12 @@ export default function DiversifyPage() {
                               >
                                 <td className="px-4 py-2.5">
                                   <button className="font-bold hover:underline" style={{ color: TEXT_PRI }}
-                                    onClick={() => handleTickerClick(ticker)}>
-                                    {ticker}
-                                  </button>
+                                    onClick={() => handleTickerClick(ticker)}>{ticker}</button>
                                 </td>
-                                <td className="px-4 py-2.5">
-                                  {rec && <SectorTag sector={rec.sector} />}
-                                </td>
+                                <td className="px-4 py-2.5">{rec && <SectorTag sector={rec.sector} />}</td>
                                 <td className="px-4 py-2.5 font-mono" style={{ color: RED }}>{pct(s.var_95)}</td>
                                 <td className="px-4 py-2.5 font-mono" style={{ color: RED }}>{pct(s.cvar_95)}</td>
-                                <td className="px-4 py-2.5 font-mono"
-                                  style={{ color: s.prob_loss > 0.5 ? RED : AMBER }}>{pct(s.prob_loss)}</td>
+                                <td className="px-4 py-2.5 font-mono" style={{ color: s.prob_loss > 0.5 ? RED : AMBER }}>{pct(s.prob_loss)}</td>
                                 <td className="px-4 py-2.5 font-mono" style={{ color: RED }}>{pct(s.expected_max_drawdown)}</td>
                               </tr>
                             );
@@ -833,28 +995,25 @@ export default function DiversifyPage() {
                       </table>
                     </div>
                   </div>
-
                   {riskResult.risk.missing.length > 0 ? (
                     <p className="text-xs mt-3 px-1" style={{ color: TEXT_MUT }}>
-                      ★ = cluster medoid &nbsp;·&nbsp; dcor badge = decorrelation from your portfolio (lower is better)
-                      &nbsp;·&nbsp; {riskResult.risk.missing.length} ticker{riskResult.risk.missing.length > 1 ? "s" : ""} unavailable: {riskResult.risk.missing.join(", ")}
+                      ★ = cluster medoid · dcor badge = decorrelation from your portfolio (lower is better)
+                      · {riskResult.risk.missing.length} ticker{riskResult.risk.missing.length > 1 ? "s" : ""} unavailable: {riskResult.risk.missing.join(", ")}
                     </p>
                   ) : (
                     <p className="text-xs mt-3 px-1" style={{ color: TEXT_MUT }}>
-                      ★ = cluster medoid &nbsp;·&nbsp; dcor badge = decorrelation from your portfolio (lower is better)
+                      ★ = cluster medoid · dcor badge = decorrelation from your portfolio (lower is better)
                     </p>
                   )}
                 </section>
               )}
-
             </div>
           )}
 
           {/* Empty state */}
           {!hasResult && !loading && tickers.length === 0 && (
             <div className="rounded-xl px-6 py-12 text-center" style={CARD}>
-              <div className="w-12 h-12 rounded-xl flex items-center justify-center mx-auto mb-4"
-                style={{ background: BLUE_DIM }}>
+              <div className="w-12 h-12 rounded-xl flex items-center justify-center mx-auto mb-4" style={{ background: BLUE_DIM }}>
                 <Plus className="w-6 h-6" style={{ color: BLUE }} />
               </div>
               <p className="text-sm font-medium mb-1" style={{ color: TEXT_PRI }}>Add your stock holdings above</p>
