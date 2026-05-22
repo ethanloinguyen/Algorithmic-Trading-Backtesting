@@ -808,6 +808,17 @@ def main(
             f"{tickers3:,} tickers updated/queued"
         )
 
+        # Indices (SPX, IXIC, DJI) are stored in general_market_data under BQ
+        # symbol names but yfinance requires ^-prefixed symbols (^GSPC, ^IXIC, ^DJI).
+        # update_general_stocks() passes the BQ names to yfinance and gets nothing
+        # back, so indices never update via the generic path. seed_indices() has
+        # the correct symbol mapping and handles incremental updates safely.
+        logger.info("\n" + "=" * 60)
+        logger.info("STEP 3b: Updating index data (SPX, IXIC, DJI)")
+        logger.info("=" * 60)
+        rows_idx = seed_indices(client, dry_run=dry_run)
+        logger.info(f"\n  Index update complete: {rows_idx:,} rows written")
+
     # ── Step 4: prune old data (optional, recommended for nightly cron) ───
     if prune_old and update_general:
         logger.info("\n" + "=" * 60)
