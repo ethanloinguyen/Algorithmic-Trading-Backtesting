@@ -30,10 +30,6 @@ RUN pip install --no-cache-dir -r /app/Algorithm/requirements.txt
 # Copy Algorithm source (jobs, src, scripts, config)
 COPY Algorithm/ /app/Algorithm/
 
-# Copy shared model artifacts if they exist at the repo root level
-# (aggregation_job may reference these; safe to include even if unused by other jobs)
-COPY Model/ /app/Model/
-
 # entrypoint.sh maps CLOUD_RUN_TASK_INDEX → PARTITION_ID and
 # CLOUD_RUN_TASK_COUNT → NUM_PARTITIONS before exec'ing the job.
 # This is the fix for the double-parallelization issue from the previous run.
