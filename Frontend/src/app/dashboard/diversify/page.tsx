@@ -356,6 +356,68 @@ function IndependentRecCard({ rec, rank, companyNames, onTickerClick }: {
   );
 }
 
+// ── Metric info tooltip ───────────────────────────────────────────────────────
+function MetricHint({ detail, position = "above" }: { detail: string; position?: "above" | "below" }) {
+  const [visible, setVisible] = useState(false);
+  return (
+    <span
+      className="relative inline-flex items-center"
+      onMouseEnter={() => setVisible(true)}
+      onMouseLeave={() => setVisible(false)}
+    >
+      <Info
+        className="w-3 h-3 ml-1 flex-shrink-0 cursor-help"
+        style={{ color: visible ? TEXT_SEC : TEXT_MUT }}
+      />
+      {visible && (
+        <span
+          className="absolute z-50 rounded-lg text-xs leading-relaxed pointer-events-none"
+          style={{
+            background:  "hsl(215,25%,11%)",
+            border:      `1px solid ${BORDER}`,
+            boxShadow:   "0 8px 28px rgba(0,0,0,0.55)",
+            color:       TEXT_SEC,
+            padding:     "10px 12px",
+            width:       252,
+            left:        "50%",
+            transform:   "translateX(-50%)",
+            ...(position === "above"
+              ? { bottom: "calc(100% + 8px)" }
+              : { top:    "calc(100% + 8px)" }),
+          }}
+        >
+          {detail}
+        </span>
+      )}
+    </span>
+  );
+}
+
+// ── Detailed explanations for every risk metric ───────────────────────────────
+const METRIC_DETAILS: Record<string, string> = {
+  "VaR 95%":
+    "Value at Risk — with 95% confidence your portfolio will not lose more than this percentage over the simulation horizon. Only 1-in-20 paths produce a larger loss. It marks the boundary between normal volatility and tail-risk territory.",
+  "CVaR 95%":
+    "Conditional Value at Risk (Expected Shortfall) — given that losses do cross the VaR boundary, this is their average severity across the worst 5% of paths. CVaR penalises fat tails more than VaR and is the preferred measure for capturing extreme events.",
+  "Expected Drawdown":
+    "The mean peak-to-trough decline across all simulation paths. A drawdown measures how far the portfolio falls from its running high before recovering. This is a 'typical bad stretch' estimate, not the worst case.",
+  "Prob of Loss":
+    "The fraction of Monte Carlo paths where the portfolio closes below its starting value at the horizon date. Above 50% means a loss is statistically more likely than a gain. Pair this with CVaR to understand both the likelihood and severity of losses.",
+  "Diversif. Benefit":
+    "How much your portfolio's VaR improves relative to a simple equal-weighted average of each stock's individual VaR. Positive means correlations are reducing joint risk — diversification is working. Negative means the holdings are moving too closely together to offset one another.",
+  "Worst-Case DD p95":
+    "The 95th-percentile peak-to-trough drawdown — 95% of simulated paths had a smaller decline than this value. Think of it as a stress-test drawdown: uncommon under normal conditions but firmly within the model's plausible range.",
+  // Per-stock table columns
+  "VaR 95% (stock)":
+    "The maximum loss this individual stock is expected to exceed only 5% of the time, measured in isolation over the simulation horizon.",
+  "CVaR 95% (stock)":
+    "The average loss this stock experiences across its worst 5% of simulation paths — a direct measure of tail severity for a single position.",
+  "Prob Loss":
+    "The percentage of simulation paths where this stock finishes below its starting price at the horizon date.",
+  "Max Drawdown":
+    "The average peak-to-trough decline for this stock across all simulation paths, representing typical downside exposure.",
+};
+
 function RiskResultPanel({ result, onTickerClick }: {
   result: RiskPipelineResult;
   onTickerClick: (ticker: string) => void;
@@ -382,7 +444,10 @@ function RiskResultPanel({ result, onTickerClick }: {
         ].map(({ label, value, color, hint }) => (
           <div key={label} className="rounded-lg p-3"
             style={{ background: "hsl(215,25%,9%)", border: `1px solid ${BORDER_D}` }}>
-            <p className="text-xs mb-1" style={{ color: TEXT_MUT }}>{label}</p>
+            <p className="text-xs mb-1 flex items-center" style={{ color: TEXT_MUT }}>
+              {label}
+              {METRIC_DETAILS[label] && <MetricHint detail={METRIC_DETAILS[label]} />}
+            </p>
             <p className="text-xl font-bold" style={{ color }}>{value}</p>
             <p className="text-xs mt-1 leading-tight" style={{ color: TEXT_MUT }}>{hint}</p>
           </div>
@@ -962,9 +1027,21 @@ export default function DiversifyPage() {
                       <table className="w-full text-xs">
                         <thead>
                           <tr style={{ borderBottom: `1px solid ${BORDER_D}` }}>
-                            {["Ticker","Sector","VaR 95%","CVaR 95%","Prob Loss","Max Drawdown"].map(h => (
-                              <th key={h} className="px-4 py-2 text-left font-medium" style={{ color: TEXT_MUT }}>{h}</th>
-                            ))}
+                            {(["Ticker","Sector","VaR 95%","CVaR 95%","Prob Loss","Max Drawdown"] as const).map(h => {
+                              const detailKey =
+                                h === "VaR 95%"      ? "VaR 95% (stock)"  :
+                                h === "CVaR 95%"     ? "CVaR 95% (stock)" :
+                                h === "Prob Loss"    ? "Prob Loss"         :
+                                h === "Max Drawdown" ? "Max Drawdown"      : null;
+                              return (
+                                <th key={h} className="px-4 py-2 text-left font-medium" style={{ color: TEXT_MUT }}>
+                                  <span className="inline-flex items-center">
+                                    {h}
+                                    {detailKey && <MetricHint detail={METRIC_DETAILS[detailKey]} position="below" />}
+                                  </span>
+                                </th>
+                              );
+                            })}
                           </tr>
                         </thead>
                         <tbody>
