@@ -278,6 +278,11 @@ def run_full_sweep(D, k_min, k_max, n_init, min_size, max_frac, rs=42):
 def detect_elbow(sweep, sensitivity):
     ks       = [k for k in sorted(sweep.keys()) if sweep[k]['valid']]
     inertias = [sweep[k]['inertia'] for k in ks]
+    if not ks:
+        raise ValueError(
+            "No valid k found in sweep — candidate pool is too small for clustering "
+            f"(min_cluster_size={MIN_CLUSTER_SIZE}). Try lowering dcor_threshold or using more tickers."
+        )
     if len(ks) < 3:
         return ks[0], ks, inertias, [], []
     drops  = [max(0.0, inertias[i] - inertias[i+1]) for i in range(len(inertias)-1)]
@@ -347,6 +352,13 @@ def run_clustering(
     # ── Candidate pool ────────────────────────────────────────────────────────
     candidate_df     = build_candidate_pool(user_portfolio, bq_table, dcor_threshold, client)
     candidate_stocks = candidate_df['candidate_stock'].tolist()
+
+    if not candidate_stocks:
+        raise ValueError(
+            f"No decorrelated candidates found for portfolio {list(user_portfolio)} "
+            f"(dcor_threshold={dcor_threshold}). "
+            "Check that all tickers exist in the BigQuery table and try raising dcor_threshold."
+        )
 
     k_max_eff = max(k_min + 1, len(candidate_stocks) // min_cluster_size)
     print(f'Auto K_MAX = {k_max_eff}  (pool={len(candidate_stocks)} / min_size={min_cluster_size})')

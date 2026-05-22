@@ -6,6 +6,7 @@ from app.models.portfolio import (
 )
 from app.services.portfolio_service import run_portfolio_analysis
 from app.services.pipeline_service import run_risk_pipeline
+from app.core.bigquery import get_bq_client
 
 router = APIRouter(prefix="/api/portfolio", tags=["portfolio"])
 
@@ -54,6 +55,7 @@ def risk_pipeline(body: PipelineRequest):
             target_return=body.target_return,
             confidence_levels=body.confidence_levels,
             seed=body.seed,
+            bq_client=get_bq_client(),
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))

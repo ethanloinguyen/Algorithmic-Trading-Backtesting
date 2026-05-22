@@ -268,6 +268,13 @@ export async function runRiskPipeline(tickers: string[]): Promise<RiskPipelineRe
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ tickers: tickers.map(t => t.toUpperCase()) }),
   });
-  if (!res.ok) throw new Error(`/api/portfolio/risk-pipeline → HTTP ${res.status} ${res.statusText}`);
+  if (!res.ok) {
+    let detail = `HTTP ${res.status} ${res.statusText}`;
+    try {
+      const body = await res.json();
+      if (body?.detail) detail = String(body.detail);
+    } catch { /* ignore parse errors */ }
+    throw new Error(detail);
+  }
   return res.json() as Promise<RiskPipelineResult>;
 }
