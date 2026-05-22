@@ -7,7 +7,7 @@ import Sidebar from "@/components/ui/Sidebar";
 import { ChevronDown, Loader2, AlertTriangle, Search, Info } from "lucide-react";
 import {
   LineChart, Line, XAxis, YAxis,
-  CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Brush,
+  CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceDot, Brush,
 } from "recharts";
 import * as d3 from "d3";
 import {
@@ -661,77 +661,8 @@ function LagAlignmentLab({ stocks }: { stocks: StockSummary[] }) {
                 width={52}
                 tickFormatter={v => showResiduals ? `${v > 0 ? "+" : ""}${v.toFixed(1)}%` : `${v.toFixed(0)}`}
               />
-              <Tooltip
-                cursor={{ stroke: BORDER, strokeWidth: 1 }}
-                content={(props: any) => {
-                  const { payload, label, active } = props;
-                  if (!active || !payload?.length || !label) return null;
-
-                  const fmt = (v: number) =>
-                    showResiduals ? `${v > 0 ? "+" : ""}${v.toFixed(2)}%` : v.toFixed(2);
-
-                  const leaderVal   = payload.find((p: any) => p.dataKey === "leader")?.value as number | undefined;
-                  const followerVal = payload.find((p: any) => p.dataKey === "follower")?.value as number | undefined;
-
-                  // Use label to look up index so tooltip is always in sync with active point
-                  const currentIdx  = chartData.findIndex((d: any) => d.date === label);
-                  const hasLag      = pairData?.found && (pairData.best_lag ?? 0) > 0 && currentIdx >= 0;
-                  const rawLagIdx   = hasLag ? currentIdx + pairData!.best_lag : null;
-                  const lagIdx      = rawLagIdx !== null ? Math.min(rawLagIdx, chartData.length - 1) : null;
-                  const lagPoint    = lagIdx !== null ? chartData[lagIdx] : null;
-                  const lagFollower = lagPoint?.follower as number | undefined;
-                  const lagDate     = lagPoint?.date as string | undefined;
-                  // flag if the projected date falls outside the loaded chart range
-                  const lagOutOfRange = rawLagIdx !== null && rawLagIdx >= chartData.length;
-
-                  const row = (label: string, value: number, color: string, dimmed = false) => (
-                    <div style={{ display: "flex", justifyContent: "space-between", gap: 20, marginBottom: 3 }}>
-                      <span style={{ color, opacity: dimmed ? 0.65 : 1, fontSize: 11 }}>{label}</span>
-                      <span style={{ color: "rgba(226,232,240,0.9)", fontWeight: 600, fontSize: 11 }}>{fmt(value)}</span>
-                    </div>
-                  );
-
-                  return (
-                    <div style={{
-                      background: "hsl(215,25%,13%)",
-                      border: `1px solid ${BORDER}`,
-                      borderRadius: 8,
-                      padding: "10px 12px",
-                      minWidth: 190,
-                    }}>
-                      {/* ── Same-day section ── */}
-                      <p style={{ color: TEXT_MUT, fontSize: 10, fontWeight: 600,
-                        textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 6 }}>
-                        Same day · {label}
-                      </p>
-                      {leaderVal   !== undefined && row(leaderTicker,   leaderVal,   LEADER_COLOR)}
-                      {followerVal !== undefined && row(followerTicker, followerVal, FOLLOWER_COLOR)}
-
-                      {/* ── Lag projection section ── */}
-                      {hasLag && lagFollower !== undefined && (
-                        <>
-                          <div style={{ borderTop: `1px solid ${BORDER}`, margin: "8px 0 6px" }} />
-                          <p style={{ color: TEXT_MUT, fontSize: 10, fontWeight: 600,
-                            textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 6 }}>
-                            +{pairData!.best_lag}d lag projection
-                            {lagDate && (
-                              <span style={{ fontWeight: 400, textTransform: "none", marginLeft: 4 }}>
-                                · {lagDate}{lagOutOfRange ? " (est.)" : ""}
-                              </span>
-                            )}
-                          </p>
-                          {row(followerTicker, lagFollower, FOLLOWER_COLOR, true)}
-                          {lagOutOfRange && (
-                            <p style={{ color: TEXT_MUT, fontSize: 9, marginTop: 2 }}>
-                              Projected date beyond chart range
-                            </p>
-                          )}
-                        </>
-                      )}
-                    </div>
-                  );
-                }}
-              />
+              {/* Tooltip popup removed — data is shown in the panel below the chart */}
+              <Tooltip cursor={{ stroke: BORDER, strokeWidth: 1 }} content={() => null} />
               {showResiduals && <ReferenceLine y={0} stroke={BORDER} strokeDasharray="4 4" />}
 
               {/* ── Lag indicator: hover date + projected follower reaction date ── */}
@@ -756,7 +687,18 @@ function LagAlignmentLab({ stocks }: { stocks: StockSummary[] }) {
               })()}
 
               <Line type="monotone" dataKey="leader"   stroke={LEADER_COLOR}   strokeWidth={2} dot={false} isAnimationActive={false} />
-              <Line type="monotone" dataKey="follower" stroke={FOLLOWER_COLOR} strokeWidth={2} dot={false} isAnimationActive={false} />
+              <Line type="monotone" dataKey="follower" stroke={FOLLOWER_COLOR} strokeWidth={2} dot={false} activeDot={false} isAnimationActive={false} />
+
+              {/* Green dot at the projected lag position on the follower line */}
+              {hoveredIndex !== null && pairData?.found && pairData.best_lag > 0 && (() => {
+                const lagIdx      = Math.min(hoveredIndex + pairData.best_lag, chartData.length - 1);
+                const lagDate     = chartData[lagIdx]?.date;
+                const lagFollower = chartData[lagIdx]?.follower as number | undefined;
+                return lagDate && lagFollower !== undefined ? (
+                  <ReferenceDot x={lagDate} y={lagFollower} r={5}
+                    fill={FOLLOWER_COLOR} stroke="hsl(215,25%,13%)" strokeWidth={2} />
+                ) : null;
+              })()}
 
               {/* ── Brush for fine-grained range selection ── */}
               <Brush dataKey="date" height={22} stroke={BORDER}
@@ -770,6 +712,87 @@ function LagAlignmentLab({ stocks }: { stocks: StockSummary[] }) {
           <p className="text-sm" style={{ color: TEXT_MUT }}>Enter two tickers and click Analyze</p>
         </div>
       )}
+
+      {/* Hover info panel — lives outside the chart so it never overlaps any line */}
+      {chartData.length > 0 && (() => {
+        const fmt = (v: number) =>
+          showResiduals ? `${v > 0 ? "+" : ""}${v.toFixed(2)}%` : v.toFixed(2);
+
+        if (hoveredIndex === null) {
+          return (
+            <div className="mt-2 px-3 py-2 rounded-lg flex items-center"
+              style={{ background: "hsl(215,25%,9%)", border: `1px solid ${BORDER}`, minHeight: 38 }}>
+              <p style={{ color: TEXT_MUT, fontSize: 11 }}>Hover the chart to see values</p>
+            </div>
+          );
+        }
+
+        const d           = chartData[hoveredIndex] as any;
+        const hasLag      = pairData?.found && (pairData.best_lag ?? 0) > 0;
+        const rawLagIdx   = hasLag ? hoveredIndex + pairData!.best_lag : null;
+        const lagIdx      = rawLagIdx !== null ? Math.min(rawLagIdx, chartData.length - 1) : null;
+        const lagPoint    = lagIdx !== null ? (chartData[lagIdx] as any) : null;
+        const lagFollower = lagPoint?.follower as number | undefined;
+        const lagDate     = lagPoint?.date as string | undefined;
+        const lagOOR      = rawLagIdx !== null && rawLagIdx >= chartData.length;
+
+        return (
+          <div className="mt-2 px-3 py-2 rounded-lg flex items-center gap-6 flex-wrap"
+            style={{ background: "hsl(215,25%,13%)", border: `1px solid ${BORDER}`, minHeight: 38 }}>
+            {/* Same-day section */}
+            <div>
+              <p style={{ color: TEXT_MUT, fontSize: 10, fontWeight: 600,
+                textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 3 }}>
+                Same day · {d.date}
+              </p>
+              <div className="flex gap-5">
+                {d.leader !== undefined && (
+                  <span style={{ fontSize: 11 }}>
+                    <span style={{ color: LEADER_COLOR }}>{leaderTicker}</span>
+                    <span style={{ color: "rgba(226,232,240,0.9)", fontWeight: 600, marginLeft: 5 }}>
+                      {fmt(d.leader)}
+                    </span>
+                  </span>
+                )}
+                {d.follower !== undefined && (
+                  <span style={{ fontSize: 11 }}>
+                    <span style={{ color: FOLLOWER_COLOR }}>{followerTicker}</span>
+                    <span style={{ color: "rgba(226,232,240,0.9)", fontWeight: 600, marginLeft: 5 }}>
+                      {fmt(d.follower)}
+                    </span>
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* Lag projection section */}
+            {hasLag && lagFollower !== undefined && (
+              <div style={{ borderLeft: `1px solid ${BORDER}`, paddingLeft: 12 }}>
+                <p style={{ color: TEXT_MUT, fontSize: 10, fontWeight: 600,
+                  textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 3 }}>
+                  +{pairData!.best_lag}d lag projection
+                  {lagDate && (
+                    <span style={{ fontWeight: 400, textTransform: "none", marginLeft: 4 }}>
+                      · {lagDate}{lagOOR ? " (est.)" : ""}
+                    </span>
+                  )}
+                </p>
+                <span style={{ fontSize: 11 }}>
+                  <span style={{ color: FOLLOWER_COLOR, opacity: 0.65 }}>{followerTicker}</span>
+                  <span style={{ color: "rgba(226,232,240,0.9)", fontWeight: 600, marginLeft: 5 }}>
+                    {fmt(lagFollower)}
+                  </span>
+                </span>
+                {lagOOR && (
+                  <span style={{ color: TEXT_MUT, fontSize: 9, marginLeft: 8 }}>
+                    (beyond chart range)
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       {/* Legend — keyed by role, not ticker value, to avoid duplicate-key error */}
       {chartData.length > 0 && (
@@ -1053,6 +1076,32 @@ function LeadLagNetwork() {
     const sx    = (id: string) => toSx(positions[id]?.x ?? SIM_W / 2);
     const sy    = (id: string) => toSy(positions[id]?.y ?? SIM_H / 2);
 
+    // Detect bidirectional edge pairs so we can curve them in opposite directions.
+    // curveSide: +1 = curve left of direction, -1 = curve right, 0 = straight.
+    const seenEdges = new Set<string>();
+    const curveSide = new Map<string, number>();
+    for (const e of filteredEdges) {
+      const fwd = `${e.source}|${e.target}`;
+      const rev = `${e.target}|${e.source}`;
+      if (seenEdges.has(rev)) {
+        curveSide.set(fwd, +1);
+        curveSide.set(rev, -1);
+      }
+      seenEdges.add(fwd);
+    }
+
+    // Helper: compute quadratic Bezier control point for a curved edge.
+    // Returns null for straight edges (curveSide === 0).
+    const ctrlPt = (x1: number, y1: number, x2: number, y2: number, side: number) => {
+      if (side === 0) return null;
+      const mx = (x1 + x2) / 2;
+      const my = (y1 + y2) / 2;
+      const dx = x2 - x1, dy = y2 - y1;
+      const len = Math.sqrt(dx * dx + dy * dy) || 1;
+      const perp = 28; // pixels of curve offset
+      return { cpx: mx - (dy / len) * perp * side, cpy: my + (dx / len) * perp * side };
+    };
+
     // Edges + arrowheads
     filteredEdges.forEach(e => {
       if (!positions[e.source] || !positions[e.target]) return;
@@ -1066,16 +1115,24 @@ function LeadLagNetwork() {
         else if (e.target === hoverNodeId) edgeColor = "rgba(239,68,68,0.75)";
         else                               edgeColor = "rgba(100,116,139,0.05)";
       }
-      ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2);
+
+      const side = curveSide.get(`${e.source}|${e.target}`) ?? 0;
+      const cp   = ctrlPt(x1, y1, x2, y2, side);
+
+      ctx.beginPath(); ctx.moveTo(x1, y1);
+      if (cp) ctx.quadraticCurveTo(cp.cpx, cp.cpy, x2, y2);
+      else    ctx.lineTo(x2, y2);
       ctx.strokeStyle = edgeColor; ctx.lineWidth = Math.max(0.5, alpha * 1.8); ctx.stroke();
 
-      // Arrowhead at target
+      // Arrowhead at target — angle follows curve tangent so it aligns with the edge tip
       const tgtDeg = (degreeMap[e.target]?.out ?? 0) + (degreeMap[e.target]?.in ?? 0);
       const tgtR   = Math.max(5, nodeRadiusByDegree(tgtDeg) * zoom);
-      const angle = Math.atan2(y2 - y1, x2 - x1);
-      const arr   = 6;
-      const ex    = x2 - Math.cos(angle) * (tgtR + 3);
-      const ey    = y2 - Math.sin(angle) * (tgtR + 3);
+      const angle  = cp
+        ? Math.atan2(y2 - cp.cpy, x2 - cp.cpx)  // tangent at end of Bezier
+        : Math.atan2(y2 - y1, x2 - x1);
+      const arr = 6;
+      const ex  = x2 - Math.cos(angle) * (tgtR + 3);
+      const ey  = y2 - Math.sin(angle) * (tgtR + 3);
       ctx.beginPath();
       ctx.moveTo(ex, ey);
       ctx.lineTo(ex - arr * Math.cos(angle - 0.4), ey - arr * Math.sin(angle - 0.4));
@@ -1083,12 +1140,21 @@ function LeadLagNetwork() {
       ctx.closePath(); ctx.fillStyle = edgeColor; ctx.fill();
     });
 
-    // Particles along edges — slow speed to reduce visual clutter
+    // Particles along edges — follow the curve for bidirectional pairs
     particleRef.current.forEach(p => {
       p.t = (p.t + (p.edge.signal_strength / 100) * 0.001) % 1;
       if (!positions[p.edge.source] || !positions[p.edge.target]) return;
-      const x = sx(p.edge.source) + (sx(p.edge.target) - sx(p.edge.source)) * p.t;
-      const y = sy(p.edge.source) + (sy(p.edge.target) - sy(p.edge.source)) * p.t;
+      const x1 = sx(p.edge.source), y1 = sy(p.edge.source);
+      const x2 = sx(p.edge.target), y2 = sy(p.edge.target);
+      const side = curveSide.get(`${p.edge.source}|${p.edge.target}`) ?? 0;
+      const cp   = ctrlPt(x1, y1, x2, y2, side);
+      const t    = p.t;
+      const x    = cp
+        ? (1 - t) * (1 - t) * x1 + 2 * (1 - t) * t * cp.cpx + t * t * x2
+        : x1 + (x2 - x1) * t;
+      const y    = cp
+        ? (1 - t) * (1 - t) * y1 + 2 * (1 - t) * t * cp.cpy + t * t * y2
+        : y1 + (y2 - y1) * t;
       ctx.beginPath(); ctx.arc(x, y, 2, 0, Math.PI * 2);
       ctx.fillStyle = "rgba(255,255,255,0.55)"; ctx.fill();
     });
