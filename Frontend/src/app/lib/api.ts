@@ -13,7 +13,7 @@ export interface IndexSummary {
   symbol: string; name: string; value: string;
   change: string; pct: string; price: string; positive: boolean;
 }
-export type TimeRange = "1D" | "1W" | "1M" | "3M" | "1Y" | "5Y";
+export type TimeRange = "1D" | "1W" | "1M" | "3M" | "6M" | "1Y" | "5Y";
 export type AnalysisMode = "broad_market" | "in_sector";
 
 // ── Portfolio types ───────────────────────────────────────────────────────────
@@ -135,6 +135,19 @@ export async function fetchOHLCV(symbol: string, range: TimeRange): Promise<OHLC
 
 export async function fetchIndices(): Promise<IndexSummary[]> {
   const data = await apiFetch<{ data: IndexSummary[] }>("/api/indices");
+  return data.data;
+}
+
+export interface StockSearchResult {
+  symbol: string;
+  name:   string;
+}
+
+export async function fetchStockSearch(query: string): Promise<StockSearchResult[]> {
+  if (!query.trim()) return [];
+  const data = await apiFetch<{ data: StockSearchResult[] }>(
+    `/api/stocks/search?q=${encodeURIComponent(query.trim())}`
+  );
   return data.data;
 }
 

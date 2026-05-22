@@ -18,10 +18,11 @@ from app.models.stock import (
 
 # Calendar days to look back per time range
 RANGE_DAYS: dict[TimeRange, int] = {
-    TimeRange.ONE_DAY:      1,
+    TimeRange.ONE_DAY:      4,    # 4 cal days → 2 trading bars min (covers Mon→Fri gap)
     TimeRange.ONE_WEEK:     7,
     TimeRange.ONE_MONTH:    30,
     TimeRange.THREE_MONTHS: 90,
+    TimeRange.SIX_MONTHS:   180,
     TimeRange.ONE_YEAR:     365,
     TimeRange.FIVE_YEARS:   1825,
 }
@@ -554,6 +555,66 @@ def get_network_data(
 
 
 # ── Quality Picks ─────────────────────────────────────────────────────────────
+
+def search_stocks(query: str, limit: int = 20) -> list[dict]:
+    """
+    Search for stocks by ticker prefix or company name substring.
+
+    Combines two sources:
+      - ticker_metadata  — full match on ticker prefix + company name
+      - general_market_data — ticker-prefix fallback for stocks with no metadata row
+
+    Returns a list of {"symbol": str, "name": str} ordered by
+    ticker-prefix matches first, then alphabetically.
+    """
+    client   = get_bq_client()
+    settings = get_settings()
+    q = query.strip().upper()
+    if not q:
+        return []
+
+    limit = max(1, min(int(limit), 50))
+
+    sql = f"""
+        WITH meta_matches AS (
+            SELECT
+                ticker,
+                COALESCE(company_name, ticker) AS name,
+                CASE WHEN UPPER(ticker) LIKE @prefix THEN 0 ELSE 1 END AS sort_key
+            FROM {settings.fq_ticker_metadata}
+            WHERE UPPER(ticker) LIKE @prefix
+               OR UPPER(COALESCE(company_name, '')) LIKE @contains
+        ),
+        general_tickers AS (
+            SELECT DISTINCT ticker, ticker AS name, 0 AS sort_key
+            FROM {settings.fq_general_market_data}
+            WHERE UPPER(ticker) LIKE @prefix
+              AND date >= DATETIME_SUB(CURRENT_DATETIME(), INTERVAL 14 DAY)
+        ),
+        combined AS (
+            SELECT ticker, name, sort_key FROM meta_matches
+            UNION ALL
+            SELECT gt.ticker, gt.name, gt.sort_key
+            FROM general_tickers gt
+            LEFT JOIN meta_matches mm ON gt.ticker = mm.ticker
+            WHERE mm.ticker IS NULL
+        )
+        SELECT ticker, name
+        FROM combined
+        ORDER BY sort_key ASC, ticker ASC
+        LIMIT {limit}
+    """
+
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ScalarQueryParameter("prefix",   "STRING", f"{q}%"),
+            bigquery.ScalarQueryParameter("contains", "STRING", f"%{q}%"),
+        ]
+    )
+
+    rows = list(client.query(sql, job_config=job_config).result())
+    return [{"symbol": row.ticker, "name": row.name} for row in rows]
+
 
 def get_quality_picks(holdings: list[str], top_n: int = 10) -> list[dict]:
     """

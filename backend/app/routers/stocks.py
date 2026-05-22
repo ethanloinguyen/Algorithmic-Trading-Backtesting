@@ -5,7 +5,12 @@ from typing import Annotated
 from fastapi import APIRouter, HTTPException, Query
 
 from app.models.stock import OHLCVResponse, StockListResponse, TimeRange
-from app.services.bigquery_services import get_all_stock_summaries, get_ohlcv, get_stock_summaries
+from app.services.bigquery_services import (
+    get_all_stock_summaries,
+    get_ohlcv,
+    get_stock_summaries,
+    search_stocks as search_stocks_bq,
+)
 from app.services.cache_service import (
     get_cached_summaries,
     set_cached_summaries,
@@ -53,14 +58,49 @@ def stock_summaries(
 ):
     """
     Returns latest summaries for a specific list of symbols.
-    Used by the profile page to refresh saved-stock prices.
-    No caching here — these are user-specific requests.
+
+    Single-symbol requests (e.g. from the search-bar modal) are served from a
+    5-minute Firestore cache so repeated views of the same stock are instant.
+    Multi-symbol requests (e.g. profile page watchlist refresh) bypass the cache
+    because the symbol set is user-specific and not worth caching individually.
     """
     symbol_list = [_validate_symbol(s) for s in symbols.split(",") if s.strip()]
     if not symbol_list:
         raise HTTPException(status_code=400, detail="At least one symbol is required")
+
+    # Cache single-symbol lookups — these are the autocomplete-driven requests
+    if len(symbol_list) == 1:
+        doc_id = f"stock_summary_{symbol_list[0]}"
+        cached = get_cached_summaries(doc_id)
+        if cached is not None:
+            return StockListResponse(data=cached)
+        data = get_stock_summaries(symbol_list)
+        if data:
+            set_cached_summaries(data, doc_id)
+        return StockListResponse(data=data)
+
     data = get_stock_summaries(symbol_list)
     return StockListResponse(data=data)
+
+
+# ── GET /api/stocks/search?q=AAPL&limit=20 ───────────────────────────────────
+@router.get("/search")
+def search_stocks_endpoint(
+    q:     Annotated[str, Query(description="Ticker prefix or company name substring")] = "",
+    limit: Annotated[int, Query(ge=1, le=50, description="Max results")] = 20,
+):
+    """
+    Autocomplete search — returns up to `limit` stocks whose ticker starts with
+    `q` or whose company name contains `q` (case-insensitive).
+
+    Must be declared before /{symbol}/ohlcv so FastAPI doesn't treat
+    "search" as a symbol parameter.
+    """
+    query = q.strip()
+    if len(query) < 1:
+        return {"data": []}
+    data = search_stocks_bq(query, limit)
+    return {"data": data}
 
 
 # ── GET /api/stocks/{symbol}/ohlcv?range=1M ──────────────────────────────────

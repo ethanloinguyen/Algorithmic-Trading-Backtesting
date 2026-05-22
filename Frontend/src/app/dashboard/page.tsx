@@ -10,8 +10,8 @@ import {
 import Sidebar from "@/components/ui/Sidebar";
 import { useAuth } from "@/src/app/context/AuthContext";
 import {
-  fetchAllStocks, fetchIndices,
-  type StockSummary, type IndexSummary,
+  fetchAllStocks, fetchIndices, fetchStockSearch, fetchStockSummaries,
+  type StockSummary, type IndexSummary, type StockSearchResult,
 } from "@/src/app/lib/api";
 import { getCachedSummaries, getCachedIndices } from "@/src/app/lib/stockCache";
 import StockModal, { type Stock } from "@/components/ui/StockModal";
@@ -180,13 +180,54 @@ export default function DashboardPage() {
   const { user, loading: authLoading, isSaved, toggleSave, trackClick } = useAuth();
   const router = useRouter();
 
-  const [stocks,        setStocks]        = useState<StockSummary[]>([]);
-  const [indices,       setIndices]       = useState<IndexSummary[]>([]);
-  const [search,        setSearch]        = useState("");
+  const [stocks,         setStocks]         = useState<StockSummary[]>([]);
+  const [indices,        setIndices]        = useState<IndexSummary[]>([]);
+  const [search,         setSearch]         = useState("");
   const [selectedSector, setSelectedSector] = useState(ALL_SECTORS);
-  const [dataLoading,   setDataLoading]   = useState(true);
-  const [selectedStock, setSelectedStock] = useState<Stock | null>(null);
-  const [selectedIndex, setSelectedIndex] = useState<Stock | null>(null);
+  const [dataLoading,    setDataLoading]    = useState(true);
+  const [selectedStock,  setSelectedStock]  = useState<Stock | null>(null);
+  const [selectedIndex,  setSelectedIndex]  = useState<Stock | null>(null);
+
+  // ── Autocomplete search state ──────────────────────────────────────────────
+  const [searchResults,  setSearchResults]  = useState<StockSearchResult[]>([]);
+  const [searchOpen,     setSearchOpen]     = useState(false);
+  const [searchLoading,  setSearchLoading]  = useState(false);
+  const searchRef       = useRef<HTMLDivElement>(null);
+  const searchDebounce  = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    function handler(e: MouseEvent) {
+      if (searchRef.current && !searchRef.current.contains(e.target as Node)) {
+        setSearchOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  const handleSearchChange = (value: string) => {
+    setSearch(value);
+    if (searchDebounce.current) clearTimeout(searchDebounce.current);
+    if (!value.trim()) {
+      setSearchResults([]);
+      setSearchOpen(false);
+      return;
+    }
+    searchDebounce.current = setTimeout(async () => {
+      setSearchLoading(true);
+      try {
+        const results = await fetchStockSearch(value.trim());
+        setSearchResults(results);
+        setSearchOpen(results.length > 0);
+      } catch {
+        setSearchResults([]);
+      } finally {
+        setSearchLoading(false);
+      }
+    }, 300);
+  };
+
 
   function indexAsStock(idx: IndexSummary): Stock {
     return {
@@ -235,6 +276,41 @@ export default function DashboardPage() {
   const handleRowClick = (stock: StockSummary) => {
     setSelectedStock(stock);
     trackClick(stock.symbol);
+  };
+
+  const handleSearchSelect = async (result: StockSearchResult) => {
+    setSearch("");
+    setSearchResults([]);
+    setSearchOpen(false);
+    // Use already-loaded stock data if available — instant, no fetch needed
+    const local = stocks.find((s) => s.symbol === result.symbol);
+    if (local) {
+      handleRowClick(local);
+      return;
+    }
+    // Open the modal immediately so the chart starts loading right away.
+    // Price/change will show "—" briefly, then get updated in the background.
+    const placeholder: StockSummary = {
+      symbol:   result.symbol,
+      name:     result.name,
+      price:    "—",
+      change:   "—",
+      volume:   "—",
+      positive: true,
+    };
+    setSelectedStock(placeholder);
+    trackClick(result.symbol);
+
+    // Fetch the real summary in the background — updates the modal header once done.
+    // The OHLCV chart is already loading concurrently, so there's no sequential wait.
+    try {
+      const summaries = await fetchStockSummaries([result.symbol]);
+      if (summaries.length > 0) {
+        setSelectedStock(summaries[0]);
+      }
+    } catch {
+      // Modal stays open showing "—" for price — chart still renders fine
+    }
   };
 
   // Sector-filtered base set
@@ -310,27 +386,84 @@ export default function DashboardPage() {
                   {/* Sector dropdown */}
                   <SectorDropdown value={selectedSector} onChange={setSelectedSector} />
 
-                  {/* Search */}
-                  <div className="relative">
+                  {/* Search with autocomplete */}
+                  <div className="relative" ref={searchRef}>
                     <Search
-                      className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5"
-                      style={{ color: "hsl(215, 15%, 45%)" }}
+                      className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 pointer-events-none"
+                      style={{ color: "hsl(215, 15%, 45%)", zIndex: 1 }}
                     />
                     <input
-                      type="search"
-                      placeholder="Search"
+                      type="text"
+                      placeholder="Search stocks…"
                       value={search}
-                      onChange={(e) => setSearch(e.target.value)}
+                      onChange={(e) => handleSearchChange(e.target.value)}
+                      onFocus={(e) => {
+                        e.currentTarget.style.borderColor = "hsl(217, 91%, 60%)";
+                        if (searchResults.length > 0) setSearchOpen(true);
+                      }}
+                      onBlur={(e) => {
+                        e.currentTarget.style.borderColor = "hsl(215, 20%, 20%)";
+                      }}
                       className="pl-9 pr-4 py-1.5 rounded-lg text-sm outline-none transition-all"
                       style={{
                         background: "hsl(215, 25%, 8%)",
                         border:     "1px solid hsl(215, 20%, 20%)",
                         color:      "hsl(210, 40%, 85%)",
-                        width:      160,
+                        width:      180,
                       }}
-                      onFocus={(e) => (e.currentTarget.style.borderColor = "hsl(217, 91%, 60%)")}
-                      onBlur={(e)  => (e.currentTarget.style.borderColor = "hsl(215, 20%, 20%)")}
                     />
+
+                    {/* Autocomplete dropdown */}
+                    {searchOpen && (searchLoading || searchResults.length > 0) && (
+                      <div
+                        className="absolute right-0 top-full mt-1 rounded-xl overflow-y-auto"
+                        style={{
+                          background: "hsl(215, 25%, 11%)",
+                          border:     "1px solid hsl(215, 20%, 20%)",
+                          boxShadow:  "0 8px 24px rgba(0,0,0,0.45)",
+                          width:      260,
+                          maxHeight:  300,
+                          zIndex:     100,
+                        }}
+                      >
+                        {searchLoading ? (
+                          <div className="px-4 py-3 text-sm" style={{ color: "hsl(215, 15%, 50%)" }}>
+                            Searching…
+                          </div>
+                        ) : (
+                          searchResults.map((result) => (
+                            <button
+                              key={result.symbol}
+                              onMouseDown={(e) => {
+                                e.preventDefault(); // keep input focused until we close
+                                handleSearchSelect(result);
+                              }}
+                              className="w-full text-left px-4 py-2.5 transition-colors"
+                              style={{ borderBottom: "1px solid hsl(215, 20%, 16%)" }}
+                              onMouseEnter={(e) => (e.currentTarget.style.background = "hsl(215, 25%, 15%)")}
+                              onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+                            >
+                              <div className="flex items-center gap-3 min-w-0">
+                                <span
+                                  className="text-sm font-semibold flex-shrink-0"
+                                  style={{ color: "hsl(210, 40%, 92%)" }}
+                                >
+                                  {result.symbol}
+                                </span>
+                                {result.name !== result.symbol && (
+                                  <span
+                                    className="text-xs truncate"
+                                    style={{ color: "hsl(215, 15%, 55%)" }}
+                                  >
+                                    {result.name}
+                                  </span>
+                                )}
+                              </div>
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>

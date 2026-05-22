@@ -4,12 +4,13 @@ from enum import Enum
 
 
 class TimeRange(str, Enum):
-    ONE_DAY   = "1D"
-    ONE_WEEK  = "1W"
-    ONE_MONTH = "1M"
+    ONE_DAY      = "1D"   # kept for backend compatibility; not exposed in UI
+    ONE_WEEK     = "1W"
+    ONE_MONTH    = "1M"
     THREE_MONTHS = "3M"
-    ONE_YEAR  = "1Y"
-    FIVE_YEARS = "5Y"
+    SIX_MONTHS   = "6M"
+    ONE_YEAR     = "1Y"
+    FIVE_YEARS   = "5Y"
 
 
 class OHLCVCandle(BaseModel):

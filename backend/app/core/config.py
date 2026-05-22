@@ -4,7 +4,11 @@ from functools import lru_cache
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",   # silently skip keys in .env not declared as fields here
+    )
 
     # Google Cloud — common
     google_application_credentials: str = "./secrets/gcp-service-account.json"
