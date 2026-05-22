@@ -661,78 +661,8 @@ function LagAlignmentLab({ stocks }: { stocks: StockSummary[] }) {
                 width={52}
                 tickFormatter={v => showResiduals ? `${v > 0 ? "+" : ""}${v.toFixed(1)}%` : `${v.toFixed(0)}`}
               />
-              <Tooltip
-                cursor={{ stroke: BORDER, strokeWidth: 1 }}
-                position={{ x: 56, y: 4 }}
-                content={(props: any) => {
-                  const { payload, label, active } = props;
-                  if (!active || !payload?.length || !label) return null;
-
-                  const fmt = (v: number) =>
-                    showResiduals ? `${v > 0 ? "+" : ""}${v.toFixed(2)}%` : v.toFixed(2);
-
-                  const leaderVal   = payload.find((p: any) => p.dataKey === "leader")?.value as number | undefined;
-                  const followerVal = payload.find((p: any) => p.dataKey === "follower")?.value as number | undefined;
-
-                  // Use label to look up index so tooltip is always in sync with active point
-                  const currentIdx  = chartData.findIndex((d: any) => d.date === label);
-                  const hasLag      = pairData?.found && (pairData.best_lag ?? 0) > 0 && currentIdx >= 0;
-                  const rawLagIdx   = hasLag ? currentIdx + pairData!.best_lag : null;
-                  const lagIdx      = rawLagIdx !== null ? Math.min(rawLagIdx, chartData.length - 1) : null;
-                  const lagPoint    = lagIdx !== null ? chartData[lagIdx] : null;
-                  const lagFollower = lagPoint?.follower as number | undefined;
-                  const lagDate     = lagPoint?.date as string | undefined;
-                  // flag if the projected date falls outside the loaded chart range
-                  const lagOutOfRange = rawLagIdx !== null && rawLagIdx >= chartData.length;
-
-                  const row = (label: string, value: number, color: string, dimmed = false) => (
-                    <div style={{ display: "flex", justifyContent: "space-between", gap: 20, marginBottom: 3 }}>
-                      <span style={{ color, opacity: dimmed ? 0.65 : 1, fontSize: 11 }}>{label}</span>
-                      <span style={{ color: "rgba(226,232,240,0.9)", fontWeight: 600, fontSize: 11 }}>{fmt(value)}</span>
-                    </div>
-                  );
-
-                  return (
-                    <div style={{
-                      background: "hsl(215,25%,13%)",
-                      border: `1px solid ${BORDER}`,
-                      borderRadius: 8,
-                      padding: "10px 12px",
-                      minWidth: 190,
-                    }}>
-                      {/* ── Same-day section ── */}
-                      <p style={{ color: TEXT_MUT, fontSize: 10, fontWeight: 600,
-                        textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 6 }}>
-                        Same day · {label}
-                      </p>
-                      {leaderVal   !== undefined && row(leaderTicker,   leaderVal,   LEADER_COLOR)}
-                      {followerVal !== undefined && row(followerTicker, followerVal, FOLLOWER_COLOR)}
-
-                      {/* ── Lag projection section ── */}
-                      {hasLag && lagFollower !== undefined && (
-                        <>
-                          <div style={{ borderTop: `1px solid ${BORDER}`, margin: "8px 0 6px" }} />
-                          <p style={{ color: TEXT_MUT, fontSize: 10, fontWeight: 600,
-                            textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 6 }}>
-                            +{pairData!.best_lag}d lag projection
-                            {lagDate && (
-                              <span style={{ fontWeight: 400, textTransform: "none", marginLeft: 4 }}>
-                                · {lagDate}{lagOutOfRange ? " (est.)" : ""}
-                              </span>
-                            )}
-                          </p>
-                          {row(followerTicker, lagFollower, FOLLOWER_COLOR, true)}
-                          {lagOutOfRange && (
-                            <p style={{ color: TEXT_MUT, fontSize: 9, marginTop: 2 }}>
-                              Projected date beyond chart range
-                            </p>
-                          )}
-                        </>
-                      )}
-                    </div>
-                  );
-                }}
-              />
+              {/* Tooltip popup removed — data is shown in the panel below the chart */}
+              <Tooltip cursor={{ stroke: BORDER, strokeWidth: 1 }} content={() => null} />
               {showResiduals && <ReferenceLine y={0} stroke={BORDER} strokeDasharray="4 4" />}
 
               {/* ── Lag indicator: hover date + projected follower reaction date ── */}
@@ -782,6 +712,87 @@ function LagAlignmentLab({ stocks }: { stocks: StockSummary[] }) {
           <p className="text-sm" style={{ color: TEXT_MUT }}>Enter two tickers and click Analyze</p>
         </div>
       )}
+
+      {/* Hover info panel — lives outside the chart so it never overlaps any line */}
+      {chartData.length > 0 && (() => {
+        const fmt = (v: number) =>
+          showResiduals ? `${v > 0 ? "+" : ""}${v.toFixed(2)}%` : v.toFixed(2);
+
+        if (hoveredIndex === null) {
+          return (
+            <div className="mt-2 px-3 py-2 rounded-lg flex items-center"
+              style={{ background: "hsl(215,25%,9%)", border: `1px solid ${BORDER}`, minHeight: 38 }}>
+              <p style={{ color: TEXT_MUT, fontSize: 11 }}>Hover the chart to see values</p>
+            </div>
+          );
+        }
+
+        const d           = chartData[hoveredIndex] as any;
+        const hasLag      = pairData?.found && (pairData.best_lag ?? 0) > 0;
+        const rawLagIdx   = hasLag ? hoveredIndex + pairData!.best_lag : null;
+        const lagIdx      = rawLagIdx !== null ? Math.min(rawLagIdx, chartData.length - 1) : null;
+        const lagPoint    = lagIdx !== null ? (chartData[lagIdx] as any) : null;
+        const lagFollower = lagPoint?.follower as number | undefined;
+        const lagDate     = lagPoint?.date as string | undefined;
+        const lagOOR      = rawLagIdx !== null && rawLagIdx >= chartData.length;
+
+        return (
+          <div className="mt-2 px-3 py-2 rounded-lg flex items-center gap-6 flex-wrap"
+            style={{ background: "hsl(215,25%,13%)", border: `1px solid ${BORDER}`, minHeight: 38 }}>
+            {/* Same-day section */}
+            <div>
+              <p style={{ color: TEXT_MUT, fontSize: 10, fontWeight: 600,
+                textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 3 }}>
+                Same day · {d.date}
+              </p>
+              <div className="flex gap-5">
+                {d.leader !== undefined && (
+                  <span style={{ fontSize: 11 }}>
+                    <span style={{ color: LEADER_COLOR }}>{leaderTicker}</span>
+                    <span style={{ color: "rgba(226,232,240,0.9)", fontWeight: 600, marginLeft: 5 }}>
+                      {fmt(d.leader)}
+                    </span>
+                  </span>
+                )}
+                {d.follower !== undefined && (
+                  <span style={{ fontSize: 11 }}>
+                    <span style={{ color: FOLLOWER_COLOR }}>{followerTicker}</span>
+                    <span style={{ color: "rgba(226,232,240,0.9)", fontWeight: 600, marginLeft: 5 }}>
+                      {fmt(d.follower)}
+                    </span>
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* Lag projection section */}
+            {hasLag && lagFollower !== undefined && (
+              <div style={{ borderLeft: `1px solid ${BORDER}`, paddingLeft: 12 }}>
+                <p style={{ color: TEXT_MUT, fontSize: 10, fontWeight: 600,
+                  textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 3 }}>
+                  +{pairData!.best_lag}d lag projection
+                  {lagDate && (
+                    <span style={{ fontWeight: 400, textTransform: "none", marginLeft: 4 }}>
+                      · {lagDate}{lagOOR ? " (est.)" : ""}
+                    </span>
+                  )}
+                </p>
+                <span style={{ fontSize: 11 }}>
+                  <span style={{ color: FOLLOWER_COLOR, opacity: 0.65 }}>{followerTicker}</span>
+                  <span style={{ color: "rgba(226,232,240,0.9)", fontWeight: 600, marginLeft: 5 }}>
+                    {fmt(lagFollower)}
+                  </span>
+                </span>
+                {lagOOR && (
+                  <span style={{ color: TEXT_MUT, fontSize: 9, marginLeft: 8 }}>
+                    (beyond chart range)
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       {/* Legend — keyed by role, not ticker value, to avoid duplicate-key error */}
       {chartData.length > 0 && (
