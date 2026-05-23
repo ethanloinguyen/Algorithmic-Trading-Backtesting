@@ -9,8 +9,8 @@ from app.services.bigquery_services import (
     get_all_stock_summaries,
     get_ohlcv,
     get_stock_summaries,
-    search_stocks as search_stocks_bq,
 )
+from app.services.ticker_cache import search_tickers
 from app.services.cache_service import (
     get_cached_summaries,
     set_cached_summaries,
@@ -99,7 +99,7 @@ def search_stocks_endpoint(
     query = q.strip()
     if len(query) < 1:
         return {"data": []}
-    data = search_stocks_bq(query, limit)
+    data = search_tickers(query, limit)
     return {"data": data}
 
 
