@@ -940,7 +940,7 @@ export default function DiversifyPage() {
                     )}
                   </div>
                   <p className="text-xs mb-4" style={{ color: TEXT_MUT }}>
-                    K-Medoids sector picks decorrelated from your portfolio · Monte Carlo simulation ({riskResult?.risk.horizon_days ?? 63}-day horizon, {(riskResult?.risk.n_simulations ?? 1000).toLocaleString()} paths)
+                    Monte Carlo risk profile of your inputted portfolio · {riskResult?.risk.horizon_days ?? 63}-day horizon · {(riskResult?.risk.n_simulations ?? 1000).toLocaleString()} simulated paths · VaR, drawdown, and diversification metrics
                   </p>
                   {riskLoading && !riskResult && (
                     <div className="rounded-xl px-6 py-10 text-center" style={CARD}>
