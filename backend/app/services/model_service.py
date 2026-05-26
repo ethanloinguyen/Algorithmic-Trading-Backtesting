@@ -1,6 +1,6 @@
 # backend/app/services/model_service.py
 """
-DeltaLag inference service — deltalag_epoch0020.pt
+DeltaLag inference service — deltalag_epoch0060.pt
 
 Architecture (confirmed from state_dict inspection):
   • LSTM encoder: input [L, 6] → hidden [N=128]  (single layer, no sector emb)
@@ -18,7 +18,7 @@ Normalisation: sklearn RobustScaler stored in checkpoint['scaler']
 
 Lookback L=40 trading days per stock.
 
-Model file expected at:  backend/models/deltalag_epoch0020.pt
+Model file expected at:  backend/models/deltalag_epoch0060.pt
 """
 from __future__ import annotations
 
@@ -39,7 +39,7 @@ from app.models.model_inference import LeaderStock, ModelPeriodResult, SectorCou
 # ── Paths ─────────────────────────────────────────────────────────────────────
 
 _MODEL_DIR = Path(__file__).parent.parent.parent / "models"
-_PT_PATH   = _MODEL_DIR / "deltalag_epoch0020.pt"
+_PT_PATH   = _MODEL_DIR / "deltalag_epoch0060.pt"
 
 # ── Architecture ──────────────────────────────────────────────────────────────
 
@@ -57,7 +57,7 @@ class DeltaLagEncoder(nn.Module):
 
 class DeltaLagModel(nn.Module):
     """
-    Full DeltaLag model matching deltalag_epoch0020.pt state_dict:
+    Full DeltaLag model matching deltalag_epoch0060.pt state_dict:
       log_temp   scalar
       lag_bias   [l_max]
       encoder.*  LSTM + LayerNorm
@@ -116,7 +116,7 @@ def _load_checkpoint():
     if not _PT_PATH.exists():
         raise FileNotFoundError(
             f"Model not found: {_PT_PATH}\n"
-            "Place deltalag_epoch0020.pt in backend/models/"
+            "Place deltalag_epoch0060.pt in backend/models/"
         )
 
     ck = torch.load(_PT_PATH, map_location="cpu", weights_only=False)

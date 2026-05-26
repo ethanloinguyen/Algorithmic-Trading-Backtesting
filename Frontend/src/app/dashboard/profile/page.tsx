@@ -11,6 +11,7 @@ import Sidebar from "@/components/ui/Sidebar";
 import { useAuth } from "@/src/app/context/AuthContext";
 import { fetchStockSummaries, fetchAllStocks, type StockSummary } from "@/src/app/lib/api";
 import { SECTORS, ALL_SECTORS, filterBySector } from "@/src/app/lib/sectorData";
+import { PageHelp } from "@/components/ui/PageHelp";
 
 const card = { background: "hsl(215, 25%, 11%)", border: "1px solid hsl(215, 20%, 18%)" };
 
@@ -216,13 +217,45 @@ export default function ProfilePage() {
                 </div>
               </div>
             </div>
-            <button
-              onClick={handleLogout}
-              className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium flex-shrink-0 hover:opacity-80 transition-opacity"
-              style={{ background: "hsl(215,25%,16%)", border: "1px solid hsl(215,20%,22%)", color: "hsl(215,15%,65%)" }}
-            >
-              <LogOut className="w-4 h-4" /> Sign Out
-            </button>
+            <div className="flex items-center gap-3 flex-shrink-0">
+              <PageHelp
+                title="Profile Page Guide"
+                subtitle="Manage your watchlist and create portfolios for the Diversify page."
+                sections={[
+                  {
+                    title: "Saved Stocks Watchlist",
+                    body: "Stocks you've starred anywhere in the app appear here with live prices, daily % change, and volume. Use the sector dropdown in the Saved Stocks header to filter your watchlist by industry.",
+                  },
+                  {
+                    title: "How to Save a Stock",
+                    body: "Go to the Model page, search for any stock, click Analyze, then click the star icon next to any leader in the results table. You can also star stocks from the Home dashboard. Stars are synced to your account across sessions.",
+                    color: "hsl(48, 96%, 53%)",
+                  },
+                  {
+                    title: "Account Stats",
+                    body: "The three stat cards show: Saved Stocks (total count in your watchlist), Avg. Change (average daily % change across sector-filtered stocks with live data), and Watchlist status (Active or Empty).",
+                    color: "hsl(217, 91%, 60%)",
+                  },
+                  {
+                    title: "Creating a Custom Portfolio",
+                    body: "In the Custom Portfolios section at the bottom, enter a portfolio name (e.g. 'Growth Picks'), then type stock tickers separated by Enter or comma. Use the 'Add from saved' chips to quickly pull in your watchlist stocks, then click Save Portfolio.",
+                    color: "hsl(142, 71%, 45%)",
+                  },
+                  {
+                    title: "Using Portfolios on the Diversify Page",
+                    body: "Once saved, your portfolios appear in the 'Add Portfolio' dropdown on the Diversify page. Click one to instantly load all of its tickers into the analysis input — no need to re-type them every time.",
+                    color: "hsl(270, 70%, 65%)",
+                  },
+                ]}
+              />
+              <button
+                onClick={handleLogout}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium hover:opacity-80 transition-opacity"
+                style={{ background: "hsl(215,25%,16%)", border: "1px solid hsl(215,20%,22%)", color: "hsl(215,15%,65%)" }}
+              >
+                <LogOut className="w-4 h-4" /> Sign Out
+              </button>
+            </div>
           </div>
 
           {/* ── Stats ── */}
