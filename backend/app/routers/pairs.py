@@ -45,7 +45,7 @@ def pair_detail(
 def network_graph(
     analysis_mode: Literal["broad_market", "in_sector"] = "broad_market",
     min_signal:    float = Query(default=55.0, ge=0.0,  le=100.0),
-    limit:         int   = Query(default=50,   ge=10,   le=100),
+    limit:         int   = Query(default=50,   ge=5,    le=100),
 ):
     """
     Top `limit` stocks by eigenvector centrality and all directed edges

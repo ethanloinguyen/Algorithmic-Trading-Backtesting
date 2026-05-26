@@ -505,11 +505,15 @@ def get_network_data(
         ]
     )
 
+    used_centrality_query = True
     try:
         rows = list(client.query(query_with_centrality, job_config=job_config).result())
+        logger.info("get_network_data: centrality query succeeded, %d rows returned", len(rows))
     except Exception as e:
+        used_centrality_query = False
         logger.warning("Network centrality query failed (%s), falling back to degree-ranked query", e)
         rows = list(client.query(query_no_centrality, job_config=job_config).result())
+        logger.info("get_network_data: fallback query returned %d rows (centrality will be 0.0)", len(rows))
 
     # Build node map: ticker → {sector, max centrality}
     node_map:   dict[str, dict]  = {}
@@ -536,11 +540,31 @@ def get_network_data(
             mean_dcor       = round(float(r.mean_dcor), 4),
         ))
 
+    # Diagnostic log so we can see the actual centrality distribution being served.
+    # If all values are 0.0, either (a) the centrality query fell back, or (b) the
+    # centrality_i/j columns in BigQuery are NULL / unpopulated from the last pipeline run.
+    if node_map:
+        cent_values = [info["centrality"] for info in node_map.values()]
+        nonzero = [v for v in cent_values if v != 0.0]
+        logger.info(
+            "get_network_data: %d nodes, %d non-zero centrality values, "
+            "max=%.8f, min_nonzero=%.8f, used_centrality_query=%s",
+            len(cent_values),
+            len(nonzero),
+            max(cent_values) if cent_values else 0.0,
+            min(nonzero) if nonzero else 0.0,
+            used_centrality_query,
+        )
+
     nodes = [
         NetworkNodeModel(
             id          = ticker,
             sector      = info["sector"],
-            centrality  = round(info["centrality"], 4),
+            # Do NOT round centrality here — eigenvector centrality values in
+            # large networks are often in the 1e-5 to 1e-3 range.
+            # round(..., 4) would zero them all out.  The frontend's
+            # formatCentrality() handles display precision.
+            centrality  = float(info["centrality"]),
             out_degree  = out_degree.get(ticker, 0),
         )
         for ticker, info in node_map.items()
