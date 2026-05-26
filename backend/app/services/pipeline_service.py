@@ -20,6 +20,10 @@ import logging
 import pathlib
 import sys
 
+import numpy as np
+
+from app.services.cache_service import get_cached_pipeline_result, set_cached_pipeline_result
+
 logger = logging.getLogger(__name__)
 
 # ── Path setup (runs once at import time) ─────────────────────────────────────
@@ -37,6 +41,23 @@ _hier_spec.loader.exec_module(_hier_mod)
 run_clustering = _hier_mod.run_clustering
 
 from mc_engine import run_portfolio_risk  # noqa: E402  (monte-carlo/ now on path)
+
+
+def _sanitize(obj):
+    """Recursively convert numpy scalars/arrays to Python natives for Firestore."""
+    if isinstance(obj, dict):
+        return {k: _sanitize(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_sanitize(v) for v in obj]
+    if isinstance(obj, np.integer):
+        return int(obj)
+    if isinstance(obj, np.floating):
+        return float(obj)
+    if isinstance(obj, np.bool_):
+        return bool(obj)
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    return obj
 
 
 def run_risk_pipeline(
@@ -91,6 +112,11 @@ def run_risk_pipeline(
     if confidence_levels is None:
         confidence_levels = [0.95, 0.99]
 
+    cached = get_cached_pipeline_result(user_portfolio)
+    if cached is not None:
+        logger.info("Pipeline cache hit for portfolio %s", user_portfolio)
+        return cached
+
     logger.info("Pipeline step 1: running hierarchical clustering for %s", user_portfolio)
     recommendations = run_clustering(
         user_portfolio=user_portfolio,
@@ -128,8 +154,11 @@ def run_risk_pipeline(
         "portfolio": user_risk["portfolio"],
     }
 
-    return {
+    result = _sanitize({
         "user_portfolio":  user_portfolio,
         "recommendations": recommendations.to_dict("records"),
         "risk":            risk,
-    }
+    })
+
+    set_cached_pipeline_result(user_portfolio, result)
+    return result
