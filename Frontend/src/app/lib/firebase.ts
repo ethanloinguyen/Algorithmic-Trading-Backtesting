@@ -31,7 +31,7 @@ export const auth = getAuth(app);
 function initDb() {
   if (!isFirstInit) return getFirestore(app);
   try {
-    return initializeFirestore(app, { localCache: persistentLocalCache() });
+    return initializeFirestore(app, { localCache: persistentLocalCache(), experimentalForceLongPolling: true });
   } catch {
     // IndexedDB unavailable (incognito, storage quota) — fall back to memory cache
     return initializeFirestore(app, {});

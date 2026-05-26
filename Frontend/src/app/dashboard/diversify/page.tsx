@@ -26,6 +26,7 @@ import {
   ShieldAlert, BarChart3, Info, Zap, Globe, Link2, Layers, Timer,
   Activity, Star, Briefcase,
 } from "lucide-react";
+import { PageHelp } from "@/components/ui/PageHelp";
 
 // ── Design tokens ─────────────────────────────────────────────────────────────
 const BG         = "hsl(213, 27%, 7%)";
@@ -64,7 +65,7 @@ const FACTOR_EXPLANATIONS = [
     label: "Momentum", weight: "35%", color: BLUE, Icon: TrendingUp,
     what: "6-month price return, rank-normalised across the filtered universe of ~800 quality stocks.",
     how: "Latest close divided by the closing price closest to 6 months ago (±7-day window), then percentile-ranked 0–100 across all stocks.",
-    why: "Momentum is one of the most empirically validated equity factors. A high score means the stock has been outperforming peers recently — a signal of positive market sentiment and trend continuation.",
+    why: "Momentum is one of the most empirically validated equity factors. A high score means the stock has been outperforming peers recently, showing a signal of positive market sentiment and trend continuation.",
   },
   {
     label: "Fundamental Quality", weight: "25%", color: GREEN, Icon: BarChart3,
@@ -81,8 +82,8 @@ const FACTOR_EXPLANATIONS = [
   {
     label: "Volatility Fit", weight: "10%", color: "hsl(195,80%,50%)", Icon: Activity,
     what: "How closely this stock's annualised volatility matches the average volatility profile of your existing portfolio.",
-    how: "Absolute difference between candidate annualised vol and portfolio average vol, rank-normalised — smallest difference scores 100.",
-    why: "Adding a stock whose risk profile is compatible with your existing holdings avoids unintended volatility spikes. It's not about avoiding risk — it's about adding the type of risk you already understand.",
+    how: "Absolute difference between candidate annualised vol and portfolio average vol, rank-normalised; smallest difference scores 100.",
+    why: "Adding a stock whose risk profile is compatible with your existing holdings avoids unintended volatility spikes. A high score here means the stock has a similar volatility to your current portfolio, making it easier to integrate without needing to adjust position sizes drastically.",
   },
   {
     label: "Market Centrality", weight: "10%", color: PURPLE, Icon: Globe,
@@ -801,6 +802,43 @@ export default function DiversifyPage() {
                 <Sparkles className="w-4 h-4" style={{ color: BLUE }} />
               </div>
               <h1 className="text-xl font-bold" style={{ color: TEXT_PRI }}>Portfolio Diversifier</h1>
+              <div className="ml-auto">
+                <PageHelp
+                  title="Diversify Page Guide"
+                  subtitle="Understand how portfolio analysis works and what each result section means."
+                  sections={[
+                    {
+                      title: "Enter Your Holdings",
+                      body: "Type any stock tickers (e.g. AAPL, MSFT) into the input box and press Enter, comma, or Space after each. You can also use preset buttons, load your watchlist, or import a custom portfolio you saved on your Profile page.",
+                    },
+                    {
+                      title: "Overlaps — Hidden Lead-Lag Relationships",
+                      body: "Overlaps are pairs of your holdings where one stock historically leads the other. This means they share correlated risk: if you own both, one stock's move may predict the other's within days. Click a row to see detailed statistics like dCor, Sharpe, and half-life.",
+                      color: "hsl(38, 92%, 50%)",
+                    },
+                    {
+                      title: "Quality Picks & Spider Chart",
+                      body: "The radar chart ranks recommended stocks across 5 factors: Momentum (35%), Fundamental Quality (25%), Sector Diversity (20%), Volatility Fit (10%), and Market Centrality (10%). Click any ticker in the chart or legend to focus on it and see its full score breakdown.",
+                      color: "hsl(142, 71%, 45%)",
+                    },
+                    {
+                      title: "Sector Donut Chart",
+                      body: "Shows your current portfolio's sector distribution. Hover over a quality pick to preview how adding that stock would shift your sector exposure — the new slice appears highlighted in the donut.",
+                      color: "hsl(270, 70%, 65%)",
+                    },
+                    {
+                      title: "Monte Carlo Risk Assessment",
+                      body: "Simulates your portfolio over a 63-day horizon using 1,000 paths. VaR 95% = worst loss 95% of the time. CVaR 95% = average loss in the worst 5% of scenarios. Diversification Benefit = how much your portfolio's VaR improves vs. holding each stock in isolation.",
+                      color: "hsl(0, 84%, 60%)",
+                    },
+                    {
+                      title: "K-Medoids Sector Picks",
+                      body: "Uses K-Medoids clustering to select stocks from sectors that are least correlated with your holdings. The dcor badge shows decorrelation from your portfolio — lower is better. The ★ marker indicates the cluster medoid (the most representative stock in its cluster).",
+                      color: "hsl(195, 80%, 50%)",
+                    },
+                  ]}
+                />
+              </div>
             </div>
             <p className="text-sm leading-relaxed" style={{ color: TEXT_SEC }}>
               Enter your holdings to uncover hidden lead-lag relationships and receive
