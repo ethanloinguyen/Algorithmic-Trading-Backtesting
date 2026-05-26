@@ -1,4 +1,4 @@
-# run with python -m pytest tests/test_bigquery_services.py -v
+# run with python -m pytest tests/bigquery_services_tests.py -v
 # unit tests to test bigquery_services and api calls
 
 from __future__ import annotations
