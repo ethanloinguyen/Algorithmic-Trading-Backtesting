@@ -57,7 +57,7 @@ const PRESETS = [
   { label: "Big Tech",   tickers: ["NVDA","AMD","AAPL","MSFT","GOOGL"] },
   { label: "Financials", tickers: ["JPM","GS","MS","BAC","V"] },
   { label: "Energy",     tickers: ["XOM","CVX","COP","SLB"] },
-  { label: "Healthcare", tickers: ["JNJ","UNH","MRK","PFE","ABBV"] },
+  { label: "Healthcare", tickers: ["JNJ","UNH","MRK","PFE"] },
 ];
 
 const FACTOR_EXPLANATIONS = [
