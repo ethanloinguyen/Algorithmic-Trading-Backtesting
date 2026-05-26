@@ -10,6 +10,7 @@ import {
   CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceDot, Brush,
 } from "recharts";
 import * as d3 from "d3";
+import { PageHelp } from "@/components/ui/PageHelp";
 import {
   fetchOHLCV,
   fetchStockDetail,
@@ -1489,10 +1490,46 @@ export default function AnalysisPage() {
       <main className="pt-14">
         <div className="max-w-7xl mx-auto px-6 py-6 space-y-6">
 
-          {/* ── Top bar — stock picker only ── */}
+          {/* ── Top bar — stock picker + help ── */}
           <div className="flex items-center gap-4 flex-wrap">
             <StockDropdown value={selectedStock} onChange={setSelectedStock}
               stocks={stocks} loading={stocksLoading} />
+            <div className="ml-auto">
+              <PageHelp
+                title="Analysis Page Guide"
+                subtitle="Learn what each chart and tool on this page does."
+                sections={[
+                  {
+                    title: "Year-over-Year Price Chart",
+                    body: "Shows your selected stock's closing price normalized to 100 at the start of each calendar year. The last 3 years are overlaid so you can spot recurring seasonal patterns — for example, if a stock tends to rally every Q4.",
+                  },
+                  {
+                    title: "Fundamentals Panel",
+                    body: "The panel on the right shows key metrics for the selected stock: sector, industry, market cap, P/E ratio, and 52-week high/low. Use the dropdown at the top of the page to switch stocks.",
+                  },
+                  {
+                    title: "Lead-Lag Hypothesis Lab",
+                    body: "Enter two tickers and click Analyze. The model determines which stock historically moves first (the leader) and which follows after a delay (the follower). Hover the chart to see the projected lag offset as dashed vertical lines.",
+                    color: "hsl(142, 71%, 45%)",
+                  },
+                  {
+                    title: "Key Lead-Lag Metrics",
+                    body: "Optimal Lag = typical trading days before the follower reacts. dCor = distance correlation (0–1, higher = stronger link). Signal (0–100) = reliability score. Half-life = days until the signal decays 50%. Frequency = % of historical windows that showed the relationship.",
+                    color: "hsl(38, 92%, 50%)",
+                  },
+                  {
+                    title: "Lead-Lag Network Graph",
+                    body: "Maps the top stocks by market centrality. Node color: violet = follower, teal = leader. Node size = total connections. Arrows point from leader to follower. Click any node to see its stats and which stocks it leads. Drag to pan, +/− to zoom.",
+                    color: "hsl(197, 88%, 55%)",
+                  },
+                  {
+                    title: "Monte Carlo Simulation",
+                    body: "Runs thousands of simulated future price paths for your selected stock. The range of paths shows the distribution of possible outcomes — not just a single forecast. Use it to understand the breadth of uncertainty in future returns.",
+                    color: "hsl(270, 70%, 65%)",
+                  },
+                ]}
+              />
+            </div>
           </div>
 
           {/* ── Price Chart + Fundamentals ── */}

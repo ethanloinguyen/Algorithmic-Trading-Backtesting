@@ -1,13 +1,33 @@
-# DeltaLag v10 — Distributed Training
-# =====================================
+# Combined Requirements — DeltaLag v10 + Stock Portfolio Clustering
+# ==================================================================
 # Pin exact versions to ensure reproducibility across cluster nodes.
 # Install with: pip install -r requirements.txt
+#
+# GCP Authentication (clustering script only, pick one):
+#   export GOOGLE_APPLICATION_CREDENTIALS="/path/to/service_account.json"
+#   OR: gcloud auth application-default login
 
-torch>=2.1.0               # DDP, torchrun, no_sync context manager
-yfinance>=0.2.18           # OHLCV download
+# --- Core ---
+numpy==1.26.4                 # pin 1.x: required for PyTorch + scikit-learn ABI compatibility
 pandas>=2.0.0
-numpy==1.26.4              # 1.x required for PyTorch ABI compatibility
-scikit-learn>=1.3.0        # RobustScaler
-scipy>=1.11.0              # spearmanr
-matplotlib>=3.7.0          # training curve plots (rank 0 only)
+
+# --- PyTorch (DeltaLag) ---
+torch>=2.1.0                  # DDP, torchrun, no_sync context manager
+
+# --- ML / Clustering ---
+scikit-learn>=1.3.0           # RobustScaler, silhouette_score, TSNE, PCA, pairwise_distances, SimpleImputer
+scipy>=1.11.0                 # spearmanr
+
+# --- Google Cloud (clustering) ---
+google-cloud-bigquery>=3.11.0
+db-dtypes>=1.1.0              # required for BigQuery -> pandas type conversion
+pyarrow>=12.0.0               # BigQuery Storage fast reads; also used by pandas
+
+# --- Data (DeltaLag) ---
+yfinance>=0.2.18              # OHLCV download
+
+# --- Plotting ---
+matplotlib>=3.7.0             # training curve plots (DeltaLag: rank 0 only); clustering star graph
+
+# --- Utilities ---
 tqdm>=4.65.0

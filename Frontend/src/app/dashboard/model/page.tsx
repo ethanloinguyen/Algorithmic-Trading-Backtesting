@@ -9,6 +9,7 @@ import {
 import Sidebar from "@/components/ui/Sidebar";
 import { useAuth } from "@/src/app/context/AuthContext";
 import StockModal, { type Stock } from "@/components/ui/StockModal";
+import { PageHelp } from "@/components/ui/PageHelp";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -145,7 +146,7 @@ export default function ModelPage() {
   const [result,         setResult]         = useState<AnalyzeResult | null>(null);
   const [error,          setError]          = useState<string | null>(null);
   const [selectedStock,  setSelectedStock]  = useState<Stock | null>(null);
-  const [lagWindow,      setLagWindow]      = useState<5 | 10 | 30>(10);
+  const [lagWindow,      setLagWindow]      = useState<1 | 5 | 10>(5);
 
   const inputRef   = useRef<HTMLInputElement>(null);
 
@@ -196,9 +197,8 @@ export default function ModelPage() {
     }
   };
 
-  // Filter by lag window, then deduplicate by symbol keeping the
-  // highest attn_weight entry for each stock (same stock can appear
-  // at multiple lag_days values in the raw model output).
+  // Filter by lag window, then deduplicate by (symbol, lag_days) pair so
+  // each distinct lead-lag relationship appears once, then take top 10.
   const visibleLeaders = result
     ? Object.values(
         result.leaders
@@ -248,6 +248,43 @@ export default function ModelPage() {
               <h1 className="text-2xl font-bold" style={{ color: "hsl(210, 40%, 92%)" }}>
                 DeltaLag Model
               </h1>
+              <div className="ml-auto">
+                <PageHelp
+                  title="DeltaLag Model Guide"
+                  subtitle="Understand what the model does and how to interpret its results."
+                  sections={[
+                    {
+                      title: "What is DeltaLag?",
+                      body: "DeltaLag is a 2-layer GRU (Gated Recurrent Unit) neural network with cross-attention, trained on 2,000+ stocks from the Russell 1000 and Russell 2000. It learns which stocks historically precede moves in a target stock, and by exactly how many trading days.",
+                    },
+                    {
+                      title: "How to Use",
+                      body: "Search for any supported stock in the input box, select it from the autocomplete dropdown, then choose a lag window (1D, 5D, or 10D). Click Analyze to run the model. Results show the top 10 stocks that historically lead your target within that lag window.",
+                      color: "hsl(142, 71%, 45%)",
+                    },
+                    {
+                      title: "Attention Weight",
+                      body: "The attention bar shows how strongly the model's cross-attention mechanism focuses on a leader stock when predicting the target's returns. A longer bar = more influential. Compare bars across leaders to understand their relative importance.",
+                      color: "hsl(217, 91%, 60%)",
+                    },
+                    {
+                      title: "Lag Days",
+                      body: "The lag badge shows the number of trading days between the leader's move and the target stock's typical response. Green (≤3d) = short, actionable lag. Orange (≤6d) = medium. Red = longer lag. Shorter lags generally offer more practical trading utility.",
+                      color: "hsl(38, 92%, 50%)",
+                    },
+                    {
+                      title: "IC (Information Coefficient)",
+                      body: "Shown in the results header, IC measures how well the model's predictions correlate with the target stock's actual returns. A positive IC means the model has predictive edge for this stock — higher is better. Results are as of 2024-12-30.",
+                      color: "hsl(270, 70%, 65%)",
+                    },
+                    {
+                      title: "Leaders by Sector",
+                      body: "The sector breakdown panel shows which industries the top leader stocks come from, weighted by their total attention scores. A dominant sector means the target is heavily influenced by that sector's dynamics — useful context for macro risk.",
+                      color: "hsl(195, 80%, 50%)",
+                    },
+                  ]}
+                />
+              </div>
             </div>
             <p className="text-sm ml-12" style={{ color: "hsl(215, 15%, 50%)" }}>
               Identify which stocks historically lead a target — using a 2-layer GRU
@@ -311,7 +348,7 @@ export default function ModelPage() {
             <div className="flex flex-col gap-1.5">
               <label className="text-xs font-medium" style={{ color: "hsl(215, 15%, 55%)" }}>Lag Window</label>
               <div className="flex items-center rounded-lg overflow-hidden" style={{ border: "1px solid hsl(215, 20%, 22%)", background: "hsl(215, 25%, 13%)" }}>
-                {([5, 10, 30] as const).map((v) => (
+                {([1, 5, 10] as const).map((v) => (
                   <button
                     key={v}
                     onClick={() => setLagWindow(v)}
@@ -384,7 +421,7 @@ export default function ModelPage() {
                     IC: <span style={{ color: result.target_ic >= 0 ? "hsl(142,71%,50%)" : "hsl(0,84%,60%)" }}>{result.target_ic.toFixed(4)}</span>
                   </div>
                   <div className="flex items-center rounded-lg overflow-hidden" style={{ border: "1px solid hsl(215, 20%, 22%)", background: "hsl(215, 25%, 13%)" }}>
-                    {([5, 10, 30] as const).map((v) => (
+                    {([1, 5, 10] as const).map((v) => (
                       <button
                         key={v}
                         onClick={() => setLagWindow(v)}
@@ -535,6 +572,25 @@ export default function ModelPage() {
               </p>
             </div>
           )}
+
+          {/* ── Disclaimer ── */}
+          <div
+            className="mt-8 rounded-xl p-5 text-xs space-y-3"
+            style={{ background: "hsl(215, 25%, 10%)", border: "1px solid hsl(215, 20%, 17%)", color: "hsl(215, 15%, 48%)" }}
+          >
+            <p>
+              <span style={{ color: "hsl(215, 15%, 62%)" }}>About this model: </span>
+              This tool is based on <span style={{ color: "hsl(215, 15%, 65%)" }}>DeltaLag (Zhou et al., ICAIF 2025)</span>, an academic model for detecting lead-lag relationships in equity markets. Our implementation matches the paper&apos;s reported metrics; Information Coefficient of{" "}
+              <span style={{ color: "hsl(142, 71%, 45%)" }}>0.026</span>, Annualized Return, and Sharpe Ratio, all on a universe of approximately 2,000 U.S. equities.
+            </p>
+            <p>
+              <span style={{ color: "hsl(215, 15%, 62%)" }}>Known limitation: </span>
+              The model&apos;s attention mechanism tends to concentrate on a recurring pool of 5–10 high-influence stocks rather than identifying unique leader-lagger pairs for each target stock. This is a consequence of training on a universe where broad market factors drive much of the cross-sectional return variation, making it difficult for the model to isolate stock-specific lead-lag structure. The leaders displayed are statistically meaningful at the portfolio level but may not represent a distinct predictive relationship for your specific stock.
+            </p>
+            <p style={{ color: "hsl(215, 15%, 40%)" }}>
+              This tool is intended for research and educational purposes only and does not constitute investment advice.
+            </p>
+          </div>
 
         </div>
       </main>
