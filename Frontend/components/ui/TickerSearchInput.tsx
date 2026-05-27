@@ -65,14 +65,14 @@ export default function TickerSearchInput({
   return (
     <div className="flex flex-col gap-1" ref={containerRef}>
       {label && (
-        <span className="text-[10px] font-bold uppercase tracking-widest" style={{ color: labelColor }}>
+        <span className="text-xs font-medium" style={{ color: TEXT_SEC }}>
           {label}
         </span>
       )}
       <div className="relative">
         <div
           className="flex items-center gap-2 px-3 py-2 rounded-lg"
-          style={{ background: BG_INPUT, border: `1px solid ${labelColor}40` }}
+          style={{ background: BG_INPUT, border: `1px solid ${BORDER}` }}
         >
           <Search className="w-3.5 h-3.5 flex-shrink-0" style={{ color: TEXT_MUT }} />
           <input
@@ -109,7 +109,7 @@ export default function TickerSearchInput({
             }}
             maxLength={10}
             placeholder={placeholder}
-            className="flex-1 bg-transparent outline-none text-sm font-bold w-20"
+            className="flex-1 bg-transparent outline-none text-sm w-20"
             style={{ color: TEXT_PRI }}
           />
         </div>
