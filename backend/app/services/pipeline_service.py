@@ -72,13 +72,17 @@ def run_risk_pipeline(
     """
     Run the full hierarchical clustering → Monte Carlo risk pipeline.
 
-    Step 1 — hierarchical.run_clustering():
+    Step 1 — mc_engine.run_portfolio_risk() for user holdings:
+        Simulates Monte Carlo paths for the user's current portfolio and
+        returns portfolio-level risk metrics (VaR, CVaR, drawdown, etc.).
+
+    Step 2 — hierarchical.run_clustering():
         Queries BigQuery for stocks decorrelated from user_portfolio,
         clusters them via K-Medoids, and selects one stock per sector.
 
-    Step 2 — mc_engine.run_portfolio_risk():
+    Step 3 — mc_engine.run_portfolio_risk() for recommendations:
         Simulates Monte Carlo paths for the recommended tickers and
-        returns per-stock and portfolio-level risk metrics.
+        returns per-stock risk metrics.
 
     Parameters
     ----------
@@ -117,7 +121,17 @@ def run_risk_pipeline(
         logger.info("Pipeline cache hit for portfolio %s", user_portfolio)
         return cached
 
-    logger.info("Pipeline step 1: running hierarchical clustering for %s", user_portfolio)
+    logger.info("Pipeline step 1: running Monte Carlo portfolio risk for user holdings %s", list(user_portfolio))
+    user_risk = run_portfolio_risk(
+        tickers=list(user_portfolio),
+        horizon_days=horizon_days,
+        n_sims=n_sims,
+        target_return=target_return,
+        confidence_levels=confidence_levels,
+        seed=seed,
+    )
+
+    logger.info("Pipeline step 2: running hierarchical clustering for %s", user_portfolio)
     recommendations = run_clustering(
         user_portfolio=user_portfolio,
         bq_client=bq_client,
@@ -127,19 +141,9 @@ def run_risk_pipeline(
     if not rec_tickers:
         raise ValueError("Hierarchical clustering returned no recommendations.")
 
-    logger.info("Pipeline step 2a: running Monte Carlo per-stock risk for recommendations %s", rec_tickers)
+    logger.info("Pipeline step 3: running Monte Carlo per-stock risk for recommendations %s", rec_tickers)
     rec_risk = run_portfolio_risk(
         tickers=rec_tickers,
-        horizon_days=horizon_days,
-        n_sims=n_sims,
-        target_return=target_return,
-        confidence_levels=confidence_levels,
-        seed=seed,
-    )
-
-    logger.info("Pipeline step 2b: running Monte Carlo portfolio risk for user holdings %s", list(user_portfolio))
-    user_risk = run_portfolio_risk(
-        tickers=list(user_portfolio),
         horizon_days=horizon_days,
         n_sims=n_sims,
         target_return=target_return,
