@@ -152,7 +152,7 @@ def build_candidate_pool(portfolio, bq_table, dcor_threshold, client):
                AVG(dcor) AS avg_dcor_to_portfolio, MIN(dcor) AS min_dcor_to_portfolio
         FROM normalised GROUP BY candidate_stock
     )
-    SELECT * FROM aggregated WHERE n_links = {len(portfolio)}
+    SELECT * FROM aggregated WHERE n_links >= {max(1, len(portfolio) // 2)}
     ORDER BY avg_dcor_to_portfolio ASC
     """
     df = client.query(query).to_dataframe()
@@ -364,8 +364,10 @@ def run_clustering(
             "Check that all tickers exist in the BigQuery table and try raising dcor_threshold."
         )
 
-    k_max_eff = max(k_min + 1, len(candidate_stocks) // min_cluster_size)
-    print(f'Auto K_MAX = {k_max_eff}  (pool={len(candidate_stocks)} / min_size={min_cluster_size})')
+    # Scale min_cluster_size down when pool is small so clustering always has valid k values
+    effective_min_cluster_size = max(2, min(min_cluster_size, len(candidate_stocks) // (k_min + 2)))
+    k_max_eff = max(k_min + 1, len(candidate_stocks) // effective_min_cluster_size)
+    print(f'Auto K_MAX = {k_max_eff}  (pool={len(candidate_stocks)} / effective_min_size={effective_min_cluster_size})')
 
     # ── Feature matrix ────────────────────────────────────────────────────────
     feature_rows   = fetch_feature_rows_bidirectional(candidate_stocks, bq_table, client,
@@ -393,7 +395,7 @@ def run_clustering(
     D /= D.max()
 
     # ── Sweep ─────────────────────────────────────────────────────────────────
-    sweep = run_full_sweep(D, k_min, k_max_eff, n_init, min_cluster_size, max_cluster_fraction)
+    sweep = run_full_sweep(D, k_min, k_max_eff, n_init, effective_min_cluster_size, max_cluster_fraction)
 
     # ── Inner helpers (close over local state) ────────────────────────────────
 
