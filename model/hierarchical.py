@@ -66,7 +66,7 @@ class KMedoidsPAM:
 
     @staticmethod
     def _inertia(D, labels, m):
-        return float(sum(D[i, m[labels[i]]] for i in range(len(labels))))
+        return float(D[np.arange(len(labels)), m[labels]].sum())
 
     def _fit_once(self, D, rng):
         m = self._kpp_init(D, rng)
@@ -120,11 +120,13 @@ PCA_COMPONENTS             = None
 
 MIN_CLUSTER_SIZE     = 8
 K_MIN                = 3
-N_INIT               = 25
+K_MAX_CAP            = 14    # hard ceiling on k sweep — elbow almost always lands below this
+N_INIT               = 10    # restarts per k (was 25; 10 gives same quality with 60% less sweep time)
 MAX_CLUSTER_FRACTION = 0.25
 ELBOW_SENSITIVITY    = 0.45
 MIN_SECTORS_TARGET   = 6
 N_CLUSTERS           = None  # None = objective selection
+MAX_CANDIDATES       = 150   # cap BQ candidate pool — best stocks first (sorted by avg_dcor ASC)
 
 
 # =============================================================================
@@ -183,6 +185,108 @@ def fetch_feature_rows_bidirectional(stocks, bq_table, client,
     print(f'  -> {len(df):,} rows for {df["stock"].nunique()} stocks  '
           f'(avg {len(df)/df["stock"].nunique():.0f} rows/stock)')
     return df
+
+
+def fetch_candidates_and_features(
+    portfolio, bq_table, dcor_threshold, client,
+    numeric_features=None, use_sector=True, max_candidates=MAX_CANDIDATES,
+):
+    """
+    Single BigQuery round-trip replacing build_candidate_pool +
+    fetch_feature_rows_bidirectional.
+
+    Returns
+    -------
+    candidate_df  : DataFrame [candidate_stock, avg_dcor_to_portfolio, min_dcor_to_portfolio]
+    feature_rows  : DataFrame [stock, <numeric_features>, sector_i?]
+    """
+    if not portfolio:
+        empty = pd.DataFrame(columns=['candidate_stock', 'avg_dcor_to_portfolio', 'min_dcor_to_portfolio'])
+        return empty, pd.DataFrame()
+
+    if numeric_features is None:
+        numeric_features = NUMERIC_FEATURES
+
+    tickers_sql = ', '.join(f"'{t}'" for t in portfolio)
+    min_links   = max(1, len(portfolio) // 2)
+
+    feat_i       = ', '.join(numeric_features)
+    sector_i_sql = ', sector_i' if use_sector else ''
+
+    feat_j_parts = [
+        'centrality_j AS centrality_i' if f == 'centrality_i' else f
+        for f in numeric_features
+    ]
+    feat_j       = ', '.join(feat_j_parts)
+    sector_j_sql = ', sector_j AS sector_i' if use_sector else ''
+
+    fr_select = ', '.join(f'fr.{c}' for c in ['stock'] + numeric_features + (['sector_i'] if use_sector else []))
+
+    query = f"""
+    WITH normalised AS (
+        SELECT {COL_STOCK_A} AS portfolio_stock, {COL_STOCK_B} AS candidate_stock, {COL_DCOR} AS dcor
+        FROM `{bq_table}`
+        WHERE {COL_STOCK_A} IN ({tickers_sql}) AND {COL_STOCK_B} NOT IN ({tickers_sql})
+          AND {COL_DCOR} <= {dcor_threshold}
+        UNION ALL
+        SELECT {COL_STOCK_B}, {COL_STOCK_A}, {COL_DCOR}
+        FROM `{bq_table}`
+        WHERE {COL_STOCK_B} IN ({tickers_sql}) AND {COL_STOCK_A} NOT IN ({tickers_sql})
+          AND {COL_DCOR} <= {dcor_threshold}
+    ),
+    aggregated AS (
+        SELECT candidate_stock,
+               COUNT(DISTINCT portfolio_stock) AS n_links,
+               AVG(dcor)                       AS avg_dcor_to_portfolio,
+               MIN(dcor)                       AS min_dcor_to_portfolio
+        FROM normalised
+        GROUP BY candidate_stock
+        HAVING COUNT(DISTINCT portfolio_stock) >= {min_links}
+    ),
+    top_candidates AS (
+        SELECT candidate_stock, avg_dcor_to_portfolio, min_dcor_to_portfolio
+        FROM aggregated
+        ORDER BY avg_dcor_to_portfolio ASC
+        LIMIT {max_candidates}
+    ),
+    feature_rows AS (
+        SELECT {COL_STOCK_A} AS stock, {feat_i}{sector_i_sql}
+        FROM `{bq_table}`
+        WHERE {COL_STOCK_A} IN (SELECT candidate_stock FROM top_candidates)
+        UNION ALL
+        SELECT {COL_STOCK_B} AS stock, {feat_j}{sector_j_sql}
+        FROM `{bq_table}`
+        WHERE {COL_STOCK_B} IN (SELECT candidate_stock FROM top_candidates)
+    )
+    SELECT tc.avg_dcor_to_portfolio, tc.min_dcor_to_portfolio, {fr_select}
+    FROM top_candidates tc
+    JOIN feature_rows fr ON fr.stock = tc.candidate_stock
+    """
+
+    print('Fetching candidates and features (single query) ...')
+    df = client.query(query).to_dataframe()
+
+    if df.empty:
+        empty = pd.DataFrame(columns=['candidate_stock', 'avg_dcor_to_portfolio', 'min_dcor_to_portfolio'])
+        return empty, pd.DataFrame()
+
+    n_stocks = df['stock'].nunique()
+    print(f'  -> {len(df):,} rows for {n_stocks:,} candidates '
+          f'(avg {len(df) / n_stocks:.0f} rows/stock)')
+
+    candidate_df = (
+        df[['stock', 'avg_dcor_to_portfolio', 'min_dcor_to_portfolio']]
+        .drop_duplicates('stock')
+        .rename(columns={'stock': 'candidate_stock'})
+        .sort_values('avg_dcor_to_portfolio')
+        .reset_index(drop=True)
+    )
+    print(f'Candidate pool: {len(candidate_df):,} stocks')
+
+    feat_cols    = ['stock'] + numeric_features + (['sector_i'] if use_sector else [])
+    feature_rows = df[feat_cols].copy()
+
+    return candidate_df, feature_rows
 
 
 # =============================================================================
@@ -248,7 +352,7 @@ def run_full_sweep(D, k_min, k_max, n_init, min_size, max_frac, rs=42):
     print(f'{"k":>4}  {"valid":>6}  {"inertia":>10}  {"silhouette":>11}  {"bal_cv":>8}  {"max_cl":>7}  sizes')
     print('-' * 90)
     for k in range(k_min, k_max + 1):
-        km     = KMedoidsPAM(n_clusters=k, max_iter=300, n_init=n_init, random_state=rs)
+        km     = KMedoidsPAM(n_clusters=k, max_iter=100, n_init=n_init, random_state=rs)
         km.fit(D)
         labels   = km.labels_
         sizes    = sorted(Counter(labels).values())
@@ -321,11 +425,13 @@ def run_clustering(
     pca_components: int = None,
     min_cluster_size: int = MIN_CLUSTER_SIZE,
     k_min: int = K_MIN,
+    k_max_cap: int = K_MAX_CAP,
     n_init: int = N_INIT,
     max_cluster_fraction: float = MAX_CLUSTER_FRACTION,
     elbow_sensitivity: float = ELBOW_SENSITIVITY,
     min_sectors_target: int = MIN_SECTORS_TARGET,
     n_clusters: int = None,
+    max_candidates: int = MAX_CANDIDATES,
     bq_client=None,
     save_csv: bool = False,
     save_plot: bool = False,
@@ -353,8 +459,12 @@ def run_clustering(
 
     client = bq_client or bigquery.Client(project=gcp_project)
 
-    # ── Candidate pool ────────────────────────────────────────────────────────
-    candidate_df     = build_candidate_pool(user_portfolio, bq_table, dcor_threshold, client)
+    # ── Candidate pool + features (single BQ round-trip) ─────────────────────
+    candidate_df, feature_rows = fetch_candidates_and_features(
+        user_portfolio, bq_table, dcor_threshold, client,
+        numeric_features=numeric_features, use_sector=use_sector,
+        max_candidates=max_candidates,
+    )
     candidate_stocks = candidate_df['candidate_stock'].tolist()
 
     if not candidate_stocks:
@@ -366,12 +476,10 @@ def run_clustering(
 
     # Scale min_cluster_size down when pool is small so clustering always has valid k values
     effective_min_cluster_size = max(2, min(min_cluster_size, len(candidate_stocks) // (k_min + 2)))
-    k_max_eff = max(k_min + 1, len(candidate_stocks) // effective_min_cluster_size)
-    print(f'Auto K_MAX = {k_max_eff}  (pool={len(candidate_stocks)} / effective_min_size={effective_min_cluster_size})')
+    k_max_eff = max(k_min + 1, min(len(candidate_stocks) // effective_min_cluster_size, k_max_cap))
+    print(f'Auto K_MAX = {k_max_eff}  (pool={len(candidate_stocks)} / effective_min_size={effective_min_cluster_size} / cap={k_max_cap})')
 
     # ── Feature matrix ────────────────────────────────────────────────────────
-    feature_rows   = fetch_feature_rows_bidirectional(candidate_stocks, bq_table, client,
-                                                       numeric_features, use_sector)
     feature_matrix = build_feature_matrix(feature_rows, candidate_stocks,
                                            numeric_features, use_sector, sector_weight)
     sector_map = (
