@@ -201,7 +201,7 @@ def build_feature_matrix(feature_rows, candidate_stocks,
     if use_sector:
         sector_mode = (
             feature_rows.groupby('stock')['sector_i']
-            .agg(lambda x: x.mode().iloc[0] if len(x) > 0 else 'Unknown')
+            .agg(lambda x: x.mode().iloc[0] if len(x) > 0 and not x.mode().empty else 'Unknown')
             .reindex(candidate_stocks, fill_value='Unknown')
         )
         sector_dummies = pd.get_dummies(sector_mode, prefix='sector') * sector_weight
@@ -374,7 +374,7 @@ def run_clustering(
                                            numeric_features, use_sector, sector_weight)
     sector_map = (
         feature_rows.groupby('stock')['sector_i']
-        .agg(lambda x: x.mode().iloc[0] if len(x) > 0 else 'Unknown')
+        .agg(lambda x: x.mode().iloc[0] if len(x) > 0 and not x.mode().empty else 'Unknown')
     )
 
     # ── Feature selection & scaling ───────────────────────────────────────────
