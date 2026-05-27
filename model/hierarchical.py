@@ -132,6 +132,8 @@ N_CLUSTERS           = None  # None = objective selection
 # =============================================================================
 
 def build_candidate_pool(portfolio, bq_table, dcor_threshold, client):
+    if not portfolio:
+        return pd.DataFrame(columns=['candidate_stock', 'avg_dcor_to_portfolio', 'min_dcor_to_portfolio'])
     tickers_sql = ', '.join(f"'{t}'" for t in portfolio)
     query = f"""
     WITH normalised AS (
@@ -160,6 +162,8 @@ def build_candidate_pool(portfolio, bq_table, dcor_threshold, client):
 
 def fetch_feature_rows_bidirectional(stocks, bq_table, client,
                                       numeric_features=None, use_sector=True):
+    if not stocks:
+        return pd.DataFrame()
     if numeric_features is None:
         numeric_features = NUMERIC_FEATURES
     tickers_sql = ', '.join(f"'{t}'" for t in stocks)

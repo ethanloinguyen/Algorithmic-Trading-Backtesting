@@ -760,10 +760,15 @@ export default function DiversifyPage() {
           })
           .catch(() => {});
       }
-      runRiskPipeline(tickers)
-        .then(riskData => setRiskResult(riskData))
-        .catch(err => setRiskError(err instanceof Error ? err.message : "Risk assessment failed."))
-        .finally(() => setRiskLoading(false));
+      if (data.tickers_analyzed.length > 0) {
+        runRiskPipeline(data.tickers_analyzed)
+          .then(riskData => setRiskResult(riskData))
+          .catch(err => setRiskError(err instanceof Error ? err.message : "Risk assessment failed."))
+          .finally(() => setRiskLoading(false));
+      } else {
+        setRiskError("No recognized tickers — risk assessment requires at least one known stock.");
+        setRiskLoading(false);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong.");
       setRiskLoading(false);
