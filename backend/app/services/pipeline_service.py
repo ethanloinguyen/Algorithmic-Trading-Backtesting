@@ -22,7 +22,11 @@ import sys
 
 import numpy as np
 
-from app.services.cache_service import get_cached_pipeline_result, set_cached_pipeline_result
+from app.services.cache_service import (
+    get_cached_pipeline_result, set_cached_pipeline_result,
+    get_cached_portfolio_risk, set_cached_portfolio_risk,
+    get_cached_clustering_result, set_cached_clustering_result,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -72,13 +76,17 @@ def run_risk_pipeline(
     """
     Run the full hierarchical clustering → Monte Carlo risk pipeline.
 
-    Step 1 — hierarchical.run_clustering():
+    Step 1 — mc_engine.run_portfolio_risk() for user holdings:
+        Simulates Monte Carlo paths for the user's current portfolio and
+        returns portfolio-level risk metrics (VaR, CVaR, drawdown, etc.).
+
+    Step 2 — hierarchical.run_clustering():
         Queries BigQuery for stocks decorrelated from user_portfolio,
         clusters them via K-Medoids, and selects one stock per sector.
 
-    Step 2 — mc_engine.run_portfolio_risk():
+    Step 3 — mc_engine.run_portfolio_risk() for recommendations:
         Simulates Monte Carlo paths for the recommended tickers and
-        returns per-stock and portfolio-level risk metrics.
+        returns per-stock risk metrics.
 
     Parameters
     ----------
@@ -117,7 +125,17 @@ def run_risk_pipeline(
         logger.info("Pipeline cache hit for portfolio %s", user_portfolio)
         return cached
 
-    logger.info("Pipeline step 1: running hierarchical clustering for %s", user_portfolio)
+    logger.info("Pipeline step 1: running Monte Carlo portfolio risk for user holdings %s", list(user_portfolio))
+    user_risk = run_portfolio_risk(
+        tickers=list(user_portfolio),
+        horizon_days=horizon_days,
+        n_sims=n_sims,
+        target_return=target_return,
+        confidence_levels=confidence_levels,
+        seed=seed,
+    )
+
+    logger.info("Pipeline step 2: running hierarchical clustering for %s", user_portfolio)
     recommendations = run_clustering(
         user_portfolio=user_portfolio,
         bq_client=bq_client,
@@ -127,19 +145,9 @@ def run_risk_pipeline(
     if not rec_tickers:
         raise ValueError("Hierarchical clustering returned no recommendations.")
 
-    logger.info("Pipeline step 2a: running Monte Carlo per-stock risk for recommendations %s", rec_tickers)
+    logger.info("Pipeline step 3: running Monte Carlo per-stock risk for recommendations %s", rec_tickers)
     rec_risk = run_portfolio_risk(
         tickers=rec_tickers,
-        horizon_days=horizon_days,
-        n_sims=n_sims,
-        target_return=target_return,
-        confidence_levels=confidence_levels,
-        seed=seed,
-    )
-
-    logger.info("Pipeline step 2b: running Monte Carlo portfolio risk for user holdings %s", list(user_portfolio))
-    user_risk = run_portfolio_risk(
-        tickers=list(user_portfolio),
         horizon_days=horizon_days,
         n_sims=n_sims,
         target_return=target_return,
@@ -161,4 +169,109 @@ def run_risk_pipeline(
     })
 
     set_cached_pipeline_result(user_portfolio, result)
+    return result
+
+
+def run_portfolio_risk_assessment(
+    user_portfolio: list[str],
+    horizon_days: int = 63,
+    n_sims: int = 1000,
+    target_return: float = 0.10,
+    confidence_levels: list[float] | None = None,
+    seed: int = 42,
+) -> dict:
+    """
+    Step 1 of the split pipeline: Monte Carlo risk assessment for the user's
+    own holdings only. Returns quickly — no BigQuery clustering required.
+
+    Returns
+    -------
+    {
+      "user_portfolio": [...],
+      "risk": { tickers, missing, weights, horizon_days, n_simulations, portfolio }
+    }
+    """
+    if confidence_levels is None:
+        confidence_levels = [0.95, 0.99]
+
+    cached = get_cached_portfolio_risk(user_portfolio)
+    if cached is not None:
+        logger.info("Portfolio risk cache hit for %s", user_portfolio)
+        return cached
+
+    logger.info("Running Monte Carlo portfolio risk for user holdings %s", list(user_portfolio))
+    user_risk = run_portfolio_risk(
+        tickers=list(user_portfolio),
+        horizon_days=horizon_days,
+        n_sims=n_sims,
+        target_return=target_return,
+        confidence_levels=confidence_levels,
+        seed=seed,
+    )
+
+    result = _sanitize({
+        "user_portfolio": user_portfolio,
+        "risk":           user_risk,
+    })
+
+    set_cached_portfolio_risk(user_portfolio, result)
+    return result
+
+
+def run_clustering_pipeline(
+    user_portfolio: list[str],
+    horizon_days: int = 63,
+    n_sims: int = 1000,
+    target_return: float = 0.10,
+    confidence_levels: list[float] | None = None,
+    seed: int = 42,
+    bq_client=None,
+) -> dict:
+    """
+    Step 2 of the split pipeline: K-Medoids clustering → per-stock Monte Carlo
+    risk for the recommended tickers. This is the slow step (BigQuery + clustering).
+
+    Returns
+    -------
+    {
+      "user_portfolio":  [...],
+      "recommendations": [...],
+      "risk": { tickers, missing, weights, horizon_days, n_simulations, per_stock }
+    }
+    """
+    if confidence_levels is None:
+        confidence_levels = [0.95, 0.99]
+
+    cached = get_cached_clustering_result(user_portfolio)
+    if cached is not None:
+        logger.info("Clustering pipeline cache hit for %s", user_portfolio)
+        return cached
+
+    logger.info("Running hierarchical clustering for %s", user_portfolio)
+    recommendations = run_clustering(
+        user_portfolio=user_portfolio,
+        bq_client=bq_client,
+    )
+
+    rec_tickers = recommendations["stock"].tolist()
+    if not rec_tickers:
+        raise ValueError("Hierarchical clustering returned no recommendations.")
+
+    logger.info("Running Monte Carlo per-stock risk for recommendations %s", rec_tickers)
+    rec_risk = run_portfolio_risk(
+        tickers=rec_tickers,
+        horizon_days=horizon_days,
+        n_sims=n_sims,
+        target_return=target_return,
+        confidence_levels=confidence_levels,
+        seed=seed,
+    )
+
+    result = _sanitize({
+        "user_portfolio":  user_portfolio,
+        "recommendations": recommendations.to_dict("records"),
+        "risk":            rec_risk,
+    })
+
+    set_cached_clustering_result(user_portfolio, result)
     return result
