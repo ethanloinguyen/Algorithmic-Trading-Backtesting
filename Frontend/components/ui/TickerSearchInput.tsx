@@ -1,7 +1,6 @@
 "use client";
 import { useState, useRef, useMemo, useEffect } from "react";
 import { Search } from "lucide-react";
-import type { StockSummary } from "@/src/app/lib/api";
 
 const BG_INPUT  = "hsl(215,25%,9%)";
 const BG_DROP   = "hsl(215,25%,13%)";
@@ -15,7 +14,7 @@ const TEXT_MUT  = "hsl(215,15%,40%)";
 interface Props {
   value: string;
   onChange: (symbol: string) => void;
-  stocks: StockSummary[];
+  stocks: { symbol: string; name: string }[];
   label?: string;
   labelColor?: string;
   placeholder?: string;
