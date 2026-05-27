@@ -176,3 +176,69 @@ def set_cached_pipeline_result(tickers: list[str], result: dict) -> None:
         })
     except Exception as e:
         print(f"[cache] set_cached_pipeline_result failed: {e}")
+
+
+# ── Portfolio risk assessment cache ──────────────────────────────────────────
+
+def _portfolio_risk_doc_id(tickers: list[str]) -> str:
+    key = ",".join(sorted(t.upper() for t in tickers))
+    return "portfolio_risk_" + hashlib.sha256(key.encode()).hexdigest()[:16]
+
+
+def get_cached_portfolio_risk(tickers: list[str]) -> dict | None:
+    try:
+        fs   = get_fs_client()
+        snap = fs.collection("cache").document(_portfolio_risk_doc_id(tickers)).get()
+        if not snap.exists:
+            return None
+        data = snap.to_dict()
+        if _is_stale(data, TTL_PIPELINE):
+            return None
+        return data["data"]
+    except Exception as e:
+        print(f"[cache] get_cached_portfolio_risk failed: {e}")
+        return None
+
+
+def set_cached_portfolio_risk(tickers: list[str], result: dict) -> None:
+    try:
+        fs = get_fs_client()
+        fs.collection("cache").document(_portfolio_risk_doc_id(tickers)).set({
+            "data":       result,
+            "updated_at": firestore.SERVER_TIMESTAMP,
+        })
+    except Exception as e:
+        print(f"[cache] set_cached_portfolio_risk failed: {e}")
+
+
+# ── Clustering pipeline cache ─────────────────────────────────────────────────
+
+def _clustering_doc_id(tickers: list[str]) -> str:
+    key = ",".join(sorted(t.upper() for t in tickers))
+    return "clustering_pipeline_" + hashlib.sha256(key.encode()).hexdigest()[:16]
+
+
+def get_cached_clustering_result(tickers: list[str]) -> dict | None:
+    try:
+        fs   = get_fs_client()
+        snap = fs.collection("cache").document(_clustering_doc_id(tickers)).get()
+        if not snap.exists:
+            return None
+        data = snap.to_dict()
+        if _is_stale(data, TTL_PIPELINE):
+            return None
+        return data["data"]
+    except Exception as e:
+        print(f"[cache] get_cached_clustering_result failed: {e}")
+        return None
+
+
+def set_cached_clustering_result(tickers: list[str], result: dict) -> None:
+    try:
+        fs = get_fs_client()
+        fs.collection("cache").document(_clustering_doc_id(tickers)).set({
+            "data":       result,
+            "updated_at": firestore.SERVER_TIMESTAMP,
+        })
+    except Exception as e:
+        print(f"[cache] set_cached_clustering_result failed: {e}")

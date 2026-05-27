@@ -10,13 +10,15 @@ import {
   analyzePortfolio,
   fetchStockSummaries,
   fetchAllStocks,
-  runRiskPipeline,
+  runPortfolioRiskAssessment,
+  runClusteringPipeline,
   type OverlapResult,
   type Recommendation,
   type IndependentRecommendation,
   type QualityRecommendation,
   type AnalysisMode,
-  type RiskPipelineResult,
+  type PortfolioRiskResult,
+  type ClusteringPipelineResult,
   type ClusteringPick,
   type StockSummary,
 } from "@/src/app/lib/api";
@@ -420,7 +422,7 @@ const METRIC_DETAILS: Record<string, string> = {
 };
 
 function RiskResultPanel({ result, onTickerClick }: {
-  result: RiskPipelineResult;
+  result: PortfolioRiskResult;
   onTickerClick: (ticker: string) => void;
 }) {
   const { risk } = result;
@@ -678,9 +680,12 @@ export default function DiversifyPage() {
   const [activeSpiderIdx, setActiveSpiderIdx] = useState<number | null>(0);
   const [companyNames,    setCompanyNames]    = useState<Record<string, string>>({});
   const [modalStock,      setModalStock]      = useState<Stock | null>(null);
-  const [riskResult,      setRiskResult]      = useState<RiskPipelineResult | null>(null);
-  const [riskLoading,     setRiskLoading]     = useState(false);
-  const [riskError,       setRiskError]       = useState<string | null>(null);
+  const [portfolioRiskResult,  setPortfolioRiskResult]  = useState<PortfolioRiskResult | null>(null);
+  const [portfolioRiskLoading, setPortfolioRiskLoading] = useState(false);
+  const [portfolioRiskError,   setPortfolioRiskError]   = useState<string | null>(null);
+  const [clusteringResult,     setClusteringResult]     = useState<ClusteringPipelineResult | null>(null);
+  const [clusteringLoading,    setClusteringLoading]    = useState(false);
+  const [clusteringError,      setClusteringError]      = useState<string | null>(null);
   const [allStocks,       setAllStocks]       = useState<StockSummary[]>([]);
 
   // Load autocomplete stock list
@@ -740,7 +745,8 @@ export default function DiversifyPage() {
   const handleAnalyze = async () => {
     if (!tickers.length) return;
     setLoading(true); setError(null); setResult(null); setActiveSpiderIdx(0);
-    setRiskResult(null); setRiskLoading(true); setRiskError(null);
+    setPortfolioRiskResult(null); setPortfolioRiskLoading(true); setPortfolioRiskError(null);
+    setClusteringResult(null); setClusteringLoading(true); setClusteringError(null);
     try {
       const data = await analyzePortfolio(tickers, analysisMode);
       setResult(data);
@@ -761,17 +767,25 @@ export default function DiversifyPage() {
           .catch(() => {});
       }
       if (data.tickers_analyzed.length > 0) {
-        runRiskPipeline(data.tickers_analyzed)
-          .then(riskData => setRiskResult(riskData))
-          .catch(err => setRiskError(err instanceof Error ? err.message : "Risk assessment failed."))
-          .finally(() => setRiskLoading(false));
+        // Fire both pipeline calls in parallel — portfolio risk resolves first.
+        runPortfolioRiskAssessment(data.tickers_analyzed)
+          .then(r => setPortfolioRiskResult(r))
+          .catch(err => setPortfolioRiskError(err instanceof Error ? err.message : "Risk assessment failed."))
+          .finally(() => setPortfolioRiskLoading(false));
+
+        runClusteringPipeline(data.tickers_analyzed)
+          .then(r => setClusteringResult(r))
+          .catch(err => setClusteringError(err instanceof Error ? err.message : "K-Medoids clustering failed."))
+          .finally(() => setClusteringLoading(false));
       } else {
-        setRiskError("No recognized tickers — risk assessment requires at least one known stock.");
-        setRiskLoading(false);
+        const msg = "No recognized tickers — risk assessment requires at least one known stock.";
+        setPortfolioRiskError(msg); setPortfolioRiskLoading(false);
+        setClusteringError(msg);    setClusteringLoading(false);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong.");
-      setRiskLoading(false);
+      setPortfolioRiskLoading(false);
+      setClusteringLoading(false);
     } finally {
       setLoading(false);
     }
@@ -780,7 +794,8 @@ export default function DiversifyPage() {
   const reset = () => {
     setTickers([]); setResult(null); setError(null);
     setActiveSpiderIdx(null); setCompanyNames({}); setModalStock(null);
-    setRiskResult(null); setRiskLoading(false); setRiskError(null);
+    setPortfolioRiskResult(null); setPortfolioRiskLoading(false); setPortfolioRiskError(null);
+    setClusteringResult(null); setClusteringLoading(false); setClusteringError(null);
   };
 
   const hasResult = result !== null;
@@ -970,12 +985,12 @@ export default function DiversifyPage() {
 
               <FactorExplanations />
 
-              {(riskLoading || riskResult !== null || riskError !== null) && (
+              {(portfolioRiskLoading || portfolioRiskResult !== null || portfolioRiskError !== null) && (
                 <section className="mb-8">
                   <div className="flex items-center gap-2 mb-1">
                     <Activity className="w-4 h-4" style={{ color: GREEN }} />
                     <h2 className="text-base font-semibold" style={{ color: TEXT_PRI }}>Risk Assessment</h2>
-                    {riskLoading && (
+                    {portfolioRiskLoading && (
                       <span className="text-xs px-2 py-0.5 rounded-full ml-1 flex items-center gap-1"
                         style={{ background: BLUE_DIM, color: BLUE }}>
                         <Loader2 className="w-3 h-3 animate-spin" />running
@@ -983,25 +998,25 @@ export default function DiversifyPage() {
                     )}
                   </div>
                   <p className="text-xs mb-4" style={{ color: TEXT_MUT }}>
-                    Monte Carlo risk profile of your inputted portfolio · {riskResult?.risk.horizon_days ?? 63}-day horizon · {(riskResult?.risk.n_simulations ?? 1000).toLocaleString()} simulated paths · VaR, drawdown, and diversification metrics
+                    Monte Carlo risk profile of your inputted portfolio · {portfolioRiskResult?.risk.horizon_days ?? 63}-day horizon · {(portfolioRiskResult?.risk.n_simulations ?? 1000).toLocaleString()} simulated paths · VaR, drawdown, and diversification metrics
                   </p>
-                  {riskLoading && !riskResult && (
+                  {portfolioRiskLoading && !portfolioRiskResult && (
                     <div className="rounded-xl px-6 py-10 text-center" style={CARD}>
                       <Loader2 className="w-8 h-8 mx-auto mb-3 animate-spin" style={{ color: BLUE }} />
-                      <p className="text-sm font-medium mb-1" style={{ color: TEXT_PRI }}>Running clustering and simulation</p>
+                      <p className="text-sm font-medium mb-1" style={{ color: TEXT_PRI }}>Simulating portfolio risk</p>
                       <p className="text-xs leading-relaxed max-w-xs mx-auto" style={{ color: TEXT_SEC }}>
-                        Querying BigQuery, running K-Medoids sweep, and simulating Monte Carlo paths — typically 30–60 seconds
+                        Running Monte Carlo simulation on your holdings — typically a few seconds
                       </p>
                     </div>
                   )}
-                  {riskError && (
+                  {portfolioRiskError && (
                     <div className="rounded-xl px-5 py-4 flex items-center gap-3"
                       style={{ background: "hsla(0,84%,60%,0.1)", border: "1px solid hsla(0,84%,60%,0.3)" }}>
                       <AlertTriangle className="w-4 h-4 flex-shrink-0" style={{ color: RED }} />
-                      <p className="text-sm" style={{ color: RED }}>{riskError}</p>
+                      <p className="text-sm" style={{ color: RED }}>{portfolioRiskError}</p>
                     </div>
                   )}
-                  {riskResult && <RiskResultPanel result={riskResult} onTickerClick={handleTickerClick} />}
+                  {portfolioRiskResult && <RiskResultPanel result={portfolioRiskResult} onTickerClick={handleTickerClick} />}
                 </section>
               )}
 
@@ -1032,98 +1047,126 @@ export default function DiversifyPage() {
                 </section>
               )}
 
-              {riskResult && riskResult.recommendations.length > 0 && (
+              {(clusteringLoading || clusteringResult !== null || clusteringError !== null) && (
                 <section className="mb-8">
                   <div className="flex items-center gap-2 mb-1">
                     <Sparkles className="w-4 h-4" style={{ color: GREEN }} />
                     <h2 className="text-base font-semibold" style={{ color: TEXT_PRI }}>K-Medoids Sector Picks</h2>
-                    <span className="text-xs px-2 py-0.5 rounded-full ml-1" style={{ background: GREEN_DIM, color: GREEN }}>
-                      {riskResult.recommendations.length} picks
-                    </span>
+                    {clusteringLoading && (
+                      <span className="text-xs px-2 py-0.5 rounded-full ml-1 flex items-center gap-1"
+                        style={{ background: GREEN_DIM, color: GREEN }}>
+                        <Loader2 className="w-3 h-3 animate-spin" />running
+                      </span>
+                    )}
+                    {clusteringResult && (
+                      <span className="text-xs px-2 py-0.5 rounded-full ml-1" style={{ background: GREEN_DIM, color: GREEN }}>
+                        {clusteringResult.recommendations.length} picks
+                      </span>
+                    )}
                   </div>
                   <p className="text-xs mb-4" style={{ color: TEXT_MUT }}>
                     Stocks selected via K-Medoids clustering — decorrelated from your portfolio by sector
                   </p>
-                  <div className="grid grid-cols-3 gap-3">
-                    {riskResult.recommendations.map((rec: ClusteringPick) => (
-                      <div key={rec.stock} className="rounded-xl p-4 flex flex-col gap-2" style={CARD}>
-                        <div className="flex items-center justify-between">
-                          <button className="text-sm font-bold hover:underline" style={{ color: TEXT_PRI }}
-                            onClick={() => handleTickerClick(rec.stock)}>
-                            {rec.stock}
-                            {rec.is_medoid && <span className="ml-1 text-xs" style={{ color: AMBER }}>★</span>}
-                          </button>
-                          <span className="text-xs px-1.5 py-0.5 rounded font-mono"
-                            style={{ background: GREEN_DIM, color: GREEN }}>
-                            {rec.avg_dcor_to_portfolio.toFixed(3)}
-                          </span>
-                        </div>
-                        <SectorTag sector={rec.sector} />
+                  {clusteringLoading && !clusteringResult && (
+                    <div className="rounded-xl px-6 py-10 text-center" style={CARD}>
+                      <Loader2 className="w-8 h-8 mx-auto mb-3 animate-spin" style={{ color: GREEN }} />
+                      <p className="text-sm font-medium mb-1" style={{ color: TEXT_PRI }}>Running K-Medoids clustering</p>
+                      <p className="text-xs leading-relaxed max-w-xs mx-auto" style={{ color: TEXT_SEC }}>
+                        Querying BigQuery and running K-Medoids sweep — typically 30–60 seconds
+                      </p>
+                    </div>
+                  )}
+                  {clusteringError && (
+                    <div className="rounded-xl px-5 py-4 flex items-center gap-3"
+                      style={{ background: "hsla(0,84%,60%,0.1)", border: "1px solid hsla(0,84%,60%,0.3)" }}>
+                      <AlertTriangle className="w-4 h-4 flex-shrink-0" style={{ color: RED }} />
+                      <p className="text-sm" style={{ color: RED }}>{clusteringError}</p>
+                    </div>
+                  )}
+                  {clusteringResult && clusteringResult.recommendations.length > 0 && (
+                    <>
+                      <div className="grid grid-cols-3 gap-3">
+                        {clusteringResult.recommendations.map((rec: ClusteringPick) => (
+                          <div key={rec.stock} className="rounded-xl p-4 flex flex-col gap-2" style={CARD}>
+                            <div className="flex items-center justify-between">
+                              <button className="text-sm font-bold hover:underline" style={{ color: TEXT_PRI }}
+                                onClick={() => handleTickerClick(rec.stock)}>
+                                {rec.stock}
+                                {rec.is_medoid && <span className="ml-1 text-xs" style={{ color: AMBER }}>★</span>}
+                              </button>
+                              <span className="text-xs px-1.5 py-0.5 rounded font-mono"
+                                style={{ background: GREEN_DIM, color: GREEN }}>
+                                {rec.avg_dcor_to_portfolio.toFixed(3)}
+                              </span>
+                            </div>
+                            <SectorTag sector={rec.sector} />
+                          </div>
+                        ))}
                       </div>
-                    ))}
-                  </div>
-                  <div className="rounded-xl overflow-hidden mt-4" style={CARD}>
-                    <div className="px-5 py-3" style={{ borderBottom: `1px solid ${BORDER_D}` }}>
-                      <p className="text-xs font-semibold tracking-wide" style={{ color: TEXT_SEC }}>PER-STOCK RISK</p>
-                    </div>
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-xs">
-                        <thead>
-                          <tr style={{ borderBottom: `1px solid ${BORDER_D}` }}>
-                            {(["Ticker","Sector","VaR 95%","CVaR 95%","Prob Loss","Max Drawdown"] as const).map(h => {
-                              const detailKey =
-                                h === "VaR 95%"      ? "VaR 95% (stock)"  :
-                                h === "CVaR 95%"     ? "CVaR 95% (stock)" :
-                                h === "Prob Loss"    ? "Prob Loss"         :
-                                h === "Max Drawdown" ? "Max Drawdown"      : null;
-                              return (
-                                <th key={h} className="px-4 py-2 text-left font-medium" style={{ color: TEXT_MUT }}>
-                                  <span className="inline-flex items-center">
-                                    {h}
-                                    {detailKey && <MetricHint detail={METRIC_DETAILS[detailKey]} position="below" />}
-                                  </span>
-                                </th>
-                              );
-                            })}
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {riskResult.risk.tickers.map((ticker, i) => {
-                            const s = riskResult.risk.per_stock[ticker];
-                            if (!s) return null;
-                            const rec = riskResult.recommendations.find((r: ClusteringPick) => r.stock === ticker);
-                            const pct = (v: number) => `${(v * 100).toFixed(1)}%`;
-                            return (
-                              <tr key={ticker}
-                                style={{ borderBottom: i < riskResult.risk.tickers.length - 1 ? `1px solid ${BORDER_D}` : "none" }}
-                                onMouseEnter={e => (e.currentTarget.style.background = CARD_H)}
-                                onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
-                              >
-                                <td className="px-4 py-2.5">
-                                  <button className="font-bold hover:underline" style={{ color: TEXT_PRI }}
-                                    onClick={() => handleTickerClick(ticker)}>{ticker}</button>
-                                </td>
-                                <td className="px-4 py-2.5">{rec && <SectorTag sector={rec.sector} />}</td>
-                                <td className="px-4 py-2.5 font-mono" style={{ color: RED }}>{pct(s.var_95)}</td>
-                                <td className="px-4 py-2.5 font-mono" style={{ color: RED }}>{pct(s.cvar_95)}</td>
-                                <td className="px-4 py-2.5 font-mono" style={{ color: s.prob_loss > 0.5 ? RED : AMBER }}>{pct(s.prob_loss)}</td>
-                                <td className="px-4 py-2.5 font-mono" style={{ color: RED }}>{pct(s.expected_max_drawdown)}</td>
+                      <div className="rounded-xl overflow-hidden mt-4" style={CARD}>
+                        <div className="px-5 py-3" style={{ borderBottom: `1px solid ${BORDER_D}` }}>
+                          <p className="text-xs font-semibold tracking-wide" style={{ color: TEXT_SEC }}>PER-STOCK RISK</p>
+                        </div>
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-xs">
+                            <thead>
+                              <tr style={{ borderBottom: `1px solid ${BORDER_D}` }}>
+                                {(["Ticker","Sector","VaR 95%","CVaR 95%","Prob Loss","Max Drawdown"] as const).map(h => {
+                                  const detailKey =
+                                    h === "VaR 95%"      ? "VaR 95% (stock)"  :
+                                    h === "CVaR 95%"     ? "CVaR 95% (stock)" :
+                                    h === "Prob Loss"    ? "Prob Loss"         :
+                                    h === "Max Drawdown" ? "Max Drawdown"      : null;
+                                  return (
+                                    <th key={h} className="px-4 py-2 text-left font-medium" style={{ color: TEXT_MUT }}>
+                                      <span className="inline-flex items-center">
+                                        {h}
+                                        {detailKey && <MetricHint detail={METRIC_DETAILS[detailKey]} position="below" />}
+                                      </span>
+                                    </th>
+                                  );
+                                })}
                               </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                  {riskResult.risk.missing.length > 0 ? (
-                    <p className="text-xs mt-3 px-1" style={{ color: TEXT_MUT }}>
-                      ★ = cluster medoid · dcor badge = decorrelation from your portfolio (lower is better)
-                      · {riskResult.risk.missing.length} ticker{riskResult.risk.missing.length > 1 ? "s" : ""} unavailable: {riskResult.risk.missing.join(", ")}
-                    </p>
-                  ) : (
-                    <p className="text-xs mt-3 px-1" style={{ color: TEXT_MUT }}>
-                      ★ = cluster medoid · dcor badge = decorrelation from your portfolio (lower is better)
-                    </p>
+                            </thead>
+                            <tbody>
+                              {clusteringResult.risk.tickers.map((ticker, i) => {
+                                const s = clusteringResult.risk.per_stock[ticker];
+                                if (!s) return null;
+                                const rec = clusteringResult.recommendations.find((r: ClusteringPick) => r.stock === ticker);
+                                const pct = (v: number) => `${(v * 100).toFixed(1)}%`;
+                                return (
+                                  <tr key={ticker}
+                                    style={{ borderBottom: i < clusteringResult.risk.tickers.length - 1 ? `1px solid ${BORDER_D}` : "none" }}
+                                    onMouseEnter={e => (e.currentTarget.style.background = CARD_H)}
+                                    onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
+                                  >
+                                    <td className="px-4 py-2.5">
+                                      <button className="font-bold hover:underline" style={{ color: TEXT_PRI }}
+                                        onClick={() => handleTickerClick(ticker)}>{ticker}</button>
+                                    </td>
+                                    <td className="px-4 py-2.5">{rec && <SectorTag sector={rec.sector} />}</td>
+                                    <td className="px-4 py-2.5 font-mono" style={{ color: RED }}>{pct(s.var_95)}</td>
+                                    <td className="px-4 py-2.5 font-mono" style={{ color: RED }}>{pct(s.cvar_95)}</td>
+                                    <td className="px-4 py-2.5 font-mono" style={{ color: s.prob_loss > 0.5 ? RED : AMBER }}>{pct(s.prob_loss)}</td>
+                                    <td className="px-4 py-2.5 font-mono" style={{ color: RED }}>{pct(s.expected_max_drawdown)}</td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                      {clusteringResult.risk.missing.length > 0 ? (
+                        <p className="text-xs mt-3 px-1" style={{ color: TEXT_MUT }}>
+                          ★ = cluster medoid · dcor badge = decorrelation from your portfolio (lower is better)
+                          · {clusteringResult.risk.missing.length} ticker{clusteringResult.risk.missing.length > 1 ? "s" : ""} unavailable: {clusteringResult.risk.missing.join(", ")}
+                        </p>
+                      ) : (
+                        <p className="text-xs mt-3 px-1" style={{ color: TEXT_MUT }}>
+                          ★ = cluster medoid · dcor badge = decorrelation from your portfolio (lower is better)
+                        </p>
+                      )}
+                    </>
                   )}
                 </section>
               )}
