@@ -565,9 +565,9 @@ export default function StockModal({ stock, onClose }: StockModalProps) {
                   ))}
 
                   {/* X-axis tick labels */}
-                  {ticks.map((pt) => (
+                  {ticks.map((pt, i) => (
                     <text
-                      key={pt.candle.date}
+                      key={i}
                       x={pt.x}
                       y={CHART_H - 4}
                       textAnchor="middle"

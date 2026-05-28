@@ -1,6 +1,6 @@
 // frontend/src/app/dashboard/model/page.tsx
 "use client";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import {
   TrendingUp, TrendingDown, Search, BarChart2,
@@ -10,6 +10,7 @@ import Sidebar from "@/components/ui/Sidebar";
 import { useAuth } from "@/src/app/context/AuthContext";
 import StockModal, { type Stock } from "@/components/ui/StockModal";
 import { PageHelp } from "@/components/ui/PageHelp";
+import TickerSearchInput from "@/components/ui/TickerSearchInput";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -209,16 +210,12 @@ export default function ModelPage() {
   }, [user, authLoading, router]);
 
   const [tickers,        setTickers]        = useState<TickerOption[]>([]);
-  const [query,          setQuery]          = useState("");
-  const [showDropdown,   setShowDropdown]   = useState(false);
   const [selectedTicker, setSelectedTicker] = useState<TickerOption | null>(null);
   const [analyzing,      setAnalyzing]      = useState(false);
   const [result,         setResult]         = useState<AnalyzeResult | null>(null);
   const [error,          setError]          = useState<string | null>(null);
   const [selectedStock,  setSelectedStock]  = useState<Stock | null>(null);
   const [lagWindow,      setLagWindow]      = useState<1 | 5 | 10>(5);
-
-  const inputRef   = useRef<HTMLInputElement>(null);
 
   // Load ticker list on mount
   useEffect(() => {
@@ -228,18 +225,9 @@ export default function ModelPage() {
       .catch(() => {});
   }, []);
 
-  // Autocomplete
-  const filtered = query.length >= 1
-    ? tickers.filter(t =>
-        t.symbol.toLowerCase().startsWith(query.toLowerCase()) ||
-        t.name.toLowerCase().includes(query.toLowerCase())
-      ).slice(0, 8)
-    : [];
-
-  const selectTicker = (t: TickerOption) => {
+  const selectTicker = (symbol: string) => {
+    const t = tickers.find(x => x.symbol === symbol) ?? null;
     setSelectedTicker(t);
-    setQuery(t.symbol);
-    setShowDropdown(false);
     setResult(null);
     setError(null);
   };
@@ -365,53 +353,14 @@ export default function ModelPage() {
 
           {/* ── Input row ── */}
           <div className="flex items-end gap-4 mb-8">
-            <div className="flex flex-col gap-1.5 flex-1 max-w-xs">
-              <label className="text-xs font-medium" style={{ color: "hsl(215, 15%, 55%)" }}>Target Stock</label>
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 pointer-events-none" style={{ color: "hsl(215, 15%, 45%)" }} />
-                <input
-                  ref={inputRef}
-                  type="text"
-                  value={query}
-                  onChange={(e) => { setQuery(e.target.value); setShowDropdown(true); setSelectedTicker(null); }}
-                  onFocus={() => setShowDropdown(true)}
-                  onBlur={() => setTimeout(() => setShowDropdown(false), 150)}
-                  placeholder="e.g. AAPL, JPM, XOM…"
-                  autoComplete="off"
-                  className="w-full pl-9 pr-4 py-2.5 rounded-lg text-sm outline-none transition-all"
-                  style={{ background: "hsl(215, 25%, 13%)", border: "1px solid hsl(215, 20%, 22%)", color: "hsl(210, 40%, 92%)" }}
-                  onFocusCapture={(e) => (e.currentTarget.style.borderColor = "hsl(217, 91%, 60%)")}
-                  onBlurCapture={(e)  => (e.currentTarget.style.borderColor = "hsl(215, 20%, 22%)")}
-                />
-                {showDropdown && filtered.length > 0 && (
-                  <div
-                    className="absolute top-full left-0 right-0 mt-1 rounded-xl overflow-hidden z-30"
-                    style={{ background: "hsl(215, 25%, 13%)", border: "1px solid hsl(215, 20%, 22%)", boxShadow: "0 12px 32px hsl(213, 27%, 3% / 0.8)" }}
-                  >
-                    {filtered.map((t) => (
-                      <button
-                        key={t.symbol}
-                        onMouseDown={() => selectTicker(t)}
-                        className="w-full flex items-center justify-between px-4 py-2.5 text-sm transition-colors"
-                        style={{ borderTop: "1px solid hsl(215, 20%, 17%)" }}
-                        onMouseEnter={(e) => (e.currentTarget.style.background = "hsl(215, 25%, 17%)")}
-                        onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
-                      >
-                        <div className="flex items-center gap-3">
-                          <span className="font-bold w-14 text-left" style={{ color: "hsl(210, 40%, 92%)" }}>{t.symbol}</span>
-                          <span className="text-xs" style={{ color: "hsl(215, 15%, 50%)" }}>{t.name}</span>
-                        </div>
-                        <span
-                          className="text-xs px-1.5 py-0.5 rounded ml-2 flex-shrink-0"
-                          style={{ background: `${SECTOR_COLORS[t.sector] ?? "hsl(215,15%,40%)"}22`, color: SECTOR_COLORS[t.sector] ?? "hsl(215,15%,55%)" }}
-                        >
-                          {t.sector}
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
+            <div className="flex-1 max-w-xs">
+              <TickerSearchInput
+                value={selectedTicker?.symbol ?? ""}
+                onChange={selectTicker}
+                stocks={tickers}
+                label="Target Stock"
+                placeholder="e.g. AAPL, JPM, XOM…"
+              />
             </div>
 
             {/* Lag window */}

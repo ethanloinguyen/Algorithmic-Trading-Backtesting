@@ -1,27 +1,16 @@
 """
-Stock Portfolio Diversification — Multi-Feature K-Medoids (v9)
-==============================================================
-Reads candidate stocks from a BigQuery table, builds a feature matrix,
-runs a K-Medoids sweep, selects k via elbow + sector-diversity, and
-outputs one recommended stock per sector.
+Stock Portfolio Diversification — Multi-Feature K-Medoids (original / pre-optimization)
+========================================================================================
+This is a preserved copy of hierarchical.py BEFORE the speed optimizations were applied.
+Used exclusively by test_risk_pipeline.py for before/after quality + timing comparisons.
 
-Requirements
-------------
-    pip install google-cloud-bigquery pandas numpy scikit-learn matplotlib seaborn db-dtypes
-
-Authentication
---------------
-Set the environment variable before running:
-    export GOOGLE_APPLICATION_CREDENTIALS="/path/to/service_account.json"
-Or run:  gcloud auth application-default login
-
-Importable API
---------------
-    from hierarchical import run_clustering
-    recs = run_clustering(['AAPL', 'MSFT', 'GOOGL'])
-    # returns a DataFrame: [sector, stock, cluster, is_medoid,
-    #                        avg_dcor_to_portfolio, mean_intra_dist,
-    #                        n_sector_candidates, cluster_size]
+Changes relative to hierarchical.py (optimized):
+  - _inertia uses a Python loop (not vectorized NumPy)
+  - N_INIT = 25  (optimized: 10)
+  - max_iter = 300 in sweep  (optimized: 100)
+  - k sweep is unbounded — no K_MAX_CAP  (optimized: capped at 14)
+  - candidate pool is unbounded — no MAX_CANDIDATES limit  (optimized: 150)
+  - two separate BigQuery round-trips  (optimized: one merged query)
 """
 
 import warnings
@@ -41,7 +30,7 @@ from sklearn.impute import SimpleImputer
 
 
 # =============================================================================
-# 1 · K-Medoids (pure NumPy)
+# 1 · K-Medoids (pure NumPy) — original implementation
 # =============================================================================
 
 class KMedoidsPAM:
@@ -66,7 +55,8 @@ class KMedoidsPAM:
 
     @staticmethod
     def _inertia(D, labels, m):
-        return float(D[np.arange(len(labels)), m[labels]].sum())
+        # Original Python loop (pre-vectorization)
+        return float(sum(D[i, m[labels[i]]] for i in range(len(labels))))
 
     def _fit_once(self, D, rng):
         m = self._kpp_init(D, rng)
@@ -98,7 +88,7 @@ class KMedoidsPAM:
 
 
 # =============================================================================
-# 2 · Default Configuration
+# 2 · Default Configuration — original values
 # =============================================================================
 
 GCP_PROJECT    = 'capstone-487001'
@@ -120,17 +110,15 @@ PCA_COMPONENTS             = None
 
 MIN_CLUSTER_SIZE     = 8
 K_MIN                = 3
-K_MAX_CAP            = 14    # hard ceiling on k sweep — elbow almost always lands below this
-N_INIT               = 10    # restarts per k (was 25; 10 gives same quality with 60% less sweep time)
+N_INIT               = 25   # original — 25 restarts per k
 MAX_CLUSTER_FRACTION = 0.25
 ELBOW_SENSITIVITY    = 0.45
 MIN_SECTORS_TARGET   = 6
-N_CLUSTERS           = None  # None = objective selection
-MAX_CANDIDATES       = 150   # cap BQ candidate pool — best stocks first (sorted by avg_dcor ASC)
+N_CLUSTERS           = None
 
 
 # =============================================================================
-# 3 · BigQuery helpers
+# 3 · BigQuery helpers — two separate queries (original)
 # =============================================================================
 
 def build_candidate_pool(portfolio, bq_table, dcor_threshold, client):
@@ -187,118 +175,6 @@ def fetch_feature_rows_bidirectional(stocks, bq_table, client,
     return df
 
 
-def fetch_candidates_and_features(
-    portfolio, bq_table, dcor_threshold, client,
-    numeric_features=None, use_sector=True, max_candidates=MAX_CANDIDATES,
-):
-    """
-    Single BigQuery round-trip replacing build_candidate_pool +
-    fetch_feature_rows_bidirectional.
-
-    Returns
-    -------
-    candidate_df  : DataFrame [candidate_stock, avg_dcor_to_portfolio, min_dcor_to_portfolio]
-    feature_rows  : DataFrame [stock, <numeric_features>, sector_i?]
-    """
-    if not portfolio:
-        empty = pd.DataFrame(columns=['candidate_stock', 'avg_dcor_to_portfolio', 'min_dcor_to_portfolio'])
-        return empty, pd.DataFrame()
-
-    if numeric_features is None:
-        numeric_features = NUMERIC_FEATURES
-
-    tickers_sql = ', '.join(f"'{t}'" for t in portfolio)
-    min_links   = max(1, len(portfolio) // 2)
-
-    feat_i       = ', '.join(numeric_features)
-    sector_i_sql = ', sector_i' if use_sector else ''
-
-    feat_j_parts = [
-        'centrality_j AS centrality_i' if f == 'centrality_i' else f
-        for f in numeric_features
-    ]
-    feat_j       = ', '.join(feat_j_parts)
-    sector_j_sql = ', sector_j AS sector_i' if use_sector else ''
-
-    fr_select = ', '.join(f'fr.{c}' for c in ['stock'] + numeric_features + (['sector_i'] if use_sector else []))
-
-    query = f"""
-    WITH latest AS (
-        -- Pin every scan to the most recent pipeline run so stale tickers
-        -- from prior as_of_date snapshots (e.g. delisted stocks that appeared
-        -- in an earlier quarter) are never surfaced as candidates.
-        SELECT MAX(as_of_date) AS max_date FROM `{bq_table}`
-    ),
-    normalised AS (
-        SELECT {COL_STOCK_A} AS portfolio_stock, {COL_STOCK_B} AS candidate_stock, {COL_DCOR} AS dcor
-        FROM `{bq_table}`
-        WHERE as_of_date = (SELECT max_date FROM latest)
-          AND {COL_STOCK_A} IN ({tickers_sql}) AND {COL_STOCK_B} NOT IN ({tickers_sql})
-          AND {COL_DCOR} <= {dcor_threshold}
-        UNION ALL
-        SELECT {COL_STOCK_B}, {COL_STOCK_A}, {COL_DCOR}
-        FROM `{bq_table}`
-        WHERE as_of_date = (SELECT max_date FROM latest)
-          AND {COL_STOCK_B} IN ({tickers_sql}) AND {COL_STOCK_A} NOT IN ({tickers_sql})
-          AND {COL_DCOR} <= {dcor_threshold}
-    ),
-    aggregated AS (
-        SELECT candidate_stock,
-               COUNT(DISTINCT portfolio_stock) AS n_links,
-               AVG(dcor)                       AS avg_dcor_to_portfolio,
-               MIN(dcor)                       AS min_dcor_to_portfolio
-        FROM normalised
-        GROUP BY candidate_stock
-        HAVING COUNT(DISTINCT portfolio_stock) >= {min_links}
-    ),
-    top_candidates AS (
-        SELECT candidate_stock, avg_dcor_to_portfolio, min_dcor_to_portfolio
-        FROM aggregated
-        ORDER BY avg_dcor_to_portfolio ASC
-        LIMIT {max_candidates}
-    ),
-    feature_rows AS (
-        SELECT {COL_STOCK_A} AS stock, {feat_i}{sector_i_sql}
-        FROM `{bq_table}`
-        WHERE as_of_date = (SELECT max_date FROM latest)
-          AND {COL_STOCK_A} IN (SELECT candidate_stock FROM top_candidates)
-        UNION ALL
-        SELECT {COL_STOCK_B} AS stock, {feat_j}{sector_j_sql}
-        FROM `{bq_table}`
-        WHERE as_of_date = (SELECT max_date FROM latest)
-          AND {COL_STOCK_B} IN (SELECT candidate_stock FROM top_candidates)
-    )
-    SELECT tc.avg_dcor_to_portfolio, tc.min_dcor_to_portfolio, {fr_select}
-    FROM top_candidates tc
-    JOIN feature_rows fr ON fr.stock = tc.candidate_stock
-    """
-
-    print('Fetching candidates and features (single query) ...')
-    df = client.query(query).to_dataframe()
-
-    if df.empty:
-        empty = pd.DataFrame(columns=['candidate_stock', 'avg_dcor_to_portfolio', 'min_dcor_to_portfolio'])
-        return empty, pd.DataFrame()
-
-    n_stocks = df['stock'].nunique()
-    print(f'  -> {len(df):,} rows for {n_stocks:,} candidates '
-          f'(avg {len(df) / n_stocks:.0f} rows/stock)')
-
-    candidate_df = (
-        df[['stock', 'avg_dcor_to_portfolio', 'min_dcor_to_portfolio']]
-        .drop_duplicates('stock')
-        .rename(columns={'stock': 'candidate_stock'})
-        .sort_values('avg_dcor_to_portfolio')
-        .reset_index(drop=True)
-    )
-    print(f'Candidate pool: {len(candidate_df):,} stocks')
-
-    feat_cols    = ['stock'] + numeric_features + (['sector_i'] if use_sector else [])
-    feature_rows = df[feat_cols].copy()
-
-    return candidate_df, feature_rows
-
-
 # =============================================================================
 # 4 · Feature matrix
 # =============================================================================
@@ -347,7 +223,7 @@ def drop_correlated_features(df, threshold=0.85):
 
 
 # =============================================================================
-# 6 · K-Medoids sweep
+# 6 · K-Medoids sweep — original max_iter=300
 # =============================================================================
 
 def balance_cv(labels):
@@ -362,7 +238,7 @@ def run_full_sweep(D, k_min, k_max, n_init, min_size, max_frac, rs=42):
     print(f'{"k":>4}  {"valid":>6}  {"inertia":>10}  {"silhouette":>11}  {"bal_cv":>8}  {"max_cl":>7}  sizes')
     print('-' * 90)
     for k in range(k_min, k_max + 1):
-        km     = KMedoidsPAM(n_clusters=k, max_iter=100, n_init=n_init, random_state=rs)
+        km     = KMedoidsPAM(n_clusters=k, max_iter=300, n_init=n_init, random_state=rs)
         km.fit(D)
         labels   = km.labels_
         sizes    = sorted(Counter(labels).values())
@@ -420,7 +296,7 @@ def detect_elbow(sweep, sensitivity):
 
 
 # =============================================================================
-# 8 · Main pipeline (importable entry point)
+# 8 · Main pipeline — original implementation (no k cap, no candidate cap)
 # =============================================================================
 
 def run_clustering(
@@ -435,46 +311,22 @@ def run_clustering(
     pca_components: int = None,
     min_cluster_size: int = MIN_CLUSTER_SIZE,
     k_min: int = K_MIN,
-    k_max_cap: int = K_MAX_CAP,
     n_init: int = N_INIT,
     max_cluster_fraction: float = MAX_CLUSTER_FRACTION,
     elbow_sensitivity: float = ELBOW_SENSITIVITY,
     min_sectors_target: int = MIN_SECTORS_TARGET,
     n_clusters: int = None,
-    max_candidates: int = MAX_CANDIDATES,
     bq_client=None,
     save_csv: bool = False,
     save_plot: bool = False,
 ) -> pd.DataFrame:
-    """
-    Run the full hierarchical K-Medoids clustering pipeline.
-
-    Parameters
-    ----------
-    user_portfolio : list of ticker symbols already in the user's portfolio
-    bq_client      : optional pre-existing BigQuery client (reused when called
-                     from the backend to avoid repeated credential loading)
-    save_csv       : write recommended_stocks.csv to the working directory
-    save_plot      : render and save the t-SNE sector star graph
-
-    Returns
-    -------
-    DataFrame with columns:
-        sector, stock, cluster, is_medoid, avg_dcor_to_portfolio,
-        mean_intra_dist, n_sector_candidates, cluster_size
-    Raises ValueError if the quality check fails.
-    """
     if numeric_features is None:
         numeric_features = NUMERIC_FEATURES
 
     client = bq_client or bigquery.Client(project=gcp_project)
 
-    # ── Candidate pool + features (single BQ round-trip) ─────────────────────
-    candidate_df, feature_rows = fetch_candidates_and_features(
-        user_portfolio, bq_table, dcor_threshold, client,
-        numeric_features=numeric_features, use_sector=use_sector,
-        max_candidates=max_candidates,
-    )
+    # ── Candidate pool (query 1) ──────────────────────────────────────────────
+    candidate_df     = build_candidate_pool(user_portfolio, bq_table, dcor_threshold, client)
     candidate_stocks = candidate_df['candidate_stock'].tolist()
 
     if not candidate_stocks:
@@ -486,10 +338,12 @@ def run_clustering(
 
     # Scale min_cluster_size down when pool is small so clustering always has valid k values
     effective_min_cluster_size = max(2, min(min_cluster_size, len(candidate_stocks) // (k_min + 2)))
-    k_max_eff = max(k_min + 1, min(len(candidate_stocks) // effective_min_cluster_size, k_max_cap))
-    print(f'Auto K_MAX = {k_max_eff}  (pool={len(candidate_stocks)} / effective_min_size={effective_min_cluster_size} / cap={k_max_cap})')
+    k_max_eff = max(k_min + 1, len(candidate_stocks) // effective_min_cluster_size)  # no cap
+    print(f'Auto K_MAX = {k_max_eff}  (pool={len(candidate_stocks)} / effective_min_size={effective_min_cluster_size})')
 
-    # ── Feature matrix ────────────────────────────────────────────────────────
+    # ── Feature rows (query 2) ────────────────────────────────────────────────
+    feature_rows   = fetch_feature_rows_bidirectional(candidate_stocks, bq_table, client,
+                                                       numeric_features, use_sector)
     feature_matrix = build_feature_matrix(feature_rows, candidate_stocks,
                                            numeric_features, use_sector, sector_weight)
     sector_map = (
@@ -631,89 +485,4 @@ def run_clustering(
     print(f'STATUS: ✅ ALL CHECKS PASSED — {n_sectors} sectors | k={n_clusters_final} '
           f'| sil={sweep[n_clusters_final]["sil"]:.4f}')
 
-    # ── Optional outputs ──────────────────────────────────────────────────────
-    if save_csv:
-        recommendations.to_csv('recommended_stocks.csv', index=False)
-        print('Saved: recommended_stocks.csv')
-
-    if save_plot:
-        coords = TSNE(n_components=2, random_state=42,
-                      perplexity=min(30, len(candidate_stocks) - 1),
-                      init='pca', max_iter=1000).fit_transform(X_scaled)
-
-        rec_tickers    = set(recommendations['stock'])
-        sectors_sorted = sorted(recommendations['sector'].unique())
-        sector_palette = {s: plt.cm.tab20(i / max(len(sectors_sorted) - 1, 1))
-                          for i, s in enumerate(sectors_sorted)}
-
-        fig, ax = plt.subplots(figsize=(13, 9))
-        fig.patch.set_facecolor('#f8f9fa')
-        ax.set_facecolor('#f8f9fa')
-
-        for idx, ticker in enumerate(candidate_stocks):
-            if ticker not in rec_tickers:
-                ax.scatter(coords[idx, 0], coords[idx, 1],
-                           color='#cccccc', s=25, alpha=0.4, zorder=1)
-
-        for _, row in recommendations.iterrows():
-            idx   = candidate_stocks.index(row['stock'])
-            color = sector_palette[row['sector']]
-            ax.scatter(coords[idx, 0], coords[idx, 1],
-                       color=color, s=400, marker='*',
-                       edgecolors='black', linewidths=0.8, zorder=5)
-            ax.annotate(
-                f"{row['stock']}\n({row['sector']})",
-                xy=(coords[idx, 0], coords[idx, 1]),
-                xytext=(8, 8), textcoords='offset points',
-                fontsize=8, fontweight='bold', color=color,
-                bbox=dict(boxstyle='round,pad=0.2', facecolor='white', alpha=0.7, edgecolor=color)
-            )
-
-        ax.set_title(
-            f'Sector Star Graph — k={n_clusters_final}  |  {n_sectors} recommended stocks  '
-            f'(★ = sector pick,  · = candidate pool)',
-            fontsize=13, fontweight='bold', pad=14
-        )
-        ax.set_xlabel('t-SNE 1')
-        ax.set_ylabel('t-SNE 2')
-        handles = [
-            plt.scatter([], [], marker='*', s=150, color=sector_palette[s],
-                        edgecolors='black', linewidths=0.5, label=s)
-            for s in sectors_sorted
-        ]
-        ax.legend(handles=handles, title='Sector', bbox_to_anchor=(1.01, 1),
-                  loc='upper left', fontsize=8, title_fontsize=9)
-        plt.tight_layout()
-        plt.savefig('sector_star_graph.png', dpi=150, bbox_inches='tight')
-        plt.show()
-        print('Saved: sector_star_graph.png')
-
     return recommendations
-
-
-# =============================================================================
-# 9 · Standalone entry point (unchanged behaviour when run as a script)
-# =============================================================================
-
-if __name__ == '__main__':
-    recs = run_clustering(
-        USER_PORTFOLIO,
-        save_csv=True,
-        save_plot=True,
-    )
-
-    sil_val = None  # available inside run_clustering — print summary from DataFrame
-    print('=' * 72)
-    print(f'DIVERSIFICATION RECOMMENDATIONS  |  {len(recs)} picks (1 per sector)')
-    print('=' * 72)
-    print(f'Portfolio    : {USER_PORTFOLIO}')
-    print('-' * 72)
-    for _, row in recs.sort_values('sector').iterrows():
-        flag  = '*' if row['is_medoid'] else ' '
-        over  = '  ⚠ dcor>0.20' if row['avg_dcor_to_portfolio'] > 0.20 else ''
-        print(f"  [{row['sector']:<30s}]  {flag}{row['stock']:<6s}  "
-              f"dcor={row['avg_dcor_to_portfolio']:.4f}  "
-              f"C{row['cluster']} (n={row['cluster_size']})  "
-              f"{row['n_sector_candidates']} sector candidates{over}")
-    print()
-    print('* = cluster medoid  |  ⚠ = dcor above 0.20 (still within ceiling)')
