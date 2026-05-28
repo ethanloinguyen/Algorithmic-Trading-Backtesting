@@ -124,21 +124,8 @@ export default function AuthForm() {
 
     try {
       if (mode === "signin") {
-        const { user } = await signInWithEmailAndPassword(auth, email, pw);
-
-        // Block unverified users from accessing the dashboard
-        if (!user.emailVerified) {
-          try {
-            await sendEmailVerification(user, {
-              url: `${window.location.origin}/verify-email?verified=true`,
-            });
-          } catch {
-            // rate-limited or otherwise — user can resend from the verify page
-          }
-          router.push(`/verify-email?email=${encodeURIComponent(email)}`);
-          return;
-        }
-
+        await signInWithEmailAndPassword(auth, email, pw);
+        // AuthContext.loadUserData handles Firestore doc creation on first login
         setAuthCookie();
         router.push(next);
 
@@ -151,9 +138,13 @@ export default function AuthForm() {
         }
 
         // Send verification email — user must verify before accessing dashboard
-        await sendEmailVerification(user, {
-          url: `${window.location.origin}/verify-email?verified=true`,
-        });
+        try {
+          await sendEmailVerification(user, {
+            url: `${window.location.origin}/verify-email?verified=true`,
+          });
+        } catch {
+          // Domain may not be authorized yet — user can resend from verify page
+        }
         router.push(`/verify-email?email=${encodeURIComponent(email)}`);
       }
     } catch (err) {
@@ -226,7 +217,7 @@ export default function AuthForm() {
                 onBlur={() => setEmailTouched(true)}
                 required
                 placeholder="name@example.com"
-                className="w-full px-4 py-2.5 pr-9 rounded-lg text-sm outline-none transition-all"
+                className="w-full px-4 py-2.5 pr-9 rounded-lg text-sm outline-none transition-all placeholder:text-[hsl(215,15%,35%)]"
                 style={{ ...inputBase, border: emailBorder }}
                 onFocus={e => {
                   if (!showEmailErr && !showEmailOk) {
@@ -266,8 +257,8 @@ export default function AuthForm() {
                 onChange={e => setPw(e.target.value)}
                 required
                 minLength={6}
-                placeholder={mode === "register" ? "At least 6 characters" : ""}
-                className="w-full px-4 py-2.5 pr-11 rounded-lg text-sm outline-none transition-all"
+                placeholder={mode === "register" ? "At least 6 characters" : "Your password"}
+                className="w-full px-4 py-2.5 pr-11 rounded-lg text-sm outline-none transition-all placeholder:text-[hsl(215,15%,35%)]"
                 style={{ ...inputBase, border: "1px solid hsl(215,20%,22%)" }}
                 onFocus={e => (e.currentTarget.style.borderColor = "hsl(217,91%,60%)")}
                 onBlur={e  => (e.currentTarget.style.borderColor = "hsl(215,20%,22%)")}

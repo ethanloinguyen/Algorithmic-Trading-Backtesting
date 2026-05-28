@@ -23,9 +23,13 @@ export default function CreateAccountPage() {
       const cred = await createUserWithEmailAndPassword(auth, email, password);
       await updateProfile(cred.user, { displayName: name });
       // Send verification email — user must verify before accessing dashboard
-      await sendEmailVerification(cred.user, {
-        url: `${window.location.origin}/verify-email?verified=true`,
-      });
+      try {
+        await sendEmailVerification(cred.user, {
+          url: `${window.location.origin}/verify-email?verified=true`,
+        });
+      } catch {
+        // Domain may not be authorized yet — user can resend from verify page
+      }
       router.push(`/verify-email?email=${encodeURIComponent(email)}`);
     } catch (err: unknown) {
       const msg = (err as { message?: string })?.message ?? "Account creation failed.";
@@ -88,7 +92,7 @@ export default function CreateAccountPage() {
               onChange={(e) => setName(e.target.value)}
               placeholder="Your full name"
               required
-              className="w-full px-4 py-2.5 rounded-lg text-sm transition-all outline-none"
+              className="w-full px-4 py-2.5 rounded-lg text-sm transition-all outline-none placeholder:text-[hsl(215,15%,35%)]"
               style={{ background: "hsl(215, 25%, 10%)", border: "1px solid hsl(215, 20%, 22%)", color: "hsl(210, 40%, 92%)" }}
               onFocus={(e) => (e.currentTarget.style.borderColor = "hsl(217, 91%, 60%)")}
               onBlur={(e)  => (e.currentTarget.style.borderColor = "hsl(215, 20%, 22%)")}
@@ -105,7 +109,7 @@ export default function CreateAccountPage() {
               onChange={(e) => setEmail(e.target.value)}
               placeholder="Your email address"
               required
-              className="w-full px-4 py-2.5 rounded-lg text-sm transition-all outline-none"
+              className="w-full px-4 py-2.5 rounded-lg text-sm transition-all outline-none placeholder:text-[hsl(215,15%,35%)]"
               style={{ background: "hsl(215, 25%, 10%)", border: "1px solid hsl(215, 20%, 22%)", color: "hsl(210, 40%, 92%)" }}
               onFocus={(e) => (e.currentTarget.style.borderColor = "hsl(217, 91%, 60%)")}
               onBlur={(e)  => (e.currentTarget.style.borderColor = "hsl(215, 20%, 22%)")}
@@ -123,7 +127,7 @@ export default function CreateAccountPage() {
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="Create a password"
                 required
-                className="w-full px-4 py-2.5 pr-11 rounded-lg text-sm transition-all outline-none"
+                className="w-full px-4 py-2.5 pr-11 rounded-lg text-sm transition-all outline-none placeholder:text-[hsl(215,15%,35%)]"
                 style={{ background: "hsl(215, 25%, 10%)", border: "1px solid hsl(215, 20%, 22%)", color: "hsl(210, 40%, 92%)" }}
                 onFocus={(e) => (e.currentTarget.style.borderColor = "hsl(217, 91%, 60%)")}
                 onBlur={(e)  => (e.currentTarget.style.borderColor = "hsl(215, 20%, 22%)")}

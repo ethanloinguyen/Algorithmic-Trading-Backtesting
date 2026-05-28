@@ -3,6 +3,7 @@
 *.env
 .env.local
 .env.*.local
+.env.example
 bin
 lib
 capstone-487001-67dc66175c53.json
