@@ -288,6 +288,7 @@ export default function AuthForm() {
             <div className="flex justify-end">
               <button
                 type="button"
+                onClick={() => router.push("/forgot-password")}
                 className="text-xs hover:underline"
                 style={{ color: "hsl(215,15%,55%)" }}
               >
