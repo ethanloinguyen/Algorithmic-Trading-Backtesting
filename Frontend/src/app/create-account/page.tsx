@@ -3,9 +3,8 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Eye, EyeOff, TrendingUp } from "lucide-react";
-import { createUserWithEmailAndPassword, updateProfile } from "firebase/auth";
-import { doc, setDoc } from "firebase/firestore";
-import { auth, db } from "@/src/app/lib/firebase";
+import { createUserWithEmailAndPassword, updateProfile, sendEmailVerification } from "firebase/auth";
+import { auth } from "@/src/app/lib/firebase";
 
 export default function CreateAccountPage() {
   const [name, setName]             = useState("");
@@ -23,13 +22,11 @@ export default function CreateAccountPage() {
     try {
       const cred = await createUserWithEmailAndPassword(auth, email, password);
       await updateProfile(cred.user, { displayName: name });
-      // Create Firestore user doc
-      await setDoc(doc(db, "users", cred.user.uid), {
-        savedStocks: [],
-        clickedStocks: {},
+      // Send verification email — user must verify before accessing dashboard
+      await sendEmailVerification(cred.user, {
+        url: `${window.location.origin}/verify-email?verified=true`,
       });
-      document.cookie = "ll_authed=1; path=/; max-age=86400";
-      router.push("/dashboard");
+      router.push(`/verify-email?email=${encodeURIComponent(email)}`);
     } catch (err: unknown) {
       const msg = (err as { message?: string })?.message ?? "Account creation failed.";
       setError(msg.replace("Firebase: ", "").replace(/\(auth\/.*\)/, "").trim());
