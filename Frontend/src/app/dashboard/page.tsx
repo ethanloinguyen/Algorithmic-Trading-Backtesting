@@ -277,27 +277,33 @@ export default function DashboardPage() {
     if (!authLoading && !user) router.replace("/");
   }, [user, authLoading, router]);
 
-  // Load data — Firestore reads and API calls fire simultaneously
   const loadData = useCallback(async () => {
     setDataLoading(true);
     try {
-      // Start both in parallel — don't block API calls behind Firestore reads
-      const cacheReads = Promise.all([getCachedSummaries(), getCachedIndices()]);
-      const apiCalls   = Promise.allSettled([fetchAllStocks(), fetchIndices()]);
+      // Fire Firestore reads and API calls simultaneously — no sequential wait
+      const cacheReads  = Promise.all([getCachedSummaries(), getCachedIndices()]);
+      const stocksCall  = fetchAllStocks();
+      const indicesCall = fetchIndices();
 
-      // Apply fresh cache data as soon as it arrives, while API is still in flight
-      cacheReads
-        .then(([cachedStocks, cachedIndices]) => {
-          if (cachedStocks && !cachedStocks.stale)
-            setStocks(prev => prev.length === 0 ? cachedStocks.data : prev);
-          if (cachedIndices && !cachedIndices.stale)
-            setIndices(prev => prev.length === 0 ? cachedIndices.data : prev);
-        })
-        .catch(() => {});
+      // Apply cached data as soon as it arrives to clear the skeleton early
+      const [cachedStocks, cachedIndices] = await cacheReads;
+      if (cachedStocks)  setStocks(cachedStocks.data);
+      if (cachedIndices) setIndices(cachedIndices.data);
+      if (cachedStocks || cachedIndices) setDataLoading(false);
 
-      const [stocksResult, indicesResult] = await apiCalls;
-      if (stocksResult.status  === "fulfilled") setStocks(stocksResult.value);
-      if (indicesResult.status === "fulfilled") setIndices(indicesResult.value);
+      // Only consume API results when cache is stale or missing —
+      // they're already in-flight so there's no extra wait on the stale path
+      const needsStockRefresh   = !cachedStocks  || cachedStocks.stale;
+      const needsIndicesRefresh = !cachedIndices || cachedIndices.stale;
+
+      if (needsStockRefresh || needsIndicesRefresh) {
+        const [stocksResult, indicesResult] = await Promise.allSettled([
+          needsStockRefresh   ? stocksCall   : Promise.resolve(null),
+          needsIndicesRefresh ? indicesCall  : Promise.resolve(null),
+        ]);
+        if (stocksResult.status  === "fulfilled" && stocksResult.value)  setStocks(stocksResult.value);
+        if (indicesResult.status === "fulfilled" && indicesResult.value) setIndices(indicesResult.value);
+      }
     } catch {
       // keep whatever was loaded from cache
     } finally {

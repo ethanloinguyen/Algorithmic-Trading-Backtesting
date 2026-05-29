@@ -26,8 +26,9 @@ import {
   AlertTriangle, TrendingUp, Plus, X,
   ChevronDown, ChevronUp, Loader2, Sparkles, ArrowRight,
   ShieldAlert, BarChart3, Info, Zap, Globe, Link2, Layers, Timer,
-  Activity, Star, Briefcase,
+  Activity, Star, Briefcase, Check, ExternalLink,
 } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { PageHelp } from "@/components/ui/PageHelp";
 
 // ── Design tokens ─────────────────────────────────────────────────────────────
@@ -658,10 +659,142 @@ function PortfolioDropdown({
   );
 }
 
+// ── Add-to-portfolio dropdown button ──────────────────────────────────────────
+
+function AddToPortfolioButton({ ticker, portfolios, onToggle }: {
+  ticker:     string;
+  portfolios: { id: string; name: string; tickers: string[] }[];
+  onToggle:   (portfolioId: string, add: boolean) => void;
+}) {
+  const router = useRouter();
+  const [open,  setOpen]  = useState(false);
+  const [saved, setSaved] = useState(false);
+  const ref   = useRef<HTMLDivElement>(null);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => {
+      document.removeEventListener("mousedown", handler);
+      if (timer.current) clearTimeout(timer.current);
+    };
+  }, []);
+
+  function handleToggle(portfolioId: string, currentlyIn: boolean) {
+    onToggle(portfolioId, !currentlyIn);
+    setSaved(true);
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(() => setSaved(false), 1500);
+  }
+
+  const active = open || saved;
+
+  return (
+    <div ref={ref} className="relative" onClick={e => e.stopPropagation()}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="transition-all hover:scale-110"
+        title="Add to portfolio"
+        aria-label="Add to portfolio"
+      >
+        {saved && !open
+          ? <Check    className="w-3.5 h-3.5" style={{ color: "hsl(142,71%,45%)" }} />
+          : <Briefcase className="w-3.5 h-3.5" style={{ color: active ? BLUE : TEXT_MUT }} />
+        }
+      </button>
+      {open && (
+        <div
+          className="absolute z-50 rounded-xl overflow-hidden"
+          style={{
+            minWidth:   "200px",
+            background: "hsl(215,28%,13%)",
+            border:     `1px solid ${BORDER}`,
+            boxShadow:  "0 8px 32px rgba(0,0,0,0.5)",
+            top:        "calc(100% + 4px)",
+            right:      0,
+          }}
+        >
+          {/* Header */}
+          <div className="px-4 py-2.5" style={{ borderBottom: `1px solid ${BORDER_D}` }}>
+            <span className="text-[10px] font-bold uppercase tracking-widest" style={{ color: TEXT_MUT }}>
+              Add to Portfolio
+            </span>
+          </div>
+
+          {portfolios.length === 0 ? (
+            <div className="px-4 py-4 flex flex-col gap-3">
+              <p className="text-xs" style={{ color: TEXT_SEC }}>
+                You don't have any custom portfolios yet.
+              </p>
+              <button
+                onMouseDown={() => { setOpen(false); router.push("/dashboard/profile"); }}
+                className="flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg transition-all hover:opacity-80"
+                style={{
+                  background: BLUE_DIM,
+                  border:     `1px solid hsla(217,91%,60%,0.3)`,
+                  color:      BLUE,
+                }}
+              >
+                <ExternalLink className="w-3 h-3" />
+                Create one on Profile
+              </button>
+            </div>
+          ) : (
+            <>
+              {portfolios.map((p, i) => {
+                const checked = p.tickers.includes(ticker);
+                return (
+                  <button
+                    key={p.id}
+                    onMouseDown={() => handleToggle(p.id, checked)}
+                    className="w-full text-left px-4 py-2.5 flex items-center justify-between gap-3 text-xs"
+                    style={{
+                      color:      checked ? BLUE : TEXT_PRI,
+                      borderTop:  i > 0 ? `1px solid ${BORDER_D}` : "none",
+                      background: "transparent",
+                    }}
+                    onMouseEnter={e => (e.currentTarget.style.background = "hsl(215,25%,18%)")}
+                    onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
+                  >
+                    <span className="font-medium truncate">{p.name}</span>
+                    <span
+                      className="flex-shrink-0 w-4 h-4 rounded flex items-center justify-center"
+                      style={{
+                        background: checked ? BLUE : "transparent",
+                        border:     `1.5px solid ${checked ? BLUE : "hsl(215,20%,35%)"}`,
+                      }}
+                    >
+                      {checked && <Check className="w-2.5 h-2.5" style={{ color: "white" }} />}
+                    </span>
+                  </button>
+                );
+              })}
+              {/* Create new portfolio footer */}
+              <div className="px-3 py-2.5" style={{ borderTop: `1px solid ${BORDER_D}` }}>
+                <button
+                  onMouseDown={() => { setOpen(false); router.push("/dashboard/profile"); }}
+                  className="w-full flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg transition-all hover:opacity-80"
+                  style={{ background: BLUE_DIM, border: `1px solid hsla(217,91%,60%,0.3)`, color: BLUE }}
+                >
+                  <ExternalLink className="w-3 h-3" />
+                  Create new portfolio
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function DiversifyPage() {
-  const { savedStocks, customPortfolios } = useAuth();
+  const { savedStocks, customPortfolios, isSaved, toggleSave, updatePortfolio } = useAuth();
 
   const [analysisMode,  setAnalysisMode]  = useState<AnalysisMode>("broad_market");
   const [resultMode,    setResultMode]    = useState<AnalysisMode>("broad_market");
@@ -933,6 +1066,15 @@ export default function DiversifyPage() {
                   ? <><Loader2 className="w-4 h-4 animate-spin" />Analyzing…</>
                   : <><Sparkles className="w-4 h-4" />Analyze Portfolio</>}
               </button>
+              {tickers.length > 0 && !hasResult && (
+                <button onClick={reset}
+                  className="text-xs px-3 py-2 rounded-lg"
+                  style={{ background: "hsl(215,25%,16%)", border: `1px solid ${BORDER}`, color: TEXT_SEC }}
+                  onMouseEnter={e => (e.currentTarget.style.background = "hsl(215,25%,20%)")}
+                  onMouseLeave={e => (e.currentTarget.style.background = "hsl(215,25%,16%)")}>
+                  Clear Tickers
+                </button>
+              )}
               {hasResult && (
                 <button onClick={reset}
                   className="text-xs px-3 py-2 rounded-lg"
@@ -983,8 +1125,6 @@ export default function DiversifyPage() {
                 ))}
               </div>
 
-              <FactorExplanations />
-
               {(portfolioRiskLoading || portfolioRiskResult !== null || portfolioRiskError !== null) && (
                 <section className="mb-8">
                   <div className="flex items-center gap-2 mb-1">
@@ -1020,6 +1160,8 @@ export default function DiversifyPage() {
                 </section>
               )}
 
+              <FactorExplanations />
+
               {qualityPicks.length > 0 && (
                 <section className="mb-8">
                   <SectionHeader
@@ -1035,6 +1177,17 @@ export default function DiversifyPage() {
                       onActiveChange={setActiveSpiderIdx}
                       onTickerClick={handleTickerClick}
                       companyNames={companyNames}
+                      isSaved={isSaved}
+                      onToggleSave={(ticker, name) => toggleSave({ symbol: ticker, name })}
+                      portfolios={customPortfolios}
+                      onTogglePortfolio={(ticker, portfolioId, add) => {
+                        const p = customPortfolios.find(p => p.id === portfolioId);
+                        if (!p) return;
+                        const next = add
+                          ? [...p.tickers, ticker]
+                          : p.tickers.filter(t => t !== ticker);
+                        updatePortfolio(portfolioId, p.name, next);
+                      }}
                     />
                   </div>
                   <div className="mb-6">
@@ -1088,16 +1241,40 @@ export default function DiversifyPage() {
                       <div className="grid grid-cols-3 gap-3">
                         {clusteringResult.recommendations.map((rec: ClusteringPick) => (
                           <div key={rec.stock} className="rounded-xl p-4 flex flex-col gap-2" style={CARD}>
-                            <div className="flex items-center justify-between">
-                              <button className="text-sm font-bold hover:underline" style={{ color: TEXT_PRI }}
+                            <div className="flex items-center justify-between gap-2">
+                              <button className="text-sm font-bold hover:underline min-w-0 truncate" style={{ color: TEXT_PRI }}
                                 onClick={() => handleTickerClick(rec.stock)}>
                                 {rec.stock}
                                 {rec.is_medoid && <span className="ml-1 text-xs" style={{ color: AMBER }}>★</span>}
                               </button>
-                              <span className="text-xs px-1.5 py-0.5 rounded font-mono"
-                                style={{ background: GREEN_DIM, color: GREEN }}>
-                                {rec.avg_dcor_to_portfolio.toFixed(3)}
-                              </span>
+                              <div className="flex items-center gap-2 flex-shrink-0">
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); toggleSave({ symbol: rec.stock, name: companyNames[rec.stock] ?? rec.stock }); }}
+                                  className="transition-all hover:scale-110"
+                                  title={isSaved(rec.stock) ? "Remove from watchlist" : "Save to watchlist"}
+                                  aria-label={isSaved(rec.stock) ? "Remove from watchlist" : "Save to watchlist"}
+                                >
+                                  <Star className="w-3.5 h-3.5" style={isSaved(rec.stock)
+                                    ? { fill: "hsl(48,96%,53%)", color: "hsl(48,96%,53%)" }
+                                    : { fill: "transparent",     color: TEXT_MUT }} />
+                                </button>
+                                <AddToPortfolioButton
+                                  ticker={rec.stock}
+                                  portfolios={customPortfolios}
+                                  onToggle={(portfolioId, add) => {
+                                    const p = customPortfolios.find(p => p.id === portfolioId);
+                                    if (!p) return;
+                                    const next = add
+                                      ? [...p.tickers, rec.stock]
+                                      : p.tickers.filter(t => t !== rec.stock);
+                                    updatePortfolio(portfolioId, p.name, next);
+                                  }}
+                                />
+                                <span className="text-xs px-1.5 py-0.5 rounded font-mono"
+                                  style={{ background: GREEN_DIM, color: GREEN }}>
+                                  {rec.avg_dcor_to_portfolio.toFixed(3)}
+                                </span>
+                              </div>
                             </div>
                             <SectorTag sector={rec.sector} />
                           </div>

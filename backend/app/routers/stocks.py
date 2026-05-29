@@ -17,6 +17,11 @@ from app.services.cache_service import (
     get_cached_ohlcv,
     set_cached_ohlcv,
 )
+from app.services.dashboard_cache import (
+    get_cached_stocks,
+    dashboard_cache_ready,
+    trigger_refresh_if_stale,
+)
 
 router = APIRouter(prefix="/api/stocks", tags=["stocks"])
 
@@ -35,19 +40,28 @@ def _validate_symbol(symbol: str) -> str:
 def list_stocks():
     """
     Returns the latest summary for every stock in FEATURED_TICKERS.
-    Checks Firestore cache first (TTL 5 min) before querying BigQuery.
+
+    Priority:
+      1. In-memory dashboard cache (loaded at startup, refreshed nightly at
+         8:30 PM ET) — zero BigQuery / Firestore cost on the hot path.
+      2. Firestore cache — covers the brief startup window before the in-memory
+         cache has completed its first BigQuery load (~3-5 s).
+      3. BigQuery direct query — last resort, only on very first cold start.
     """
-    # 1. Try Firestore cache
+    # 1. In-memory cache (always warm after startup)
+    if dashboard_cache_ready():
+        trigger_refresh_if_stale()   # no-op if fresh; fires background refresh if >23 h old
+        return StockListResponse(data=get_cached_stocks())
+
+    # 2. Firestore cache (startup fallback)
     cached = get_cached_summaries("stock_summaries")
     if cached is not None:
         return StockListResponse(data=cached)
 
-    # 2. Cache miss — query BigQuery
+    # 3. BigQuery fallback — write result to Firestore so the next request
+    #    during startup is served from there rather than hitting BQ again.
     data = get_all_stock_summaries()
-
-    # 3. Write result back to Firestore cache
     set_cached_summaries(data, "stock_summaries")
-
     return StockListResponse(data=data)
 
 

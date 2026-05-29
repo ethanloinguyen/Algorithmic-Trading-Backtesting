@@ -23,6 +23,7 @@ from typing import Any
 import httpx
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+from app.services.ticker_cache import _TICKER_CACHE
 
 # ── Load pre-computed data at startup ────────────────────────────────────────
 
@@ -93,10 +94,11 @@ async def list_tickers():
     if not _webapp_data:
         raise HTTPException(status_code=503, detail="Model data not loaded")
 
+    name_map = _build_name_map()
     tickers = [
         {
             "symbol": sym,
-            "name":   _ticker_sector_name(sym),
+            "name":   _ticker_sector_name(sym, name_map),
             "sector": entry["target_sector"],
         }
         for sym, entry in sorted(_webapp_data.items())
@@ -159,6 +161,7 @@ async def analyze(req: AnalyzeRequest):
     # Fetch live prices for all unique leader tickers
     unique_syms = list({l["leader_ticker"] for l in raw_leaders})
     price_map = await _fetch_summaries(unique_syms)
+    name_map  = _build_name_map()
 
     # Build leader list
     leaders = []
@@ -168,7 +171,7 @@ async def analyze(req: AnalyzeRequest):
         leaders.append({
             "rank":        l["rank"],
             "symbol":      lsym,
-            "name":        _ticker_sector_name(lsym),
+            "name":        _ticker_sector_name(lsym, name_map),
             "sector":      l["leader_sector"],
             "lag_days":    l["lag_days"],
             "attn_weight": round(l["attn_weight"], 4),
@@ -205,14 +208,13 @@ async def analyze(req: AnalyzeRequest):
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-# Minimal name lookup from the sector map (symbol → "TICKER (Sector)")
-# A richer name DB would replace this, but it works for display.
-_KNOWN_NAMES: dict[str, str] = {
-    # Major names not in ticker_sector as a name field
-    # (ticker_sector only maps symbol → sector, not full name)
-    # We keep a small override table; otherwise we display the symbol itself.
-}
+def _build_name_map() -> dict[str, str]:
+    """Build a symbol → company name dict from the shared ticker cache."""
+    return {entry["symbol"]: entry["name"] for entry in _TICKER_CACHE}
 
-def _ticker_sector_name(sym: str) -> str:
+
+def _ticker_sector_name(sym: str, name_map: dict[str, str] | None = None) -> str:
     """Return a human-readable name for a ticker. Falls back to symbol."""
-    return _KNOWN_NAMES.get(sym, sym)
+    if name_map is not None:
+        return name_map.get(sym, sym)
+    return _build_name_map().get(sym, sym)

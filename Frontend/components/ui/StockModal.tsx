@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useRef, useState, useCallback, useMemo } from "react";
-import { X, Star, TrendingUp, TrendingDown, Loader2, AlertTriangle } from "lucide-react";
+import { X, Star, TrendingUp, TrendingDown, Loader2, AlertTriangle, Briefcase, Check, ExternalLink } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useAuth } from "@/src/app/context/AuthContext";
 import {
   fetchOHLCV, fetchStockDetail,
@@ -292,6 +293,159 @@ function FundamentalsGrid({ symbol }: { symbol: string }) {
   );
 }
 
+// ── Add-to-portfolio dropdown ─────────────────────────────────────────────────
+
+function AddToPortfolioButton({
+  ticker,
+  portfolios,
+  onToggle,
+}: {
+  ticker:     string;
+  portfolios: { id: string; name: string; tickers: string[] }[];
+  onToggle:   (portfolioId: string, add: boolean) => void;
+}) {
+  const router = useRouter();
+  const [open,  setOpen]  = useState(false);
+  const [saved, setSaved] = useState(false); // brief "saved" feedback
+  const ref    = useRef<HTMLDivElement>(null);
+  const timer  = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => {
+      document.removeEventListener("mousedown", handler);
+      if (timer.current) clearTimeout(timer.current);
+    };
+  }, []);
+
+  function handleToggle(portfolioId: string, currentlyIn: boolean) {
+    onToggle(portfolioId, !currentlyIn);
+    // Show brief ✓ feedback on the trigger button
+    setSaved(true);
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(() => setSaved(false), 1500);
+  }
+
+  const active = open || saved;
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="p-2 rounded-lg transition-all hover:opacity-80"
+        style={{
+          background: active ? "hsla(217,91%,60%,0.15)" : "hsl(215,25%,16%)",
+          border: `1px solid ${active ? "hsla(217,91%,60%,0.4)" : "hsl(215,20%,22%)"}`,
+        }}
+        title="Add to portfolio"
+        aria-label="Add to portfolio"
+      >
+        {saved && !open ? (
+          <Check className="w-4 h-4" style={{ color: "hsl(142,71%,45%)" }} />
+        ) : (
+          <Briefcase className="w-4 h-4" style={{ color: active ? "hsl(217,91%,60%)" : "hsl(215,15%,55%)" }} />
+        )}
+      </button>
+
+      {open && (
+        <div
+          className="absolute z-50 rounded-xl overflow-hidden"
+          style={{
+            minWidth:   "200px",
+            background: "hsl(215,28%,13%)",
+            border:     "1px solid hsl(215,20%,20%)",
+            boxShadow:  "0 8px 32px rgba(0,0,0,0.5)",
+            top:        "calc(100% + 6px)",
+            right:      0,
+          }}
+        >
+          {/* Header */}
+          <div
+            className="px-4 py-2.5"
+            style={{ borderBottom: "1px solid hsl(215,20%,18%)" }}
+          >
+            <span className="text-[10px] font-bold uppercase tracking-widest"
+              style={{ color: "hsl(215,15%,40%)" }}>
+              Add to Portfolio
+            </span>
+          </div>
+
+          {portfolios.length === 0 ? (
+            /* ── No portfolios state ── */
+            <div className="px-4 py-4 flex flex-col gap-3">
+              <p className="text-xs" style={{ color: "hsl(215,15%,55%)" }}>
+                You don't have any custom portfolios yet.
+              </p>
+              <button
+                onMouseDown={() => { setOpen(false); router.push("/dashboard/profile"); }}
+                className="flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg transition-all hover:opacity-80"
+                style={{
+                  background: "hsla(217,91%,60%,0.15)",
+                  border:     "1px solid hsla(217,91%,60%,0.3)",
+                  color:      "hsl(217,91%,65%)",
+                }}
+              >
+                <ExternalLink className="w-3 h-3" />
+                Create one on Profile
+              </button>
+            </div>
+          ) : (
+            /* ── Portfolio checklist ── */
+            <div>
+              {portfolios.map((p, i) => {
+                const checked = p.tickers.includes(ticker);
+                return (
+                  <button
+                    key={p.id}
+                    onMouseDown={() => handleToggle(p.id, checked)}
+                    className="w-full text-left px-4 py-2.5 flex items-center justify-between gap-3 text-xs"
+                    style={{
+                      borderTop:  i > 0 ? "1px solid hsl(215,20%,16%)" : "none",
+                      background: "transparent",
+                      color:      checked ? "hsl(217,91%,65%)" : "hsl(210,40%,88%)",
+                    }}
+                    onMouseEnter={e => (e.currentTarget.style.background = "hsl(215,25%,18%)")}
+                    onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
+                  >
+                    <span className="font-medium truncate">{p.name}</span>
+                    <span
+                      className="flex-shrink-0 w-4 h-4 rounded flex items-center justify-center"
+                      style={{
+                        background: checked ? "hsl(217,91%,60%)" : "transparent",
+                        border:     `1.5px solid ${checked ? "hsl(217,91%,60%)" : "hsl(215,20%,35%)"}`,
+                      }}
+                    >
+                      {checked && <Check className="w-2.5 h-2.5" style={{ color: "white" }} />}
+                    </span>
+                  </button>
+                );
+              })}
+              {/* Create new portfolio footer */}
+              <div className="px-3 py-2.5" style={{ borderTop: "1px solid hsl(215,20%,16%)" }}>
+                <button
+                  onMouseDown={() => { setOpen(false); router.push("/dashboard/profile"); }}
+                  className="w-full flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg transition-all hover:opacity-80"
+                  style={{
+                    background: "hsla(217,91%,60%,0.15)",
+                    border:     "1px solid hsla(217,91%,60%,0.3)",
+                    color:      "hsl(217,91%,65%)",
+                  }}
+                >
+                  <ExternalLink className="w-3 h-3" />
+                  Create new portfolio
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 interface StockModalProps {
@@ -302,7 +456,7 @@ interface StockModalProps {
 type ModalTab = "chart" | "analysis";
 
 export default function StockModal({ stock, onClose }: StockModalProps) {
-  const { isSaved, toggleSave } = useAuth();
+  const { isSaved, toggleSave, customPortfolios, updatePortfolio } = useAuth();
   const saved      = isSaved(stock.symbol);
   const svgRef     = useRef<SVGSVGElement>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
@@ -498,6 +652,18 @@ export default function StockModal({ stock, onClose }: StockModalProps) {
                 }}
               />
             </button>
+            <AddToPortfolioButton
+              ticker={stock.symbol}
+              portfolios={customPortfolios}
+              onToggle={(portfolioId, add) => {
+                const p = customPortfolios.find(p => p.id === portfolioId);
+                if (!p) return;
+                const next = add
+                  ? [...p.tickers, stock.symbol]
+                  : p.tickers.filter(t => t !== stock.symbol);
+                updatePortfolio(portfolioId, p.name, next);
+              }}
+            />
             <button
               onClick={onClose}
               className="p-2 rounded-lg hover:opacity-80 transition-opacity"
@@ -584,9 +750,9 @@ export default function StockModal({ stock, onClose }: StockModalProps) {
                   ))}
 
                   {/* X-axis tick labels */}
-                  {ticks.map((pt) => (
+                  {ticks.map((pt, i) => (
                     <text
-                      key={pt.candle.date}
+                      key={i}
                       x={pt.x}
                       y={CHART_H - 4}
                       textAnchor="middle"
