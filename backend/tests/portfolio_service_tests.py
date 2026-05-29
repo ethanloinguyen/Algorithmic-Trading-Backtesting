@@ -24,7 +24,7 @@ import pytest
 import app.services.portfolio_service as svc
 
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
+# Helpers 
 
 def _make_network_df(tickers=("AAPL", "MSFT")) -> pd.DataFrame:
     rows = []
@@ -70,7 +70,7 @@ def _make_bq_client(date_val="2024-01-01", net_df=None):
     return client
 
 
-# ── _TABLE_NAMES ──────────────────────────────────────────────────────────────
+# _TABLE_NAMES 
 
 class TestTableNames:
     def test_broad_market_maps_to_final_network(self):
@@ -83,7 +83,7 @@ class TestTableNames:
         assert svc._AS_OF_TTL_SECONDS == 3600
 
 
-# ── _get_latest_as_of_date ────────────────────────────────────────────────────
+# _get_latest_as_of_date 
 
 class TestGetLatestAsOfDate:
     def setup_method(self):
@@ -163,7 +163,7 @@ class TestGetLatestAsOfDate:
         assert client.query.call_count == 2  # one per distinct table
 
 
-# ── get_final_network ─────────────────────────────────────────────────────────
+# get_final_network
 
 class TestGetFinalNetwork:
     def setup_method(self):
@@ -214,7 +214,7 @@ class TestGetFinalNetwork:
         assert result["signal_strength"].dtype in (float, "float64")
 
 
-# ── run_portfolio_analysis ────────────────────────────────────────────────────
+# run_portfolio_analysis 
 
 class TestRunPortfolioAnalysis:
     def setup_method(self):

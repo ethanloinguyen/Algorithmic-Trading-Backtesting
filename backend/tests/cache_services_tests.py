@@ -24,7 +24,7 @@ from app.services.cache_service import (
 )
 
 
-# ── Fixtures ──────────────────────────────────────────────────────────────────
+# Fixtures
 
 def _make_summary(**kwargs) -> StockSummary:
     defaults = dict(symbol="AAPL", name="Apple Inc.", price="$150.00",

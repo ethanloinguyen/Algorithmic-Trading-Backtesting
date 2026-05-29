@@ -4,7 +4,6 @@ Unit tests for app/services/portfolio_engine.py
 Run with:
     python -m pytest tests/portfolio_engine_tests.py -v
 
-No mocking needed — pure pandas/numpy logic throughout.
 """
 
 from __future__ import annotations
@@ -31,7 +30,7 @@ from app.services.portfolio_engine import (
 )
 
 
-# ── Fixtures ──────────────────────────────────────────────────────────────────
+# Fixtures 
 
 def _make_network_df(rows: list[dict] | None = None) -> pd.DataFrame:
     """
@@ -62,7 +61,7 @@ def _empty_df() -> pd.DataFrame:
     return pd.DataFrame()
 
 
-# ── _normalize_tickers ────────────────────────────────────────────────────────
+# _normalize_tickers 
 
 class TestNormalizeTickers:
     def test_uppercases_tickers(self):
@@ -82,7 +81,7 @@ class TestNormalizeTickers:
         assert result == ["GOOG", "NVDA", "TSLA"]
 
 
-# ── _compute_durability_score ─────────────────────────────────────────────────
+# _compute_durability_score 
 
 class TestComputeDurabilityScore:
     def test_zero_half_life_returns_zero(self):
@@ -110,7 +109,7 @@ class TestComputeDurabilityScore:
             assert 0.0 <= score <= 100.0
 
 
-# ── _interpretation ───────────────────────────────────────────────────────────
+# _interpretation 
 
 class TestInterpretation:
     def _make_row(self, **kwargs):
@@ -151,7 +150,7 @@ class TestInterpretation:
         assert "45" in result
 
 
-# ── get_ticker_metadata ───────────────────────────────────────────────────────
+# get_ticker_metadata 
 
 class TestGetTickerMetadata:
     def test_empty_df_returns_empty_metadata(self):
@@ -182,7 +181,7 @@ class TestGetTickerMetadata:
         assert meta.index.is_unique
 
 
-# ── analyze_portfolio_overlap ─────────────────────────────────────────────────
+# analyze_portfolio_overlap 
 
 class TestAnalyzePortfolioOverlap:
     def test_returns_empty_for_single_ticker(self):
@@ -249,7 +248,7 @@ class TestAnalyzePortfolioOverlap:
         assert ("NVDA", "AAPL") not in tickers_in_results
 
 
-# ── get_signal_recommendations ────────────────────────────────────────────────
+# get_signal_recommendations 
 
 class TestGetSignalRecommendations:
     def _network(self):
@@ -374,7 +373,7 @@ class TestGetSignalRecommendations:
         assert len(result_upper) == len(result_lower)
 
 
-# ── get_independent_recommendations ──────────────────────────────────────────
+# get_independent_recommendations 
 
 class TestGetIndependentRecommendations:
     def _network(self):
@@ -488,7 +487,7 @@ class TestGetIndependentRecommendations:
         assert len(result_upper) == len(result_lower)
 
 
-# ── get_holdings_sectors ──────────────────────────────────────────────────────
+# get_holdings_sectors 
 
 class TestGetHoldingsSectors:
     def test_returns_sector_for_known_ticker(self):

@@ -22,8 +22,6 @@ import pandas as pd
 import pytest
 
 
-# ── One-time setup: block the file-system imports before the module loads ─────
-
 def _inject_stubs():
     """Put stub modules in sys.modules so Python never touches the filesystem."""
     if "hierarchical" not in sys.modules:
@@ -55,7 +53,7 @@ _ps.run_clustering    = sys.modules["hierarchical"].run_clustering
 _ps.run_portfolio_risk = sys.modules["mc_engine"].run_portfolio_risk
 
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
+# Helpers
 
 def _clustering_df(tickers: list[str] | None = None) -> pd.DataFrame:
     tickers = tickers or ["NVDA", "JPM", "XOM"]
@@ -89,7 +87,7 @@ def _risk_result(tickers: list[str], portfolio_var: float = -0.04) -> dict:
     }
 
 
-# ── Fixture ───────────────────────────────────────────────────────────────────
+# Fixture
 
 @pytest.fixture(autouse=True)
 def fresh_mocks():
@@ -104,7 +102,7 @@ def fresh_mocks():
     _ps.run_portfolio_risk = MagicMock()
 
 
-# ── Happy path ────────────────────────────────────────────────────────────────
+# Happy path
 
 class TestRunRiskPipelineSuccess:
 
@@ -215,7 +213,7 @@ class TestRunRiskPipelineSuccess:
             assert key in result["risk"], f"Missing key in risk: {key}"
 
 
-# ── Parameter forwarding ──────────────────────────────────────────────────────
+# Parameter forwarding 
 
 class TestParameterForwarding:
 
@@ -278,7 +276,7 @@ class TestParameterForwarding:
             assert c.kwargs["target_return"] == 0.10
 
 
-# ── Edge cases & error handling ───────────────────────────────────────────────
+# Edge cases & error handling 
 
 class TestEdgeCases:
 
