@@ -5,11 +5,12 @@ import { useRouter } from "next/navigation";
 import {
   Star, User, Mail, LogOut, Loader2,
   ChevronDown, Layers,
-  FolderPlus, Trash2, X, Plus, Briefcase, AlertTriangle, Eye, EyeOff,
+  FolderPlus, Trash2, X, Plus, Briefcase, AlertTriangle, Eye, EyeOff, Pencil, Check,
 } from "lucide-react";
 import Sidebar from "@/components/ui/Sidebar";
 import { useAuth } from "@/src/app/context/AuthContext";
 import { fetchStockSummaries, fetchAllStocks, type StockSummary } from "@/src/app/lib/api";
+import StockModal, { type Stock } from "@/components/ui/StockModal";
 import { auth, db } from "@/src/app/lib/firebase";
 import { reauthenticateWithCredential, EmailAuthProvider, deleteUser } from "firebase/auth";
 import { doc, deleteDoc } from "firebase/firestore";
@@ -100,7 +101,7 @@ function SectorDropdown({
 }
 
 export default function ProfilePage() {
-  const { user, savedStocks, toggleSave, trackClick, loading: authLoading, logout, customPortfolios, createPortfolio, deletePortfolio } = useAuth();
+  const { user, savedStocks, toggleSave, trackClick, loading: authLoading, logout, customPortfolios, createPortfolio, updatePortfolio, deletePortfolio } = useAuth();
   const router = useRouter();
 
   const [liveData,       setLiveData]       = useState<StockSummary[]>([]);
@@ -179,6 +180,19 @@ export default function ProfilePage() {
   const portfolioInputRef  = useRef<HTMLInputElement>(null);
   const suggestionsRef     = useRef<HTMLDivElement>(null);
 
+  // Stock modal
+  const [modalStock, setModalStock] = useState<Stock | null>(null);
+
+  // Edit portfolio state
+  const [editingPortfolioId,   setEditingPortfolioId]   = useState<string | null>(null);
+  const [editTickers,          setEditTickers]          = useState<string[]>([]);
+  const [editInput,            setEditInput]            = useState("");
+  const [editShowSuggestions,  setEditShowSuggestions]  = useState(false);
+  const [editActiveSuggestion, setEditActiveSuggestion] = useState(-1);
+  const [savingEdit,           setSavingEdit]           = useState(false);
+  const editInputRef   = useRef<HTMLInputElement>(null);
+  const editSuggestRef = useRef<HTMLDivElement>(null);
+
   // Redirect unauthenticated (skip during account deletion — handled by window.location)
   useEffect(() => {
     if (!authLoading && !user && !isDeletingRef.current) router.replace("/");
@@ -200,6 +214,18 @@ export default function ProfilePage() {
       )
       .slice(0, 8);
   }, [portfolioInput, allStocks, portfolioTickers]);
+
+  const editTickerSuggestions = useMemo(() => {
+    const q = editInput.trim().toUpperCase();
+    if (!q || q.length < 1) return [];
+    return allStocks
+      .filter(
+        (s) =>
+          !editTickers.includes(s.symbol) &&
+          (s.symbol.startsWith(q) || s.name.toUpperCase().includes(q))
+      )
+      .slice(0, 8);
+  }, [editInput, allStocks, editTickers]);
 
   // Fetch live prices whenever saved stocks change
   useEffect(() => {
@@ -411,7 +437,7 @@ export default function ProfilePage() {
                 {filteredStocks.map((stock) => (
                   <div
                     key={stock.symbol}
-                    onClick={() => trackClick(stock.symbol)}
+                    onClick={() => { trackClick(stock.symbol); setModalStock(stock); }}
                     className="grid px-6 py-3.5 cursor-pointer items-center transition-colors"
                     style={{
                       gridTemplateColumns: "1fr 1fr 1fr 1fr 36px",
@@ -496,38 +522,221 @@ export default function ProfilePage() {
             {/* Existing portfolios */}
             {customPortfolios.length > 0 && (
               <div className="space-y-2 mb-5">
-                {customPortfolios.map((portfolio) => (
-                  <div
-                    key={portfolio.id}
-                    className="rounded-xl px-5 py-4 flex items-center justify-between gap-4"
-                    style={{ background: "hsl(215,25%,11%)", border: "1px solid hsl(215,20%,18%)" }}
-                  >
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-semibold mb-1" style={{ color: "hsl(210,40%,92%)" }}>
-                        {portfolio.name}
-                      </p>
-                      <div className="flex flex-wrap gap-1.5">
-                        {portfolio.tickers.map((t) => (
-                          <span
-                            key={t}
-                            className="text-xs px-2 py-0.5 rounded-md font-semibold"
-                            style={{ background: "hsla(217,91%,60%,0.15)", color: "hsl(217,91%,70%)" }}
-                          >
-                            {t}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                    <button
-                      onClick={() => deletePortfolio(portfolio.id)}
-                      className="p-2 rounded-lg transition-all hover:opacity-70 flex-shrink-0"
-                      style={{ color: "hsl(0,84%,60%)", background: "hsla(0,84%,60%,0.1)" }}
-                      aria-label="Delete portfolio"
+                {customPortfolios.map((portfolio) => {
+                  const isEditing = editingPortfolioId === portfolio.id;
+                  return (
+                    <div
+                      key={portfolio.id}
+                      className="rounded-xl px-5 py-4"
+                      style={{ background: "hsl(215,25%,11%)", border: `1px solid ${isEditing ? "hsl(217,91%,45%)" : "hsl(215,20%,18%)"}` }}
                     >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
-                ))}
+                      {/* Portfolio header row */}
+                      <div className="flex items-center justify-between gap-4 mb-2">
+                        <p className="text-sm font-semibold" style={{ color: "hsl(210,40%,92%)" }}>
+                          {portfolio.name}
+                        </p>
+                        <div className="flex items-center gap-2 flex-shrink-0">
+                          {!isEditing && (
+                            <button
+                              onClick={() => {
+                                setEditingPortfolioId(portfolio.id);
+                                setEditTickers([...portfolio.tickers]);
+                                setEditInput("");
+                                setEditShowSuggestions(false);
+                                setEditActiveSuggestion(-1);
+                              }}
+                              className="p-2 rounded-lg transition-all hover:opacity-80"
+                              style={{ color: "hsl(217,91%,60%)", background: "hsla(217,91%,60%,0.1)" }}
+                              aria-label="Edit portfolio"
+                            >
+                              <Pencil className="w-4 h-4" />
+                            </button>
+                          )}
+                          <button
+                            onClick={() => deletePortfolio(portfolio.id)}
+                            className="p-2 rounded-lg transition-all hover:opacity-70"
+                            style={{ color: "hsl(0,84%,60%)", background: "hsla(0,84%,60%,0.1)" }}
+                            aria-label="Delete portfolio"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* View mode: ticker chips */}
+                      {!isEditing && (
+                        <div className="flex flex-wrap gap-1.5">
+                          {portfolio.tickers.map((t) => (
+                            <span
+                              key={t}
+                              className="text-xs px-2 py-0.5 rounded-md font-semibold"
+                              style={{ background: "hsla(217,91%,60%,0.15)", color: "hsl(217,91%,70%)" }}
+                            >
+                              {t}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Edit mode: inline ticker tag input */}
+                      {isEditing && (
+                        <div>
+                          <div className="relative mb-3">
+                            <div
+                              className="flex flex-wrap gap-2 min-h-10 p-2 rounded-lg cursor-text"
+                              style={{ background: "hsl(215,25%,8%)", border: "1px solid hsl(217,91%,45%)" }}
+                              onClick={() => editInputRef.current?.focus()}
+                            >
+                              {editTickers.map((t) => (
+                                <span
+                                  key={t}
+                                  className="flex items-center gap-1 px-2.5 py-0.5 rounded-md text-xs font-semibold"
+                                  style={{ background: "hsla(217,91%,60%,0.15)", color: "hsl(217,91%,70%)" }}
+                                >
+                                  {t}
+                                  <button
+                                    onClick={(e) => { e.stopPropagation(); setEditTickers(prev => prev.filter(x => x !== t)); }}
+                                    className="hover:opacity-60 ml-0.5"
+                                  >
+                                    <X className="w-3 h-3" />
+                                  </button>
+                                </span>
+                              ))}
+                              <input
+                                ref={editInputRef}
+                                value={editInput}
+                                onChange={(e) => {
+                                  setEditInput(e.target.value.toUpperCase());
+                                  setEditActiveSuggestion(-1);
+                                  setEditShowSuggestions(true);
+                                }}
+                                onFocus={() => setEditShowSuggestions(true)}
+                                onBlur={() => {
+                                  setTimeout(() => {
+                                    setEditShowSuggestions(false);
+                                    setEditActiveSuggestion(-1);
+                                    const val = editInput.trim();
+                                    if (val && !editTickers.includes(val) && val.length <= 10) {
+                                      setEditTickers(prev => [...prev, val]);
+                                      setEditInput("");
+                                    }
+                                  }, 150);
+                                }}
+                                onKeyDown={(e) => {
+                                  if (e.key === "ArrowDown") { e.preventDefault(); setEditActiveSuggestion(i => Math.min(i + 1, editTickerSuggestions.length - 1)); return; }
+                                  if (e.key === "ArrowUp")   { e.preventDefault(); setEditActiveSuggestion(i => Math.max(i - 1, -1)); return; }
+                                  if (e.key === "Escape")    { setEditShowSuggestions(false); setEditActiveSuggestion(-1); return; }
+                                  if (["Enter", ",", " ", "Tab"].includes(e.key)) {
+                                    e.preventDefault();
+                                    if (editActiveSuggestion >= 0 && editTickerSuggestions[editActiveSuggestion]) {
+                                      const sym = editTickerSuggestions[editActiveSuggestion].symbol;
+                                      if (!editTickers.includes(sym)) setEditTickers(prev => [...prev, sym]);
+                                      setEditInput(""); setEditShowSuggestions(false); setEditActiveSuggestion(-1);
+                                      return;
+                                    }
+                                    const val = editInput.trim();
+                                    if (val && !editTickers.includes(val) && val.length <= 10) setEditTickers(prev => [...prev, val]);
+                                    setEditInput(""); setEditShowSuggestions(false); setEditActiveSuggestion(-1);
+                                    return;
+                                  }
+                                  if (e.key === "Backspace" && !editInput && editTickers.length) setEditTickers(prev => prev.slice(0, -1));
+                                }}
+                                placeholder={editTickers.length === 0 ? "Type tickers, press Enter or comma" : ""}
+                                className="flex-1 min-w-24 bg-transparent outline-none text-sm"
+                                style={{ color: "hsl(210,40%,85%)" }}
+                              />
+                            </div>
+
+                            {/* Autocomplete dropdown */}
+                            {editShowSuggestions && editTickerSuggestions.length > 0 && (
+                              <div
+                                ref={editSuggestRef}
+                                className="absolute left-0 right-0 top-full mt-1 rounded-xl overflow-hidden z-50"
+                                style={{ background: "hsl(215,25%,11%)", border: "1px solid hsl(215,20%,20%)", boxShadow: "0 8px 24px rgba(0,0,0,0.4)" }}
+                              >
+                                {editTickerSuggestions.map((s, i) => (
+                                  <button
+                                    key={s.symbol}
+                                    onMouseDown={(e) => {
+                                      e.preventDefault();
+                                      if (!editTickers.includes(s.symbol)) setEditTickers(prev => [...prev, s.symbol]);
+                                      setEditInput(""); setEditShowSuggestions(false); setEditActiveSuggestion(-1);
+                                      editInputRef.current?.focus();
+                                    }}
+                                    className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-left transition-colors"
+                                    style={{
+                                      background:   i === editActiveSuggestion ? "hsl(215,25%,16%)" : "transparent",
+                                      borderBottom: i < editTickerSuggestions.length - 1 ? "1px solid hsl(215,20%,16%)" : "none",
+                                    }}
+                                    onMouseEnter={() => setEditActiveSuggestion(i)}
+                                    onMouseLeave={() => setEditActiveSuggestion(-1)}
+                                  >
+                                    <span className="font-semibold" style={{ color: "hsl(217,91%,70%)", minWidth: 56 }}>{s.symbol}</span>
+                                    <span className="truncate text-xs" style={{ color: "hsl(215,15%,55%)" }}>{s.name}</span>
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Add from saved shortcut */}
+                          {savedStocks.length > 0 && (
+                            <div className="flex items-center gap-2 mb-3 flex-wrap">
+                              <span className="text-xs" style={{ color: "hsl(215,15%,45%)" }}>Add from saved:</span>
+                              {savedStocks.slice(0, 8).map((s) => (
+                                <button
+                                  key={s.symbol}
+                                  onClick={() => { if (!editTickers.includes(s.symbol)) setEditTickers(prev => [...prev, s.symbol]); }}
+                                  disabled={editTickers.includes(s.symbol)}
+                                  className="text-xs px-2 py-0.5 rounded-md transition-colors"
+                                  style={{
+                                    background: editTickers.includes(s.symbol) ? "hsla(217,91%,60%,0.08)" : "hsl(215,25%,14%)",
+                                    border: "1px solid hsl(215,20%,20%)",
+                                    color: editTickers.includes(s.symbol) ? "hsl(215,15%,38%)" : "hsl(210,40%,75%)",
+                                    cursor: editTickers.includes(s.symbol) ? "default" : "pointer",
+                                  }}
+                                >
+                                  <Plus className="w-2.5 h-2.5 inline mr-1" style={{ position: "relative", top: -0.5 }} />
+                                  {s.symbol}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+
+                          {/* Save / Cancel */}
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={async () => {
+                                const finalTickers = editInput.trim()
+                                  ? [...editTickers, editInput.trim().toUpperCase()].filter((v, i, a) => a.indexOf(v) === i)
+                                  : editTickers;
+                                if (finalTickers.length === 0) return;
+                                setSavingEdit(true);
+                                await updatePortfolio(portfolio.id, portfolio.name, finalTickers);
+                                setSavingEdit(false);
+                                setEditingPortfolioId(null);
+                              }}
+                              disabled={savingEdit || editTickers.length === 0}
+                              className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold disabled:opacity-40 transition-opacity hover:opacity-80"
+                              style={{ background: "hsl(217,91%,60%)", color: "white" }}
+                            >
+                              {savingEdit
+                                ? <><Loader2 className="w-4 h-4 animate-spin" /> Saving…</>
+                                : <><Check className="w-4 h-4" /> Save Changes</>}
+                            </button>
+                            <button
+                              onClick={() => { setEditingPortfolioId(null); setEditInput(""); }}
+                              className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium hover:opacity-80 transition-opacity"
+                              style={{ background: "hsl(215,25%,16%)", border: "1px solid hsl(215,20%,22%)", color: "hsl(215,15%,65%)" }}
+                            >
+                              <X className="w-4 h-4" /> Cancel
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             )}
 
@@ -762,6 +971,11 @@ export default function ProfilePage() {
 
         </div>
       </main>
+
+      {/* ── Stock modal ── */}
+      {modalStock && (
+        <StockModal stock={modalStock} onClose={() => setModalStock(null)} />
+      )}
 
       {/* ── Delete account modal ── */}
       {showDeleteModal && (

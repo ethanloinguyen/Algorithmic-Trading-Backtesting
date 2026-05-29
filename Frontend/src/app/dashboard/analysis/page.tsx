@@ -658,6 +658,7 @@ function LagAlignmentLab({ stocks }: { stocks: StockSummary[] }) {
         <div className="h-72">
           <ResponsiveContainer width="100%" height="100%">
             <LineChart
+              key={chartData.length}
               data={chartData}
               margin={{ top: 4, right: 8, bottom: 4, left: 0 }}
               onMouseMove={(data: any) => {

@@ -1,7 +1,8 @@
 // Frontend/components/ui/SpiderChart.tsx
 "use client";
 import { useState, useRef, useEffect } from "react";
-import { TrendingUp, Globe, Layers, Activity, BarChart2, Star, Briefcase } from "lucide-react";
+import { TrendingUp, Globe, Layers, Activity, BarChart2, Star, Briefcase, Check, ExternalLink } from "lucide-react";
+import { useRouter } from "next/navigation";
 import type { QualityRecommendation } from "@/src/app/lib/api";
 
 // ── Axes — 5 quality factors ──────────────────────────────────────────────────
@@ -88,73 +89,142 @@ function polygonPoints(rec: QualityRecommendation): string {
 }
 
 // ── Mini add-to-portfolio dropdown ────────────────────────────────────────────
-function MiniPortfolioDropdown({ ticker, portfolios, onAdd }: {
+
+const BORDER_SC   = "hsl(215, 20%, 18%)";
+const BORDER_D_SC = "hsl(215, 20%, 16%)";
+const TEXT_PRI_SC = "hsl(210, 40%, 92%)";
+const TEXT_SEC_SC = "hsl(215, 15%, 55%)";
+const TEXT_MUT_SC = "hsl(215, 15%, 40%)";
+const BLUE_SC     = "hsl(217, 91%, 60%)";
+const BLUE_DIM_SC = "hsla(217, 91%, 60%, 0.15)";
+
+function MiniPortfolioDropdown({ ticker, portfolios, onToggle }: {
   ticker:     string;
   portfolios: { id: string; name: string; tickers: string[] }[];
-  onAdd:      (portfolioId: string) => void;
+  onToggle:   (portfolioId: string, add: boolean) => void;
 }) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
+  const router = useRouter();
+  const [open,  setOpen]  = useState(false);
+  const [saved, setSaved] = useState(false);
+  const ref   = useRef<HTMLDivElement>(null);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
     };
     document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
+    return () => {
+      document.removeEventListener("mousedown", handler);
+      if (timer.current) clearTimeout(timer.current);
+    };
   }, []);
 
-  const BORDER     = "hsl(215, 20%, 18%)";
-  const BORDER_D   = "hsl(215, 20%, 16%)";
-  const TEXT_PRI   = "hsl(210, 40%, 92%)";
-  const TEXT_MUT   = "hsl(215, 15%, 40%)";
-  const BLUE       = "hsl(217, 91%, 60%)";
+  function handleToggle(portfolioId: string, currentlyIn: boolean) {
+    onToggle(portfolioId, !currentlyIn);
+    setSaved(true);
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(() => setSaved(false), 1500);
+  }
+
+  const active = open || saved;
 
   return (
-    <div ref={ref} className="relative" onClick={e => e.stopPropagation()}>
+    <div ref={ref} className="relative flex items-center" onClick={e => e.stopPropagation()}>
       <button
         onClick={() => setOpen(o => !o)}
         className="transition-all hover:scale-110"
         title="Add to portfolio"
         aria-label="Add to portfolio"
       >
-        <Briefcase className="w-3 h-3" style={{ color: open ? BLUE : TEXT_MUT }} />
+        {saved && !open
+          ? <Check     className="w-3 h-3" style={{ color: "hsl(142,71%,45%)" }} />
+          : <Briefcase className="w-3 h-3" style={{ color: active ? BLUE_SC : TEXT_MUT_SC }} />
+        }
       </button>
       {open && (
         <div
-          className="absolute z-50 rounded-xl overflow-hidden min-w-40"
+          className="absolute z-50 rounded-xl overflow-hidden"
           style={{
+            minWidth:   "200px",
             background: "hsl(215,28%,13%)",
-            border:     `1px solid ${BORDER}`,
+            border:     `1px solid ${BORDER_SC}`,
             boxShadow:  "0 8px 32px rgba(0,0,0,0.5)",
             top:        "calc(100% + 4px)",
             right:      0,
           }}
         >
+          {/* Header */}
+          <div className="px-4 py-2.5" style={{ borderBottom: `1px solid ${BORDER_D_SC}` }}>
+            <span className="text-[10px] font-bold uppercase tracking-widest" style={{ color: TEXT_MUT_SC }}>
+              Add to Portfolio
+            </span>
+          </div>
+
           {portfolios.length === 0 ? (
-            <div className="px-4 py-3 text-xs" style={{ color: TEXT_MUT }}>
-              No portfolios saved yet.
+            <div className="px-4 py-4 flex flex-col gap-3">
+              <p className="text-xs" style={{ color: TEXT_SEC_SC }}>
+                You don't have any custom portfolios yet.
+              </p>
+              <button
+                onMouseDown={() => { setOpen(false); router.push("/dashboard/profile"); }}
+                className="flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg transition-all hover:opacity-80"
+                style={{
+                  background: BLUE_DIM_SC,
+                  border:     "1px solid hsla(217,91%,60%,0.3)",
+                  color:      BLUE_SC,
+                }}
+              >
+                <ExternalLink className="w-3 h-3" />
+                Create one on Profile
+              </button>
             </div>
           ) : (
-            portfolios.map((p, i) => {
-              const alreadyIn = p.tickers.includes(ticker);
-              return (
+            <>
+              {portfolios.map((p, i) => {
+                const checked = p.tickers.includes(ticker);
+                return (
+                  <button
+                    key={p.id}
+                    onMouseDown={() => handleToggle(p.id, checked)}
+                    className="w-full text-left px-4 py-2.5 flex items-center justify-between gap-3 text-xs"
+                    style={{
+                      color:      checked ? BLUE_SC : TEXT_PRI_SC,
+                      borderTop:  i > 0 ? `1px solid ${BORDER_D_SC}` : "none",
+                      background: "transparent",
+                    }}
+                    onMouseEnter={e => (e.currentTarget.style.background = "hsl(215,25%,18%)")}
+                    onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
+                  >
+                    <span className="font-medium truncate">{p.name}</span>
+                    <span
+                      className="flex-shrink-0 w-4 h-4 rounded flex items-center justify-center"
+                      style={{
+                        background: checked ? BLUE_SC : "transparent",
+                        border:     `1.5px solid ${checked ? BLUE_SC : "hsl(215,20%,35%)"}`,
+                      }}
+                    >
+                      {checked && <Check className="w-2.5 h-2.5" style={{ color: "white" }} />}
+                    </span>
+                  </button>
+                );
+              })}
+              {/* Create new portfolio footer */}
+              <div className="px-3 py-2.5" style={{ borderTop: `1px solid ${BORDER_D_SC}` }}>
                 <button
-                  key={p.id}
-                  onMouseDown={() => { onAdd(p.id); setOpen(false); }}
-                  className="w-full text-left px-4 py-2.5 flex items-center justify-between gap-3 text-xs"
+                  onMouseDown={() => { setOpen(false); router.push("/dashboard/profile"); }}
+                  className="w-full flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg transition-all hover:opacity-80"
                   style={{
-                    color:     alreadyIn ? BLUE : TEXT_PRI,
-                    borderTop: i > 0 ? `1px solid ${BORDER_D}` : "none",
+                    background: BLUE_DIM_SC,
+                    border:     "1px solid hsla(217,91%,60%,0.3)",
+                    color:      BLUE_SC,
                   }}
-                  onMouseEnter={e => (e.currentTarget.style.background = "hsl(215,25%,18%)")}
-                  onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
                 >
-                  <span className="font-medium truncate">{p.name}</span>
-                  {alreadyIn && <span style={{ color: BLUE }}>✓</span>}
+                  <ExternalLink className="w-3 h-3" />
+                  Create new portfolio
                 </button>
-              );
-            })
+              </div>
+            </>
           )}
         </div>
       )}
@@ -171,8 +241,8 @@ interface SpiderChartProps {
   companyNames?:      Record<string, string>;
   isSaved?:           (ticker: string) => boolean;
   onToggleSave?:      (ticker: string, name: string) => void;
-  portfolios?:        { id: string; name: string; tickers: string[] }[];
-  onAddToPortfolio?:  (ticker: string, portfolioId: string) => void;
+  portfolios?:           { id: string; name: string; tickers: string[] }[];
+  onTogglePortfolio?:    (ticker: string, portfolioId: string, add: boolean) => void;
 }
 
 export default function SpiderChart({
@@ -184,7 +254,7 @@ export default function SpiderChart({
   isSaved,
   onToggleSave,
   portfolios,
-  onAddToPortfolio,
+  onTogglePortfolio,
 }: SpiderChartProps) {
   const recs        = recommendations.slice(0, 10);
   const setActiveIdx = onActiveChange;
@@ -356,11 +426,11 @@ export default function SpiderChart({
                           : { fill: "transparent", color: TEXT_MUT }} />
                       </button>
                     )}
-                    {portfolios && onAddToPortfolio && (
+                    {portfolios && onTogglePortfolio && (
                       <MiniPortfolioDropdown
                         ticker={rec.ticker}
                         portfolios={portfolios}
-                        onAdd={portfolioId => onAddToPortfolio(rec.ticker, portfolioId)}
+                        onToggle={(portfolioId, add) => onTogglePortfolio!(rec.ticker, portfolioId, add)}
                       />
                     )}
                   </div>
@@ -427,11 +497,11 @@ export default function SpiderChart({
                       {isSaved(activeRec.ticker) ? "Saved" : "Save"}
                     </button>
                   )}
-                  {portfolios && onAddToPortfolio && (
+                  {portfolios && onTogglePortfolio && (
                     <MiniPortfolioDropdown
                       ticker={activeRec.ticker}
                       portfolios={portfolios}
-                      onAdd={portfolioId => onAddToPortfolio(activeRec.ticker, portfolioId)}
+                      onToggle={(portfolioId, add) => onTogglePortfolio!(activeRec.ticker, portfolioId, add)}
                     />
                   )}
                 </div>
