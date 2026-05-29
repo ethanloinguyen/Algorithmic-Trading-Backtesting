@@ -1053,7 +1053,7 @@ export default function DiversifyPage() {
                 ))}
               </div>
 
-              {(riskLoading || riskResult !== null || riskError !== null) && (
+              {(portfolioRiskLoading || portfolioRiskResult !== null || portfolioRiskError !== null) && (
                 <section className="mb-8">
                   <div className="flex items-center gap-2 mb-1">
                     <Activity className="w-4 h-4" style={{ color: GREEN }} />
