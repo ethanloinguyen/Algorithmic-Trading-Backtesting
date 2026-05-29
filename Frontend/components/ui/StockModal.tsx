@@ -147,11 +147,30 @@ function YoYChart({ symbol }: { symbol: string }) {
 
   useEffect(() => {
     if (!symbol) return;
-    setLoading(true); setError(null);
-    fetchOHLCV(symbol, "5Y")
-      .then(setCandles)
-      .catch(e => setError(e.message))
-      .finally(() => setLoading(false));
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+
+    async function load() {
+      const cached = await getCachedOHLCV(symbol, "5Y");
+      if (cached && !cancelled) {
+        setCandles(cached.candles);
+        setLoading(false);
+        if (!cached.stale) return;
+      }
+      try {
+        const fresh = await fetchOHLCV(symbol, "5Y");
+        if (!cancelled) { setCandles(fresh); setLoading(false); }
+      } catch (e: unknown) {
+        if (!cancelled && !cached) {
+          setError(e instanceof Error ? e.message : "Failed to load");
+          setLoading(false);
+        }
+      }
+    }
+
+    load();
+    return () => { cancelled = true; };
   }, [symbol]);
 
   const { years, chartData } = useMemo(() => {

@@ -4,6 +4,7 @@ from fastapi import APIRouter, HTTPException, Query
 
 from app.models.stock import StockDetail, PairDetail, NetworkResponse
 from app.services.bigquery_services import get_stock_detail, get_pair_data, get_network_data
+from app.services.cache_service import get_cached_stock_detail, set_cached_stock_detail
 
 router = APIRouter(prefix="/api", tags=["analysis"])
 
@@ -14,11 +15,19 @@ def stock_detail(symbol: str):
     Extended stock info for the Analysis page fundamentals panel.
     Returns market_cap, pe_ratio, sector, industry, 52W high/low
     computed from ticker_metadata + market_data.
+    Cached in Firestore for 6 hours — fundamentals change infrequently.
     """
     sym = symbol.strip().upper()
     if not sym:
         raise HTTPException(status_code=400, detail="Symbol is required.")
-    return get_stock_detail(sym)
+
+    cached = get_cached_stock_detail(sym)
+    if cached is not None:
+        return cached
+
+    detail = get_stock_detail(sym)
+    set_cached_stock_detail(sym, detail)
+    return detail
 
 
 @router.get("/pairs/{ticker_i}/{ticker_j}", response_model=PairDetail)

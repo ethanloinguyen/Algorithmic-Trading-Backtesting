@@ -277,25 +277,29 @@ export default function DashboardPage() {
     if (!authLoading && !user) router.replace("/");
   }, [user, authLoading, router]);
 
-  // Load data — Firestore cache first, then API
+  // Load data — Firestore reads and API calls fire simultaneously
   const loadData = useCallback(async () => {
     setDataLoading(true);
     try {
-      const [cachedStocks, cachedIndices] = await Promise.all([
-        getCachedSummaries(),
-        getCachedIndices(),
-      ]);
-      if (cachedStocks && !cachedStocks.stale) setStocks(cachedStocks.data);
-      if (cachedIndices && !cachedIndices.stale) setIndices(cachedIndices.data);
+      // Start both in parallel — don't block API calls behind Firestore reads
+      const cacheReads = Promise.all([getCachedSummaries(), getCachedIndices()]);
+      const apiCalls   = Promise.allSettled([fetchAllStocks(), fetchIndices()]);
 
-      const [stocksResult, indicesResult] = await Promise.allSettled([
-        fetchAllStocks(),
-        fetchIndices(),
-      ]);
+      // Apply fresh cache data as soon as it arrives, while API is still in flight
+      cacheReads
+        .then(([cachedStocks, cachedIndices]) => {
+          if (cachedStocks && !cachedStocks.stale)
+            setStocks(prev => prev.length === 0 ? cachedStocks.data : prev);
+          if (cachedIndices && !cachedIndices.stale)
+            setIndices(prev => prev.length === 0 ? cachedIndices.data : prev);
+        })
+        .catch(() => {});
+
+      const [stocksResult, indicesResult] = await apiCalls;
       if (stocksResult.status  === "fulfilled") setStocks(stocksResult.value);
       if (indicesResult.status === "fulfilled") setIndices(indicesResult.value);
     } catch {
-      // keep whatever we loaded from cache
+      // keep whatever was loaded from cache
     } finally {
       setDataLoading(false);
     }

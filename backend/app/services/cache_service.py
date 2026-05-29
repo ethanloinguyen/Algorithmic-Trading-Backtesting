@@ -211,6 +211,38 @@ def set_cached_portfolio_risk(tickers: list[str], result: dict) -> None:
         print(f"[cache] set_cached_portfolio_risk failed: {e}")
 
 
+# ── Stock detail ──────────────────────────────────────────────────────────────
+
+TTL_STOCK_DETAIL = timedelta(hours=6)
+
+
+def get_cached_stock_detail(symbol: str) -> "StockDetail | None":
+    from app.models.stock import StockDetail as _StockDetail
+    try:
+        fs   = get_fs_client()
+        snap = fs.collection("cache").document(f"stock_detail_{symbol.upper()}").get()
+        if not snap.exists:
+            return None
+        data = snap.to_dict()
+        if _is_stale(data, TTL_STOCK_DETAIL):
+            return None
+        return _StockDetail(**data["data"])
+    except Exception as e:
+        print(f"[cache] get_cached_stock_detail({symbol}) failed: {e}")
+        return None
+
+
+def set_cached_stock_detail(symbol: str, detail: "StockDetail") -> None:
+    try:
+        fs = get_fs_client()
+        fs.collection("cache").document(f"stock_detail_{symbol.upper()}").set({
+            "data":       detail.model_dump(),
+            "updated_at": firestore.SERVER_TIMESTAMP,
+        })
+    except Exception as e:
+        print(f"[cache] set_cached_stock_detail({symbol}) failed: {e}")
+
+
 # ── Clustering pipeline cache ─────────────────────────────────────────────────
 
 def _clustering_doc_id(tickers: list[str]) -> str:
