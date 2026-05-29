@@ -68,15 +68,6 @@ GENERAL_DATA_TABLE   = f"{GCP_PROJECT}.{WRITE_DATASET}.general_market_data"
 
 BATCH_SIZE = 50   # tickers per yfinance download call
 
-# Hardcoded fallback — used only if all dynamic sources fail.
-_FALLBACK_TICKERS = [
-    "SPY", "QQQ", "IWM", "DIA", "VTI", "VOO", "GLD", "TLT",
-    "XLF", "XLK", "XLE", "XLV", "ARKK",
-    "TSM", "BABA", "NIO", "ASML", "SHOP", "SE", "SPOT", "MELI",
-    "HOOD", "COIN", "RIVN", "SOFI", "RBLX", "SNAP", "PINS", "DUOL",
-    "MSTR", "RIOT", "MARA", "ARM",  "CART",
-    "GME",  "AMC",  "TLRY", "CGC",
-]
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -98,141 +89,6 @@ def _safe_float(val) -> float | None:
 
 # ── Dynamic ticker fetching ───────────────────────────────────────────────────
 
-def _fetch_sp_index_tickers() -> list[str]:
-    """
-    Scrape S&P 500, S&P 400 (mid-cap), and S&P 600 (small-cap) constituent
-    lists from Wikipedia using pandas.read_html.
-
-    Combined this yields ~1,500 well-known tickers.  Many S&P 500 stocks will
-    already be in market_data (top 2000 R3000 includes them); the S&P 400 and
-    S&P 600 are where genuinely new stocks will come from.
-
-    Returns a deduplicated sorted list of ticker symbols.
-    """
-    sources = [
-        # (URL, column name in the Wikipedia table)
-        ("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies", "Symbol"),
-        ("https://en.wikipedia.org/wiki/List_of_S%26P_400_companies", "Ticker"),
-        ("https://en.wikipedia.org/wiki/List_of_S%26P_600_companies", "Ticker"),
-    ]
-
-    tickers: set[str] = set()
-    for url, col in sources:
-        try:
-            tables = pd.read_html(url, attrs={"id": "constituents"})
-            if not tables:
-                tables = pd.read_html(url)
-            df = tables[0]
-            # Try the expected column name, then fall back to any column that
-            # looks like it contains ticker symbols
-            if col in df.columns:
-                raw = df[col].dropna().astype(str).tolist()
-            else:
-                # Find the column with the most 1-5 letter uppercase entries
-                best_col, best_count = None, 0
-                for c in df.columns:
-                    count = df[c].astype(str).str.match(r"^[A-Z]{1,5}$").sum()
-                    if count > best_count:
-                        best_count, best_col = count, c
-                raw = df[best_col].dropna().astype(str).tolist() if best_col else []
-
-            # Normalise: BRK.B → BRK-B, strip whitespace, keep 1-5 letter only
-            cleaned = [
-                t.strip().replace(".", "-").upper()
-                for t in raw
-                if re.match(r"^[A-Z]{1,5}(\.[A-Z])?$", t.strip().upper())
-            ]
-            before = len(tickers)
-            tickers.update(cleaned)
-            logger.info(f"  Wikipedia {url.split('List_of_')[-1]}: "
-                        f"{len(cleaned)} tickers ({len(tickers) - before} new)")
-        except Exception as e:
-            logger.warning(f"  Could not scrape {url}: {e}")
-
-    return sorted(tickers)
-
-
-def _fetch_nasdaq_trader_tickers() -> list[str]:
-    """
-    Download all US-listed stock tickers from NASDAQ Trader's public symbol
-    directory (no authentication required).
-
-    Sources
-    -------
-    nasdaqlisted.txt  — all NASDAQ-listed securities
-    otherlisted.txt   — all NYSE / NYSE American / BATS-listed securities
-
-    Filters applied
-    ---------------
-    • Test issues removed (Test Issue == 'Y')
-    • Only clean tickers: 1–5 uppercase letters (removes warrants, rights,
-      preferred shares, units that carry suffixes like .WS, -WT, +, ^)
-
-    Returns ~6 000–8 000 deduplicated tickers.
-    """
-    import re as _re
-
-    NASDAQ_URL = "https://ftp.nasdaqtrader.com/SymbolDirectory/nasdaqlisted.txt"
-    OTHER_URL  = "https://ftp.nasdaqtrader.com/SymbolDirectory/otherlisted.txt"
-
-    configs = [
-        (NASDAQ_URL, "Symbol",     "Test Issue"),
-        (OTHER_URL,  "ACT Symbol", "Test Issue"),
-    ]
-
-    tickers: set[str] = set()
-    for url, sym_col, test_col in configs:
-        try:
-            df = pd.read_csv(url, sep="|")
-            # Drop the trailing metadata row NASDAQ appends
-            df = df[~df[sym_col].astype(str).str.startswith("File Creation")]
-            # Remove test issues
-            if test_col in df.columns:
-                df = df[df[test_col].astype(str).str.strip() == "N"]
-            # Keep only clean 1–5 letter tickers (common stocks + ETFs)
-            valid_mask = df[sym_col].astype(str).str.match(r"^[A-Z]{1,5}$")
-            batch = df.loc[valid_mask, sym_col].astype(str).tolist()
-            before = len(tickers)
-            tickers.update(batch)
-            logger.info(f"  NASDAQ Trader {url.split('/')[-1]}: "
-                        f"{len(batch)} tickers ({len(tickers) - before} new)")
-        except Exception as e:
-            logger.warning(f"  Could not fetch {url}: {e}")
-
-    return sorted(tickers)
-
-
-def _get_extended_ticker_list(use_all_listed: bool = False) -> list[str]:
-    """
-    Build the candidate list for general_market_data.
-
-    Strategy (with automatic fallback):
-      1. Wikipedia S&P 500 + S&P 400 + S&P 600  (~1 500 tickers, curated)
-      2. NASDAQ Trader full listing              (~7 000 tickers, exhaustive)
-         — only used when use_all_listed=True or Wikipedia scraping fails
-      3. _FALLBACK_TICKERS hardcoded list        (last resort)
-
-    Tickers already in market_data are filtered out in update_general_stocks().
-    """
-    import re  # noqa: F811 — already imported at module level but needed here too
-
-    logger.info("Building extended ticker list...")
-
-    tickers: list[str] = []
-
-    if use_all_listed:
-        logger.info("  Mode: NASDAQ Trader (all US-listed stocks)")
-        tickers = _fetch_nasdaq_trader_tickers()
-    else:
-        logger.info("  Mode: Wikipedia S&P 500 + S&P 400 + S&P 600")
-        tickers = _fetch_sp_index_tickers()
-
-    if not tickers:
-        logger.warning("  Dynamic fetch returned nothing — falling back to hardcoded list")
-        tickers = list(_FALLBACK_TICKERS)
-
-    logger.info(f"  Extended ticker list: {len(tickers):,} candidates total")
-    return tickers
 
 # ── Credentials ───────────────────────────────────────────────────────────────
 
@@ -421,11 +277,106 @@ def _upload_df(client: bigquery.Client, df: pd.DataFrame, table_id: str, dry_run
     return len(df)
 
 
+def prune_old_data(
+    client: bigquery.Client,
+    table_id: str,
+    years: int = 15,
+    dry_run: bool = False,
+) -> None:
+    """
+    Delete rows older than `years` years from table_id.
+
+    Called nightly to keep general_market_data within the 15-year rolling window.
+    BigQuery DELETE on a partitioned table is efficient — only affected partitions
+    are scanned.
+    """
+    cutoff = date.today() - timedelta(days=years * 365)
+    if dry_run:
+        count_q = f"SELECT COUNT(*) AS n FROM `{table_id}` WHERE DATE(date) < '{cutoff}'"
+        row = list(client.query(count_q).result())[0]
+        logger.info(f"  [DRY RUN] Would delete ~{row.n:,} rows older than {cutoff} from {table_id}")
+        return
+    delete_q = f"DELETE FROM `{table_id}` WHERE DATE(date) < '{cutoff}'"
+    client.query(delete_q).result()
+    logger.info(f"  ✓ Pruned rows older than {cutoff} from {table_id}")
+
+
+def prune_delisted_tickers(
+    client: bigquery.Client,
+    stale_days: int = 45,
+    dry_run: bool = False,
+) -> list[str]:
+    """
+    Remove tickers from market_data (and ticker_metadata) whose most recent
+    row is older than `stale_days` calendar days.
+
+    A ticker that hasn't received any new data for 45+ days despite daily
+    update runs is almost certainly delisted or dropped from the universe
+    (e.g. ATGE, which was removed from the Russell 3000 top-2000 after the
+    April 2025 quarter-end rebalance).  Keeping stale tickers pollutes the
+    algorithm universe and causes 404s in the frontend for 1W/1M ranges.
+
+    Logs the full list of pruned tickers before deleting so you have a record.
+
+    Args:
+        stale_days: Tickers with max(date) older than this many days are removed.
+                    Default 45 — safely beyond any holiday/weekend gap.
+        dry_run:    If True, logs what would be deleted without touching BigQuery.
+
+    Returns:
+        List of ticker symbols that were (or would be) deleted.
+    """
+    cutoff = date.today() - timedelta(days=stale_days)
+    query = f"""
+        SELECT ticker, MAX(DATE(date)) AS last_date
+        FROM `{MARKET_DATA_TABLE}`
+        GROUP BY ticker
+        HAVING last_date < '{cutoff}'
+        ORDER BY last_date ASC
+    """
+    rows = list(client.query(query).result())
+    stale = [(row.ticker, str(row.last_date)) for row in rows]
+
+    if not stale:
+        logger.info(f"  ✓ No stale tickers found (threshold: data older than {cutoff})")
+        return []
+
+    logger.info(f"  Found {len(stale)} stale tickers (last data before {cutoff}):")
+    for ticker, last_date in stale:
+        logger.info(f"    {ticker:10s}  last date: {last_date}")
+
+    tickers_to_delete = [t for t, _ in stale]
+
+    if dry_run:
+        logger.info(
+            f"  [DRY RUN] Would delete all rows for {len(tickers_to_delete)} tickers "
+            f"from market_data and ticker_metadata."
+        )
+        return tickers_to_delete
+
+    # Delete from market_data
+    ticker_list_sql = ", ".join(f"'{t}'" for t in tickers_to_delete)
+    del_market = f"DELETE FROM `{MARKET_DATA_TABLE}` WHERE ticker IN ({ticker_list_sql})"
+    client.query(del_market).result()
+    logger.info(f"  ✓ Deleted {len(tickers_to_delete)} stale tickers from market_data")
+
+    # Delete from ticker_metadata (best-effort — table may not have all tickers)
+    del_meta = f"DELETE FROM `{TICKER_META_TABLE}` WHERE ticker IN ({ticker_list_sql})"
+    try:
+        client.query(del_meta).result()
+        logger.info(f"  ✓ Deleted stale tickers from ticker_metadata")
+    except Exception as e:
+        logger.warning(f"  Could not delete from ticker_metadata (non-fatal): {e}")
+
+    return tickers_to_delete
+
+
 def update_market_data(
     client: bigquery.Client,
     table_id: str,
     dry_run: bool = False,
     extra_tickers: list[str] | None = None,
+    new_ticker_lookback_years: int = 15,
 ) -> tuple[int, int]:
     """
     Incremental OHLCV update for table_id.
@@ -436,6 +387,9 @@ def update_market_data(
     extra_tickers: if provided, these tickers are added to the download even if
                    they don't yet exist in the table (first-time ingest).
 
+    new_ticker_lookback_years: how far back to start for brand-new tickers
+                               (default 15 to match the rolling retention window).
+
     Returns (rows_written, tickers_updated).
     """
     today = date.today()
@@ -443,12 +397,16 @@ def update_market_data(
     latest_dates = _get_latest_dates(client, table_id)
     logger.info(f"  Found {len(latest_dates):,} tickers in {table_id}")
 
-    # Merge in any extra tickers not yet in the table (start from 5 years ago)
+    # Merge in any extra tickers not yet in the table
     if extra_tickers:
-        five_years_ago = today - timedelta(days=5 * 365)
-        new_tickers = {t: five_years_ago for t in extra_tickers if t not in latest_dates}
+        lookback_start = today - timedelta(days=new_ticker_lookback_years * 365)
+        new_tickers = {t: lookback_start for t in extra_tickers if t not in latest_dates}
         if new_tickers:
-            logger.info(f"  Adding {len(new_tickers)} new tickers: {list(new_tickers.keys())}")
+            logger.info(
+                f"  Adding {len(new_tickers)} new tickers "
+                f"(lookback start: {lookback_start}): {list(new_tickers.keys())[:10]}"
+                + (" ..." if len(new_tickers) > 10 else "")
+            )
             latest_dates.update(new_tickers)
 
     # Group tickers by their start date to minimise yfinance calls
@@ -519,21 +477,55 @@ def update_market_data(
 
 # ── Step 2: ticker_metadata refresh ──────────────────────────────────────────
 
-def _fetch_yf_metadata(tickers: list[str]) -> pd.DataFrame:
+def _fetch_yf_metadata(tickers: list[str], max_retries: int = 3) -> pd.DataFrame:
     """
     Fetch metadata for a list of tickers via yfinance .info.
     Returns DataFrame with columns matching the actual ticker_metadata schema:
         ticker, company_name, sector, industry, market_cap, pe_ratio,
         country, exchange, currency, website, description, employees,
         last_updated, is_active
+
+    Includes per-ticker rate-limit detection with linear back-off
+    (matching the retry pattern used in _download_batch), plus a 0.2s
+    courtesy sleep between every call to stay within Yahoo Finance limits.
     """
     now = datetime.now()
     records = []
     for i, tkr in enumerate(tickers, 1):
         if i % 50 == 0:
             logger.info(f"  Metadata: {i}/{len(tickers)} fetched...")
-        try:
-            info = yf.Ticker(tkr).info
+
+        info = None
+        for attempt in range(1, max_retries + 1):
+            try:
+                info = yf.Ticker(tkr).info
+                break  # success
+            except Exception as e:
+                err_str  = str(e)
+                exc_type = type(e).__name__
+                is_rate_limit = (
+                    "RateLimit" in exc_type
+                    or "Too Many Requests" in err_str
+                    or "rate limit" in err_str.lower()
+                )
+                if is_rate_limit:
+                    wait_sec = 60 * attempt   # 60 s, 120 s, 180 s
+                    if attempt < max_retries:
+                        logger.warning(
+                            f"  Rate limited on {tkr} (attempt {attempt}/{max_retries}). "
+                            f"Waiting {wait_sec}s before retry..."
+                        )
+                        time.sleep(wait_sec)
+                    else:
+                        logger.warning(
+                            f"  Giving up metadata for {tkr} after {max_retries} "
+                            f"rate-limit retries."
+                        )
+                else:
+                    logger.debug(f"  Could not fetch metadata for {tkr}: {e}")
+                    break  # non-rate-limit error — don't retry
+
+        if info:
             records.append({
                 "ticker":       tkr,
                 "company_name": info.get("longName") or info.get("shortName") or tkr,
@@ -550,8 +542,7 @@ def _fetch_yf_metadata(tickers: list[str]) -> pd.DataFrame:
                 "last_updated": now,
                 "is_active":    True,
             })
-        except Exception as e:
-            logger.debug(f"  Could not fetch metadata for {tkr}: {e}")
+        else:
             records.append({
                 "ticker":       tkr,
                 "company_name": tkr,
@@ -568,6 +559,9 @@ def _fetch_yf_metadata(tickers: list[str]) -> pd.DataFrame:
                 "last_updated": now,
                 "is_active":    False,
             })
+
+        time.sleep(0.2)  # courtesy pause between every ticker call
+
     return pd.DataFrame(records)
 
 
@@ -597,8 +591,9 @@ def refresh_ticker_metadata(
         logger.info(f"  [DRY RUN] Would upsert {len(meta_df):,} rows into {TICKER_META_TABLE}")
         return len(meta_df)
 
-    # Write to a staging table, then MERGE into ticker_metadata
-    staging_id = f"{GCP_PROJECT}.{WRITE_DATASET}._meta_staging_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    # Write to a fixed-name staging table (WRITE_TRUNCATE overwrites it each run,
+    # so there is never more than one staging table regardless of retries or failures).
+    staging_id = f"{GCP_PROJECT}.{WRITE_DATASET}._meta_staging"
     meta_schema = [
         bigquery.SchemaField("ticker",       "STRING"),
         bigquery.SchemaField("company_name", "STRING"),
@@ -808,65 +803,16 @@ def seed_indices(
 def update_general_stocks(
     client: bigquery.Client,
     dry_run: bool = False,
-    use_all_listed: bool = False,
 ) -> tuple[int, int]:
     """
-    Fetch a large candidate list of tickers, remove any already in market_data,
-    and do an incremental OHLCV update into general_market_data for the rest.
+    Incremental OHLCV update for all tickers already in general_market_data.
 
-    Parameters
-    ----------
-    use_all_listed : if True, use NASDAQ Trader (~7 000 tickers) instead of
-                     Wikipedia S&P indices (~1 500 tickers).  Slower but more
-                     comprehensive.
+    Reads the latest date per ticker from the table and downloads new rows
+    from (latest + 1 day) to today.  New tickers are added via the one-time
+    backfill script (backfill_general_market_data.py), not here.
     """
-    # ── Step 3a: get the full candidate list ─────────────────────────────────
-    candidates = _get_extended_ticker_list(use_all_listed=use_all_listed)
-
-    # ── Step 3b: filter out anything already in market_data ──────────────────
-    logger.info("Checking which candidates are already in market_data...")
-    universe_query = f"SELECT DISTINCT ticker FROM `{MARKET_DATA_TABLE}`"
-    universe_set = {row.ticker for row in client.query(universe_query).result()}
-
-    # Also check what's already in general_market_data (incremental-safe)
-    try:
-        gen_query = f"SELECT DISTINCT ticker FROM `{GENERAL_DATA_TABLE}`"
-        already_general = {row.ticker for row in client.query(gen_query).result()}
-    except Exception:
-        already_general = set()
-
-    truly_new    = [t for t in candidates if t not in universe_set and t not in already_general]
-    already_main = [t for t in candidates if t in universe_set]
-    already_gen  = [t for t in candidates if t in already_general]
-
-    logger.info(f"  {len(candidates):,} candidates total")
-    logger.info(f"  {len(already_main):,} already in market_data   (skipping)")
-    logger.info(f"  {len(already_gen):,}  already in general_market_data (incremental update)")
-    logger.info(f"  {len(truly_new):,}  genuinely new → will ingest into general_market_data")
-
-    if dry_run:
-        logger.info(f"  [DRY RUN] Would ingest {len(truly_new):,} new tickers. Sample:")
-        for t in truly_new[:30]:
-            logger.info(f"    {t}")
-        if len(truly_new) > 30:
-            logger.info(f"    ... and {len(truly_new) - 30} more")
-        return 0, len(truly_new)
-
-    if not truly_new and not already_gen:
-        logger.info("  Nothing to do — all candidates already covered.")
-        ensure_general_market_data_table(client)   # still create table if missing
-        return 0, 0
-
     ensure_general_market_data_table(client)
-
-    # Ingest new tickers + do incremental update for existing general tickers
-    all_to_process = truly_new + list(already_gen)
-    rows, tickers = update_market_data(
-        client,
-        table_id=GENERAL_DATA_TABLE,
-        dry_run=dry_run,
-        extra_tickers=all_to_process,
-    )
+    rows, tickers = update_market_data(client, GENERAL_DATA_TABLE, dry_run=dry_run)
     return rows, tickers
 
 
@@ -875,9 +821,11 @@ def update_general_stocks(
 def main(
     dry_run: bool = False,
     update_general: bool = False,
-    use_all_listed: bool = False,
     metadata_only: bool = False,
     seed_indices_only: bool = False,
+    prune_old: bool = False,
+    prune_delisted: bool = False,
+    prune_delisted_days: int = 45,
 ) -> None:
     logger.info("=" * 60)
     logger.info("DATA UPDATE SCRIPT — LagLens")
@@ -923,16 +871,49 @@ def main(
 
     # ── Step 3: general_market_data (optional) ────────────────────────────
     if update_general:
-        mode_label = "NASDAQ Trader (all US-listed)" if use_all_listed else "Wikipedia S&P 500/400/600"
         logger.info("\n" + "=" * 60)
-        logger.info(f"STEP 3: Updating general_market_data — source: {mode_label}")
+        logger.info("STEP 3: Updating general_market_data (incremental)")
         logger.info("=" * 60)
-        rows3, tickers3 = update_general_stocks(
-            client, dry_run=dry_run, use_all_listed=use_all_listed
-        )
+        rows3, tickers3 = update_general_stocks(client, dry_run=dry_run)
         logger.info(
             f"\n  General stocks update complete: {rows3:,} rows written, "
             f"{tickers3:,} tickers updated/queued"
+        )
+
+        # Indices (SPX, IXIC, DJI) are stored in general_market_data under BQ
+        # symbol names but yfinance requires ^-prefixed symbols (^GSPC, ^IXIC, ^DJI).
+        # update_general_stocks() passes the BQ names to yfinance and gets nothing
+        # back, so indices never update via the generic path. seed_indices() has
+        # the correct symbol mapping and handles incremental updates safely.
+        logger.info("\n" + "=" * 60)
+        logger.info("STEP 3b: Updating index data (SPX, IXIC, DJI)")
+        logger.info("=" * 60)
+        rows_idx = seed_indices(client, dry_run=dry_run)
+        logger.info(f"\n  Index update complete: {rows_idx:,} rows written")
+
+    # ── Step 4: prune old data (optional, recommended for nightly cron) ───
+    if prune_old and update_general:
+        logger.info("\n" + "=" * 60)
+        logger.info("STEP 4: Pruning general_market_data rows older than 15 years")
+        logger.info("=" * 60)
+        prune_old_data(client, GENERAL_DATA_TABLE, years=15, dry_run=dry_run)
+    elif prune_old and not update_general:
+        logger.info("\n  --prune-old requires --update-general; skipping prune step.")
+
+    # ── Step 5: prune delisted tickers from market_data (optional) ────────
+    if prune_delisted:
+        logger.info("\n" + "=" * 60)
+        logger.info(
+            f"STEP 5: Pruning delisted/stale tickers from market_data "
+            f"(no data in last {prune_delisted_days} days)"
+        )
+        logger.info("=" * 60)
+        removed = prune_delisted_tickers(
+            client, stale_days=prune_delisted_days, dry_run=dry_run
+        )
+        logger.info(
+            f"\n  Delisted-ticker prune complete: "
+            f"{len(removed)} ticker(s) {'would be ' if dry_run else ''}removed"
         )
 
     logger.info("\n" + "=" * 60)
@@ -948,17 +929,26 @@ if __name__ == "__main__":
         epilog="""
 Examples
 --------
-  # Update universe + metadata only
+  # Update market_data OHLCV + ticker_metadata only
   python -m scripts.update_data
 
-  # + general stocks from S&P 500/400/600 (~1 500 candidates)
+  # + incremental update for general_market_data stocks
   python -m scripts.update_data --update-general
 
-  # + general stocks from ALL US-listed tickers (~7 000 candidates, slower)
-  python -m scripts.update_data --update-general --all-listed
+  # + prune rows older than 15 years from general_market_data
+  python -m scripts.update_data --update-general --prune-old
 
-  # Dry run first to see what would be ingested
-  python -m scripts.update_data --dry-run --update-general --all-listed
+  # Dry run — preview without writing to BigQuery
+  python -m scripts.update_data --dry-run --update-general
+
+  # Preview which delisted/stale tickers would be removed (no writes)
+  python -m scripts.update_data --dry-run --prune-delisted
+
+  # Actually remove stale tickers (last data > 45 days ago) from market_data
+  python -m scripts.update_data --prune-delisted
+
+  # Use a custom staleness threshold (e.g. 60 days)
+  python -m scripts.update_data --prune-delisted --prune-delisted-days 60
 """,
     )
     parser.add_argument(
@@ -985,19 +975,40 @@ Examples
         ),
     )
     parser.add_argument(
-        "--all-listed",
+        "--prune-old",
         action="store_true",
         help=(
-            "Use NASDAQ Trader's full US listing (~7 000 tickers) as the "
-            "candidate source instead of Wikipedia S&P indices (~1 500). "
-            "More comprehensive but significantly slower to ingest."
+            "Delete rows older than 15 years from general_market_data after "
+            "updating. Recommended for the nightly cron to keep the table clean. "
+            "Requires --update-general."
+        ),
+    )
+    parser.add_argument(
+        "--prune-delisted",
+        action="store_true",
+        help=(
+            "Remove tickers from market_data whose most recent row is older than "
+            "--prune-delisted-days (default 45). Catches stocks that have been "
+            "delisted or dropped from the Russell 3000 top-2000 (e.g. ATGE). "
+            "Always run --dry-run first to review the list before deleting."
+        ),
+    )
+    parser.add_argument(
+        "--prune-delisted-days",
+        type=int,
+        default=45,
+        help=(
+            "Staleness threshold in calendar days for --prune-delisted (default 45). "
+            "Tickers with no new data in this many days are considered delisted."
         ),
     )
     args = parser.parse_args()
     main(
         dry_run=args.dry_run,
         update_general=args.update_general,
-        use_all_listed=args.all_listed,
         metadata_only=args.metadata_only,
         seed_indices_only=args.seed_indices,
+        prune_old=args.prune_old,
+        prune_delisted=args.prune_delisted,
+        prune_delisted_days=args.prune_delisted_days,
     )

@@ -1,10 +1,14 @@
 # backend/app/main.py
+import asyncio
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from app.core.config import get_settings
 from app.routers.model import router as model_router
 from app.routers import stocks, indices, portfolio, pairs, montecarlo
+from app.services.ticker_cache import refresh_ticker_cache
+from app.services.dashboard_cache import refresh_dashboard_cache
 
 settings = get_settings()
 
@@ -34,6 +38,19 @@ app.add_middleware(
     allow_methods=["GET", "POST"],
     allow_headers=["Content-Type"],
 )
+
+@app.on_event("startup")
+async def startup():
+    # Load ticker list into memory immediately, then refresh every 24 hours.
+    # All search requests are served from this cache — no BQ query per keystroke.
+    asyncio.create_task(refresh_ticker_cache())
+
+    # Load dashboard stock + index summaries into memory immediately, then
+    # refresh daily at 8:30 PM ET (after the nightly market_data update).
+    # /api/stocks and /api/indices are served from this cache — no BQ or
+    # Firestore reads on the hot path after the first load completes.
+    asyncio.create_task(refresh_dashboard_cache())
+
 
 app.include_router(stocks.router)
 app.include_router(indices.router)

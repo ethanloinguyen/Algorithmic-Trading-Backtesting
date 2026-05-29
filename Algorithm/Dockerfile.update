@@ -1,0 +1,49 @@
+# Algorithm/Dockerfile.update
+# ----------------------------
+# Image for daily data ingestion:
+#   - update_data.py   (daily at 4:30 PM ET — market_data + general_market_data)
+#
+# Intentionally lighter than Algorithm/Dockerfile:
+#   - No numba / scipy / scikit-learn / networkx (not needed for data ingestion)
+#   - Ticker universe sourced from committed ITOT holdings CSV (no external API)
+#
+# Build from repo root:
+#   docker build -f Algorithm/Dockerfile.update -t update-data:latest .
+#
+# Cloud Run Job command (override CMD in job definition):
+#   python -m scripts.update_data --update-general --prune-old
+
+FROM python:3.11-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy only the Algorithm directory (scripts/, src/, config/)
+# We don't need jobs/ or Model/ in this image
+COPY Algorithm/ /app/Algorithm/
+
+# WORKDIR must be /app/Algorithm so that `python -m scripts.xxx`
+# resolves to /app/Algorithm/scripts/xxx.py
+WORKDIR /app/Algorithm
+
+# Minimal dependency set for data ingestion only
+RUN pip install --no-cache-dir \
+        numpy \
+        pandas \
+        pyarrow \
+        yfinance \
+        requests \
+        pyyaml \
+        google-cloud-bigquery \
+        google-cloud-bigquery-storage \
+        db-dtypes \
+        pandas-gbq
+
+# /app on PYTHONPATH lets absolute imports like `from Algorithm.src.x import`
+# resolve if any script ever needs them; the WORKDIR handles `scripts.xxx`.
+ENV PYTHONPATH=/app
+
+# Default: daily incremental update for market_data + general_market_data.
+# FMP_API_KEY must be injected at runtime via Cloud Run secret mount.
+CMD ["python", "-m", "scripts.update_data", "--update-general", "--prune-old"]

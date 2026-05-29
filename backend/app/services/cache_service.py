@@ -16,6 +16,7 @@ Document shape:
 """
 from __future__ import annotations
 
+import hashlib
 from datetime import datetime, timezone, timedelta
 from typing import Any
 
@@ -29,6 +30,7 @@ from app.models.stock import OHLCVCandle, StockSummary, IndexSummary, TimeRange
 TTL_SUMMARIES      = timedelta(minutes=5)
 TTL_OHLCV_INTRADAY = timedelta(minutes=1)
 TTL_OHLCV_OTHER    = timedelta(minutes=10)
+TTL_PIPELINE       = timedelta(hours=23)
 
 
 def _ohlcv_ttl(range_: TimeRange) -> timedelta:
@@ -140,3 +142,103 @@ def set_cached_ohlcv(
         })
     except Exception as e:
         print(f"[cache] set_cached_ohlcv({symbol},{range_}) failed: {e}")
+
+
+# ── Risk pipeline results ─────────────────────────────────────────────────────
+
+def _pipeline_doc_id(tickers: list[str]) -> str:
+    key = ",".join(sorted(t.upper() for t in tickers))
+    return "risk_pipeline_" + hashlib.sha256(key.encode()).hexdigest()[:16]
+
+
+def get_cached_pipeline_result(tickers: list[str]) -> dict | None:
+    """Return cached pipeline result if fresh, else None."""
+    try:
+        fs   = get_fs_client()
+        snap = fs.collection("cache").document(_pipeline_doc_id(tickers)).get()
+        if not snap.exists:
+            return None
+        data = snap.to_dict()
+        if _is_stale(data, TTL_PIPELINE):
+            return None
+        return data["data"]
+    except Exception as e:
+        print(f"[cache] get_cached_pipeline_result failed: {e}")
+        return None
+
+
+def set_cached_pipeline_result(tickers: list[str], result: dict) -> None:
+    try:
+        fs = get_fs_client()
+        fs.collection("cache").document(_pipeline_doc_id(tickers)).set({
+            "data":       result,
+            "updated_at": firestore.SERVER_TIMESTAMP,
+        })
+    except Exception as e:
+        print(f"[cache] set_cached_pipeline_result failed: {e}")
+
+
+# ── Portfolio risk assessment cache ──────────────────────────────────────────
+
+def _portfolio_risk_doc_id(tickers: list[str]) -> str:
+    key = ",".join(sorted(t.upper() for t in tickers))
+    return "portfolio_risk_" + hashlib.sha256(key.encode()).hexdigest()[:16]
+
+
+def get_cached_portfolio_risk(tickers: list[str]) -> dict | None:
+    try:
+        fs   = get_fs_client()
+        snap = fs.collection("cache").document(_portfolio_risk_doc_id(tickers)).get()
+        if not snap.exists:
+            return None
+        data = snap.to_dict()
+        if _is_stale(data, TTL_PIPELINE):
+            return None
+        return data["data"]
+    except Exception as e:
+        print(f"[cache] get_cached_portfolio_risk failed: {e}")
+        return None
+
+
+def set_cached_portfolio_risk(tickers: list[str], result: dict) -> None:
+    try:
+        fs = get_fs_client()
+        fs.collection("cache").document(_portfolio_risk_doc_id(tickers)).set({
+            "data":       result,
+            "updated_at": firestore.SERVER_TIMESTAMP,
+        })
+    except Exception as e:
+        print(f"[cache] set_cached_portfolio_risk failed: {e}")
+
+
+# ── Clustering pipeline cache ─────────────────────────────────────────────────
+
+def _clustering_doc_id(tickers: list[str]) -> str:
+    key = ",".join(sorted(t.upper() for t in tickers))
+    return "clustering_pipeline_" + hashlib.sha256(key.encode()).hexdigest()[:16]
+
+
+def get_cached_clustering_result(tickers: list[str]) -> dict | None:
+    try:
+        fs   = get_fs_client()
+        snap = fs.collection("cache").document(_clustering_doc_id(tickers)).get()
+        if not snap.exists:
+            return None
+        data = snap.to_dict()
+        if _is_stale(data, TTL_PIPELINE):
+            return None
+        return data["data"]
+    except Exception as e:
+        print(f"[cache] get_cached_clustering_result failed: {e}")
+        return None
+
+
+def set_cached_clustering_result(tickers: list[str], result: dict) -> None:
+    try:
+        fs = get_fs_client()
+        fs.collection("cache").document(_clustering_doc_id(tickers)).set({
+            "data":       result,
+            "updated_at": firestore.SERVER_TIMESTAMP,
+        })
+    except Exception as e:
+        print(f"[cache] set_cached_clustering_result failed: {e}")

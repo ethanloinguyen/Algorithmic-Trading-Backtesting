@@ -1,0 +1,38 @@
+# Algorithm/Dockerfile.quality_picks
+# ------------------------------------
+# Image for the nightly Quality Picks precomputation job:
+#   - quality_picks_job.py  (runs after daily data ingest completes)
+#
+# Intentionally lighter than Algorithm/Dockerfile:
+#   - No numba / scipy / scikit-learn / networkx (not needed for factor scoring)
+#   - No system build-essential / libgomp1 (no compiled extensions)
+#   - Only the BigQuery + pandas stack required for fetch → score → write
+#
+# Build from repo root:
+#   docker build -f Algorithm/Dockerfile.quality_picks -t quality-picks:latest .
+#
+# Cloud Run Job command (default CMD — no override needed):
+#   python -m Algorithm.jobs.quality_picks_job
+
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Copy only what this job needs: shared src/, config/, jobs/, and data/
+COPY Algorithm/ /app/Algorithm/
+
+# Minimal dependency set for factor scoring only
+RUN pip install --no-cache-dir \
+        numpy \
+        pandas \
+        pyarrow \
+        pyyaml \
+        google-cloud-bigquery \
+        google-cloud-bigquery-storage \
+        db-dtypes \
+        pandas-gbq
+
+# /app on PYTHONPATH so `from Algorithm.src.xxx import` resolves correctly
+ENV PYTHONPATH=/app
+
+CMD ["python", "-m", "Algorithm.jobs.quality_picks_job"]

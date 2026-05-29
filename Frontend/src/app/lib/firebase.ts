@@ -21,6 +21,8 @@ const firebaseConfig = {
   appId:             process.env.NEXT_PUBLIC_FIREBASE_APP_ID!,
 };
 
+const DB_ID = process.env.NEXT_PUBLIC_FIRESTORE_DATABASE_ID ?? "(default)";
+
 // On first load, initializeApp + initializeFirestore with IndexedDB persistence.
 // On HMR re-runs the app already exists, so we just call getFirestore().
 const isFirstInit = !getApps().length;
@@ -29,12 +31,12 @@ const app = isFirstInit ? initializeApp(firebaseConfig) : getApp();
 export const auth = getAuth(app);
 
 function initDb() {
-  if (!isFirstInit) return getFirestore(app);
+  if (!isFirstInit) return getFirestore(app, DB_ID);
   try {
-    return initializeFirestore(app, { localCache: persistentLocalCache() });
+    return initializeFirestore(app, { localCache: persistentLocalCache(), experimentalAutoDetectLongPolling: true }, DB_ID);
   } catch {
     // IndexedDB unavailable (incognito, storage quota) — fall back to memory cache
-    return initializeFirestore(app, {});
+    return initializeFirestore(app, {}, DB_ID);
   }
 }
 

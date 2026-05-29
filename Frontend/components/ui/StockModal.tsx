@@ -25,27 +25,25 @@ export interface Stock {
 
 // ── Time range config ─────────────────────────────────────────────────────────
 
-type UIRange = "1D" | "5D" | "1W" | "1M" | "6M" | "1Y" | "5Y";
+type UIRange = "1W" | "1M" | "3M" | "6M" | "1Y" | "5Y";
 
-const UI_RANGES: UIRange[] = ["1D", "5D", "1W", "1M", "6M", "1Y", "5Y"];
+const UI_RANGES: UIRange[] = ["1W", "1M", "3M", "6M", "1Y", "5Y"];
 
-// Map UI label → backend TimeRange (backend supports: 1D 1W 1M 3M 1Y 5Y)
+// Map UI label → backend TimeRange
 const TO_API: Record<UIRange, TimeRange> = {
-  "1D": "1D",
-  "5D": "1W",   // backend returns weekly data; we slice the last 5 points client-side
   "1W": "1W",
   "1M": "1M",
-  "6M": "3M",   // backend 3M is the closest available
+  "3M": "3M",
+  "6M": "6M",
   "1Y": "1Y",
   "5Y": "5Y",
 };
 
 // How many tail candles to show when slicing (null = show all)
 const SLICE: Record<UIRange, number | null> = {
-  "1D": null,
-  "5D": 5,
   "1W": null,
   "1M": null,
+  "3M": null,
   "6M": null,
   "1Y": null,
   "5Y": null,
@@ -567,9 +565,9 @@ export default function StockModal({ stock, onClose }: StockModalProps) {
                   ))}
 
                   {/* X-axis tick labels */}
-                  {ticks.map((pt) => (
+                  {ticks.map((pt, i) => (
                     <text
-                      key={pt.candle.date}
+                      key={i}
                       x={pt.x}
                       y={CHART_H - 4}
                       textAnchor="middle"

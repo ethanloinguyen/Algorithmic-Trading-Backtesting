@@ -13,7 +13,7 @@ export interface IndexSummary {
   symbol: string; name: string; value: string;
   change: string; pct: string; price: string; positive: boolean;
 }
-export type TimeRange = "1D" | "1W" | "1M" | "3M" | "1Y" | "5Y";
+export type TimeRange = "1D" | "1W" | "1M" | "3M" | "6M" | "1Y" | "5Y";
 export type AnalysisMode = "broad_market" | "in_sector";
 
 // ── Portfolio types ───────────────────────────────────────────────────────────
@@ -135,6 +135,19 @@ export async function fetchOHLCV(symbol: string, range: TimeRange): Promise<OHLC
 
 export async function fetchIndices(): Promise<IndexSummary[]> {
   const data = await apiFetch<{ data: IndexSummary[] }>("/api/indices");
+  return data.data;
+}
+
+export interface StockSearchResult {
+  symbol: string;
+  name:   string;
+}
+
+export async function fetchStockSearch(query: string): Promise<StockSearchResult[]> {
+  if (!query.trim()) return [];
+  const data = await apiFetch<{ data: StockSearchResult[] }>(
+    `/api/stocks/search?q=${encodeURIComponent(query.trim())}`
+  );
   return data.data;
 }
 
@@ -264,4 +277,58 @@ export async function runRiskPipeline(tickers: string[]): Promise<RiskPipelineRe
     throw new Error(detail);
   }
   return res.json() as Promise<RiskPipelineResult>;
+}
+
+// ── Split pipeline types + endpoints ─────────────────────────────────────────
+
+/** Fast endpoint result — portfolio-level MC risk for user holdings only. */
+export interface PortfolioRiskResult {
+  user_portfolio: string[];
+  risk: {
+    tickers: string[];
+    missing: string[];
+    weights: Record<string, number>;
+    horizon_days: number;
+    n_simulations: number;
+    portfolio: PortfolioRiskMetrics;
+  };
+}
+
+/** Slow endpoint result — K-Medoids picks + per-stock MC risk. */
+export interface ClusteringPipelineResult {
+  user_portfolio: string[];
+  recommendations: ClusteringPick[];
+  risk: {
+    tickers: string[];
+    missing: string[];
+    weights: Record<string, number>;
+    horizon_days: number;
+    n_simulations: number;
+    per_stock: Record<string, StockRiskMetrics>;
+  };
+}
+
+async function _postPipeline<T>(path: string, tickers: string[]): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, {
+    method: "POST", cache: "no-store",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ tickers: tickers.map(t => t.toUpperCase()) }),
+  });
+  if (!res.ok) {
+    let detail = `HTTP ${res.status} ${res.statusText}`;
+    try {
+      const body = await res.json();
+      if (body?.detail) detail = String(body.detail);
+    } catch { /* ignore */ }
+    throw new Error(detail);
+  }
+  return res.json() as Promise<T>;
+}
+
+export function runPortfolioRiskAssessment(tickers: string[]): Promise<PortfolioRiskResult> {
+  return _postPipeline<PortfolioRiskResult>("/api/portfolio/portfolio-risk", tickers);
+}
+
+export function runClusteringPipeline(tickers: string[]): Promise<ClusteringPipelineResult> {
+  return _postPipeline<ClusteringPipelineResult>("/api/portfolio/clustering-pipeline", tickers);
 }
