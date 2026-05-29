@@ -256,26 +256,29 @@ def _parse_ishares_csv(url: str, label: str) -> pd.DataFrame:
             logger.warning(f"  {label}: could not locate header row in CSV")
             return pd.DataFrame()
 
-        # iShares CSVs include footer rows (fund metadata, disclaimers) after
-        # the holdings data that have a completely different column count.
-        # Truncate at the first blank line after the header to drop footers,
-        # then fall back to skipping bad lines so format changes don't crash us.
-        data_lines = [lines[header_idx]]  # keep header
-        for line in lines[header_idx + 1:]:
-            if not line.strip():           # blank line signals end of holdings
-                break
-            data_lines.append(line)
-        csv_content = "\n".join(data_lines)
+        csv_content = "\n".join(lines[header_idx:])
 
+        # iShares CSVs include footer rows after the holdings data with a
+        # completely different column count (causing the "saw N fields" error).
+        # on_bad_lines='skip' drops those rows and keeps the valid holdings rows.
         try:
             df = pd.read_csv(StringIO(csv_content), on_bad_lines="skip")
         except TypeError:
             # pandas < 1.3 uses error_bad_lines instead of on_bad_lines
             df = pd.read_csv(StringIO(csv_content), error_bad_lines=False, warn_bad_lines=False)
 
-        if "Ticker" not in df.columns:
-            logger.warning(f"  {label}: 'Ticker' column missing")
+        # Normalise column names: iShares occasionally changes capitalisation
+        # (e.g. "ticker" vs "Ticker") — map everything to a canonical form.
+        col_map = {c: c.strip() for c in df.columns}
+        df.rename(columns=col_map, inplace=True)
+        ticker_col = next((c for c in df.columns if c.lower() == "ticker"), None)
+        if ticker_col is None:
+            logger.warning(
+                f"  {label}: 'Ticker' column missing — columns found: {list(df.columns)[:10]}"
+            )
             return pd.DataFrame()
+        if ticker_col != "Ticker":
+            df.rename(columns={ticker_col: "Ticker"}, inplace=True)
 
         # Keep only equity rows
         if "Asset Class" in df.columns:
