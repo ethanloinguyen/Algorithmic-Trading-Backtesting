@@ -34,7 +34,7 @@ TTL_PIPELINE       = timedelta(hours=23)
 
 # Bump this whenever the pipeline response schema changes to auto-invalidate
 # all existing cache documents without touching Firestore manually.
-_PIPELINE_CACHE_VERSION = "v2"
+_PIPELINE_CACHE_VERSION = "v3"
 
 
 def _ohlcv_ttl(range_: TimeRange) -> timedelta:
