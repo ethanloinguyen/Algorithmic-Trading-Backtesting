@@ -277,7 +277,13 @@ export default function DashboardPage() {
     if (!authLoading && !user) router.replace("/");
   }, [user, authLoading, router]);
 
-  // Load data — Firestore cache first, then API
+  // Load data — Firestore cache first, then API (stale-while-revalidate)
+  //
+  // Fix 1: If Firestore has any data (fresh or stale), clear the loading
+  //         skeleton immediately so the user sees content without waiting
+  //         for the backend round-trip.
+  // Fix 3: Only call the backend when the Firestore cache is actually stale
+  //         or missing — skips the API call entirely on warm-cache visits.
   const loadData = useCallback(async () => {
     setDataLoading(true);
     try {
@@ -285,18 +291,32 @@ export default function DashboardPage() {
         getCachedSummaries(),
         getCachedIndices(),
       ]);
-      if (cachedStocks && !cachedStocks.stale) setStocks(cachedStocks.data);
-      if (cachedIndices && !cachedIndices.stale) setIndices(cachedIndices.data);
 
-      const [stocksResult, indicesResult] = await Promise.allSettled([
-        fetchAllStocks(),
-        fetchIndices(),
-      ]);
-      if (stocksResult.status  === "fulfilled") setStocks(stocksResult.value);
-      if (indicesResult.status === "fulfilled") setIndices(indicesResult.value);
+      // Populate state from whatever Firestore has (fresh or stale)
+      if (cachedStocks)  setStocks(cachedStocks.data);
+      if (cachedIndices) setIndices(cachedIndices.data);
+
+      // Fix 1: We have data — stop showing skeleton rows right now.
+      // Any background refresh below will update the UI silently.
+      if (cachedStocks || cachedIndices) setDataLoading(false);
+
+      // Fix 3: Only hit the backend when cache is missing or stale.
+      const needsStockRefresh   = !cachedStocks  || cachedStocks.stale;
+      const needsIndicesRefresh = !cachedIndices || cachedIndices.stale;
+
+      if (needsStockRefresh || needsIndicesRefresh) {
+        const [stocksResult, indicesResult] = await Promise.allSettled([
+          needsStockRefresh   ? fetchAllStocks() : Promise.resolve(null),
+          needsIndicesRefresh ? fetchIndices()   : Promise.resolve(null),
+        ]);
+        if (stocksResult.status  === "fulfilled" && stocksResult.value)  setStocks(stocksResult.value);
+        if (indicesResult.status === "fulfilled" && indicesResult.value) setIndices(indicesResult.value);
+      }
     } catch {
       // keep whatever we loaded from cache
     } finally {
+      // Always clear loading at the end — covers the cold-cache path where
+      // setDataLoading(false) above was never reached.
       setDataLoading(false);
     }
   }, []);
