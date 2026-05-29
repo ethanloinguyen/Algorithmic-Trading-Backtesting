@@ -1,6 +1,6 @@
 // frontend/src/app/dashboard/model/page.tsx
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import {
   TrendingUp, TrendingDown, Search, BarChart2,

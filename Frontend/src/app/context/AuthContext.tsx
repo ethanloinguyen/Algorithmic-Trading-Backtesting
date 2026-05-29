@@ -107,21 +107,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // Auth state listener
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, async (firebaseUser) => {
+    const unsub = onAuthStateChanged(auth, (firebaseUser) => {
       setUser(firebaseUser);
+      setLoading(false);
       if (firebaseUser) {
-        try {
-          await loadUserData(firebaseUser.uid);
-        } catch (err) {
+        loadUserData(firebaseUser.uid).catch((err) => {
           console.error("Failed to load user data from Firestore:", err);
           setSavedStocks([]);
           setCustomPortfolios([]);
-        }
+        });
       } else {
         setSavedStocks([]);
         setCustomPortfolios([]);
       }
-      setLoading(false);
     });
     return unsub;
   }, [loadUserData]);
