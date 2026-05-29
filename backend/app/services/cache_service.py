@@ -32,6 +32,10 @@ TTL_OHLCV_INTRADAY = timedelta(minutes=1)
 TTL_OHLCV_OTHER    = timedelta(minutes=10)
 TTL_PIPELINE       = timedelta(hours=23)
 
+# Bump this whenever the pipeline response schema changes to auto-invalidate
+# all existing cache documents without touching Firestore manually.
+_PIPELINE_CACHE_VERSION = "v2"
+
 
 def _ohlcv_ttl(range_: TimeRange) -> timedelta:
     return TTL_OHLCV_INTRADAY if range_ == TimeRange.ONE_DAY else TTL_OHLCV_OTHER
@@ -148,7 +152,7 @@ def set_cached_ohlcv(
 
 def _pipeline_doc_id(tickers: list[str]) -> str:
     key = ",".join(sorted(t.upper() for t in tickers))
-    return "risk_pipeline_" + hashlib.sha256(key.encode()).hexdigest()[:16]
+    return f"risk_pipeline_{_PIPELINE_CACHE_VERSION}_" + hashlib.sha256(key.encode()).hexdigest()[:16]
 
 
 def get_cached_pipeline_result(tickers: list[str]) -> dict | None:
@@ -182,7 +186,7 @@ def set_cached_pipeline_result(tickers: list[str], result: dict) -> None:
 
 def _portfolio_risk_doc_id(tickers: list[str]) -> str:
     key = ",".join(sorted(t.upper() for t in tickers))
-    return "portfolio_risk_" + hashlib.sha256(key.encode()).hexdigest()[:16]
+    return f"portfolio_risk_{_PIPELINE_CACHE_VERSION}_" + hashlib.sha256(key.encode()).hexdigest()[:16]
 
 
 def get_cached_portfolio_risk(tickers: list[str]) -> dict | None:
@@ -215,7 +219,7 @@ def set_cached_portfolio_risk(tickers: list[str], result: dict) -> None:
 
 def _clustering_doc_id(tickers: list[str]) -> str:
     key = ",".join(sorted(t.upper() for t in tickers))
-    return "clustering_pipeline_" + hashlib.sha256(key.encode()).hexdigest()[:16]
+    return f"clustering_pipeline_{_PIPELINE_CACHE_VERSION}_" + hashlib.sha256(key.encode()).hexdigest()[:16]
 
 
 def get_cached_clustering_result(tickers: list[str]) -> dict | None:
