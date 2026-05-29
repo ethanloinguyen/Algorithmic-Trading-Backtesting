@@ -108,6 +108,8 @@ class ClusteringRecommendation(BaseModel):
     mean_intra_dist:       float
     n_sector_candidates:   int
     cluster_size:          int
+    risk_rank_score:       float | None = None  # composite score 0-1, higher = better risk profile
+    risk_rank:             int | None = None    # ordinal rank across recommendations (1 = best)
 
 
 class PipelineResponse(BaseModel):

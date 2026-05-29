@@ -64,6 +64,82 @@ def _sanitize(obj):
     return obj
 
 
+def _rank_recommendations(
+    recommendations: list[dict],
+    per_stock: dict[str, dict],
+) -> list[dict]:
+    """
+    Attach risk_rank_score and risk_rank to each recommendation dict,
+    then return the list sorted best-to-worst.
+
+    Composite weights
+    -----------------
+    35%  sortino_ratio_historical_252d  (higher = better)
+    25%  cvar_95                        (higher = better, i.e. less negative)
+    20%  prob_loss                      (lower = better)
+    10%  expected_max_drawdown          (lower = better)
+    10%  avg_dcor_to_portfolio          (lower = better, from clustering output)
+    """
+    WEIGHTS: dict[str, tuple[float, str]] = {
+        "sortino_ratio_historical_252d": (0.35, "higher"),
+        "cvar_95":                       (0.25, "higher"),
+        "prob_loss":                     (0.20, "lower"),
+        "expected_max_drawdown":         (0.10, "lower"),
+        "avg_dcor_to_portfolio":         (0.10, "lower"),
+    }
+
+    def _raw(rec: dict, metric: str) -> float | None:
+        if metric == "avg_dcor_to_portfolio":
+            return rec.get("avg_dcor_to_portfolio")
+        val = per_stock.get(rec["stock"], {}).get(metric)
+        if val is None:
+            return None
+        if isinstance(val, float) and np.isnan(val):
+            return None
+        return val
+
+    # Gather per-metric value lists for min-max normalization
+    metric_vals: dict[str, list[float]] = {m: [] for m in WEIGHTS}
+    for rec in recommendations:
+        for metric in WEIGHTS:
+            v = _raw(rec, metric)
+            if v is not None:
+                metric_vals[metric].append(v)
+
+    metric_range: dict[str, tuple[float, float] | None] = {
+        m: (min(vs), max(vs)) if vs else None
+        for m, vs in metric_vals.items()
+    }
+
+    def _normalize(val: float, metric: str) -> float:
+        rng = metric_range[metric]
+        if rng is None:
+            return 0.5
+        lo, hi = rng
+        if hi == lo:
+            return 0.5
+        norm = (val - lo) / (hi - lo)
+        return norm if WEIGHTS[metric][1] == "higher" else 1.0 - norm
+
+    for rec in recommendations:
+        weighted_sum = 0.0
+        total_weight = 0.0
+        for metric, (weight, _) in WEIGHTS.items():
+            v = _raw(rec, metric)
+            if v is not None:
+                weighted_sum += weight * _normalize(v, metric)
+                total_weight += weight
+        rec["risk_rank_score"] = round(weighted_sum / total_weight, 4) if total_weight > 0 else None
+
+    recommendations.sort(
+        key=lambda r: (r["risk_rank_score"] is None, -(r["risk_rank_score"] or 0))
+    )
+    for i, rec in enumerate(recommendations):
+        rec["risk_rank"] = i + 1 if rec["risk_rank_score"] is not None else None
+
+    return recommendations
+
+
 def run_risk_pipeline(
     user_portfolio: list[str],
     horizon_days: int = 63,
@@ -162,9 +238,14 @@ def run_risk_pipeline(
         "portfolio": user_risk["portfolio"],
     }
 
+    ranked_recs = _rank_recommendations(
+        recommendations.to_dict("records"),
+        rec_risk.get("per_stock", {}),
+    )
+
     result = _sanitize({
         "user_portfolio":  user_portfolio,
-        "recommendations": recommendations.to_dict("records"),
+        "recommendations": ranked_recs,
         "risk":            risk,
     })
 
@@ -267,9 +348,14 @@ def run_clustering_pipeline(
         seed=seed,
     )
 
+    ranked_recs = _rank_recommendations(
+        recommendations.to_dict("records"),
+        rec_risk.get("per_stock", {}),
+    )
+
     result = _sanitize({
         "user_portfolio":  user_portfolio,
-        "recommendations": recommendations.to_dict("records"),
+        "recommendations": ranked_recs,
         "risk":            rec_risk,
     })
 
