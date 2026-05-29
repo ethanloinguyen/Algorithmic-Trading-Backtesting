@@ -246,6 +246,8 @@ export interface ClusteringPick {
   mean_intra_dist: number;
   n_sector_candidates: number;
   cluster_size: number;
+  risk_rank_score: number | null;
+  risk_rank: number | null;
 }
 
 export interface RiskPipelineResult {

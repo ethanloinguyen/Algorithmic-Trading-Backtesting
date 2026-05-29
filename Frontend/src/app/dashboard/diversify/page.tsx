@@ -419,6 +419,8 @@ const METRIC_DETAILS: Record<string, string> = {
     "The percentage of simulation paths where this stock finishes below its starting price at the horizon date.",
   "Max Drawdown":
     "The average peak-to-trough decline for this stock across all simulation paths, representing typical downside exposure.",
+  "Risk Score":
+    "Composite risk score (0–1) ranking this pick against the other recommendations — higher is better. Weighted across five dimensions: Sortino ratio 35% (risk-adjusted return), CVaR 95% 25% (tail-loss severity), probability of loss 20%, expected max drawdown 10%, and decorrelation from your portfolio 10%. Each metric is min-max normalised across the recommendation set, so the score reflects relative strength, not an absolute threshold.",
 };
 
 function RiskResultPanel({ result, onTickerClick }: {
@@ -1089,17 +1091,37 @@ export default function DiversifyPage() {
                         {clusteringResult.recommendations.map((rec: ClusteringPick) => (
                           <div key={rec.stock} className="rounded-xl p-4 flex flex-col gap-2" style={CARD}>
                             <div className="flex items-center justify-between">
-                              <button className="text-sm font-bold hover:underline" style={{ color: TEXT_PRI }}
-                                onClick={() => handleTickerClick(rec.stock)}>
-                                {rec.stock}
-                                {rec.is_medoid && <span className="ml-1 text-xs" style={{ color: AMBER }}>★</span>}
-                              </button>
+                              <div className="flex items-center gap-1.5">
+                                {rec.risk_rank != null && (
+                                  <span className="text-xs font-mono px-1.5 py-0.5 rounded"
+                                    style={{ background: BORDER_D, color: TEXT_MUT }}>
+                                    #{rec.risk_rank}
+                                  </span>
+                                )}
+                                <button className="text-sm font-bold hover:underline" style={{ color: TEXT_PRI }}
+                                  onClick={() => handleTickerClick(rec.stock)}>
+                                  {rec.stock}
+                                  {rec.is_medoid && <span className="ml-1 text-xs" style={{ color: AMBER }}>★</span>}
+                                </button>
+                              </div>
                               <span className="text-xs px-1.5 py-0.5 rounded font-mono"
                                 style={{ background: GREEN_DIM, color: GREEN }}>
                                 {rec.avg_dcor_to_portfolio.toFixed(3)}
                               </span>
                             </div>
                             <SectorTag sector={rec.sector} />
+                            {rec.risk_rank_score != null && (
+                              <div className="flex items-center justify-between pt-1.5"
+                                style={{ borderTop: `1px solid ${BORDER_D}` }}>
+                                <span className="text-xs flex items-center" style={{ color: TEXT_MUT }}>
+                                  Risk Score
+                                  <MetricHint detail={METRIC_DETAILS["Risk Score"]} position="above" />
+                                </span>
+                                <span className="text-xs font-mono" style={{ color: TEXT_PRI }}>
+                                  {rec.risk_rank_score.toFixed(3)}
+                                </span>
+                              </div>
+                            )}
                           </div>
                         ))}
                       </div>
@@ -1158,12 +1180,12 @@ export default function DiversifyPage() {
                       </div>
                       {clusteringResult.risk.missing.length > 0 ? (
                         <p className="text-xs mt-3 px-1" style={{ color: TEXT_MUT }}>
-                          ★ = cluster medoid · dcor badge = decorrelation from your portfolio (lower is better)
+                          #N = risk rank · ★ = cluster medoid · dcor badge = decorrelation from your portfolio (lower is better)
                           · {clusteringResult.risk.missing.length} ticker{clusteringResult.risk.missing.length > 1 ? "s" : ""} unavailable: {clusteringResult.risk.missing.join(", ")}
                         </p>
                       ) : (
                         <p className="text-xs mt-3 px-1" style={{ color: TEXT_MUT }}>
-                          ★ = cluster medoid · dcor badge = decorrelation from your portfolio (lower is better)
+                          #N = risk rank · ★ = cluster medoid · dcor badge = decorrelation from your portfolio (lower is better)
                         </p>
                       )}
                     </>
