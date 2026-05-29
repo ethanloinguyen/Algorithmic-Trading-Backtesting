@@ -301,6 +301,76 @@ def prune_old_data(
     logger.info(f"  ✓ Pruned rows older than {cutoff} from {table_id}")
 
 
+def prune_delisted_tickers(
+    client: bigquery.Client,
+    stale_days: int = 45,
+    dry_run: bool = False,
+) -> list[str]:
+    """
+    Remove tickers from market_data (and ticker_metadata) whose most recent
+    row is older than `stale_days` calendar days.
+
+    A ticker that hasn't received any new data for 45+ days despite daily
+    update runs is almost certainly delisted or dropped from the universe
+    (e.g. ATGE, which was removed from the Russell 3000 top-2000 after the
+    April 2025 quarter-end rebalance).  Keeping stale tickers pollutes the
+    algorithm universe and causes 404s in the frontend for 1W/1M ranges.
+
+    Logs the full list of pruned tickers before deleting so you have a record.
+
+    Args:
+        stale_days: Tickers with max(date) older than this many days are removed.
+                    Default 45 — safely beyond any holiday/weekend gap.
+        dry_run:    If True, logs what would be deleted without touching BigQuery.
+
+    Returns:
+        List of ticker symbols that were (or would be) deleted.
+    """
+    cutoff = date.today() - timedelta(days=stale_days)
+    query = f"""
+        SELECT ticker, MAX(DATE(date)) AS last_date
+        FROM `{MARKET_DATA_TABLE}`
+        GROUP BY ticker
+        HAVING last_date < '{cutoff}'
+        ORDER BY last_date ASC
+    """
+    rows = list(client.query(query).result())
+    stale = [(row.ticker, str(row.last_date)) for row in rows]
+
+    if not stale:
+        logger.info(f"  ✓ No stale tickers found (threshold: data older than {cutoff})")
+        return []
+
+    logger.info(f"  Found {len(stale)} stale tickers (last data before {cutoff}):")
+    for ticker, last_date in stale:
+        logger.info(f"    {ticker:10s}  last date: {last_date}")
+
+    tickers_to_delete = [t for t, _ in stale]
+
+    if dry_run:
+        logger.info(
+            f"  [DRY RUN] Would delete all rows for {len(tickers_to_delete)} tickers "
+            f"from market_data and ticker_metadata."
+        )
+        return tickers_to_delete
+
+    # Delete from market_data
+    ticker_list_sql = ", ".join(f"'{t}'" for t in tickers_to_delete)
+    del_market = f"DELETE FROM `{MARKET_DATA_TABLE}` WHERE ticker IN ({ticker_list_sql})"
+    client.query(del_market).result()
+    logger.info(f"  ✓ Deleted {len(tickers_to_delete)} stale tickers from market_data")
+
+    # Delete from ticker_metadata (best-effort — table may not have all tickers)
+    del_meta = f"DELETE FROM `{TICKER_META_TABLE}` WHERE ticker IN ({ticker_list_sql})"
+    try:
+        client.query(del_meta).result()
+        logger.info(f"  ✓ Deleted stale tickers from ticker_metadata")
+    except Exception as e:
+        logger.warning(f"  Could not delete from ticker_metadata (non-fatal): {e}")
+
+    return tickers_to_delete
+
+
 def update_market_data(
     client: bigquery.Client,
     table_id: str,
@@ -754,6 +824,8 @@ def main(
     metadata_only: bool = False,
     seed_indices_only: bool = False,
     prune_old: bool = False,
+    prune_delisted: bool = False,
+    prune_delisted_days: int = 45,
 ) -> None:
     logger.info("=" * 60)
     logger.info("DATA UPDATE SCRIPT — LagLens")
@@ -828,6 +900,22 @@ def main(
     elif prune_old and not update_general:
         logger.info("\n  --prune-old requires --update-general; skipping prune step.")
 
+    # ── Step 5: prune delisted tickers from market_data (optional) ────────
+    if prune_delisted:
+        logger.info("\n" + "=" * 60)
+        logger.info(
+            f"STEP 5: Pruning delisted/stale tickers from market_data "
+            f"(no data in last {prune_delisted_days} days)"
+        )
+        logger.info("=" * 60)
+        removed = prune_delisted_tickers(
+            client, stale_days=prune_delisted_days, dry_run=dry_run
+        )
+        logger.info(
+            f"\n  Delisted-ticker prune complete: "
+            f"{len(removed)} ticker(s) {'would be ' if dry_run else ''}removed"
+        )
+
     logger.info("\n" + "=" * 60)
     logger.info("DATA UPDATE COMPLETE")
     logger.info(f"Finished: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
@@ -852,6 +940,15 @@ Examples
 
   # Dry run — preview without writing to BigQuery
   python -m scripts.update_data --dry-run --update-general
+
+  # Preview which delisted/stale tickers would be removed (no writes)
+  python -m scripts.update_data --dry-run --prune-delisted
+
+  # Actually remove stale tickers (last data > 45 days ago) from market_data
+  python -m scripts.update_data --prune-delisted
+
+  # Use a custom staleness threshold (e.g. 60 days)
+  python -m scripts.update_data --prune-delisted --prune-delisted-days 60
 """,
     )
     parser.add_argument(
@@ -886,6 +983,25 @@ Examples
             "Requires --update-general."
         ),
     )
+    parser.add_argument(
+        "--prune-delisted",
+        action="store_true",
+        help=(
+            "Remove tickers from market_data whose most recent row is older than "
+            "--prune-delisted-days (default 45). Catches stocks that have been "
+            "delisted or dropped from the Russell 3000 top-2000 (e.g. ATGE). "
+            "Always run --dry-run first to review the list before deleting."
+        ),
+    )
+    parser.add_argument(
+        "--prune-delisted-days",
+        type=int,
+        default=45,
+        help=(
+            "Staleness threshold in calendar days for --prune-delisted (default 45). "
+            "Tickers with no new data in this many days are considered delisted."
+        ),
+    )
     args = parser.parse_args()
     main(
         dry_run=args.dry_run,
@@ -893,4 +1009,6 @@ Examples
         metadata_only=args.metadata_only,
         seed_indices_only=args.seed_indices,
         prune_old=args.prune_old,
+        prune_delisted=args.prune_delisted,
+        prune_delisted_days=args.prune_delisted_days,
     )

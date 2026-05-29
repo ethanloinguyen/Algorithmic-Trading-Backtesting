@@ -223,15 +223,23 @@ def fetch_candidates_and_features(
     fr_select = ', '.join(f'fr.{c}' for c in ['stock'] + numeric_features + (['sector_i'] if use_sector else []))
 
     query = f"""
-    WITH normalised AS (
+    WITH latest AS (
+        -- Pin every scan to the most recent pipeline run so stale tickers
+        -- from prior as_of_date snapshots (e.g. delisted stocks that appeared
+        -- in an earlier quarter) are never surfaced as candidates.
+        SELECT MAX(as_of_date) AS max_date FROM `{bq_table}`
+    ),
+    normalised AS (
         SELECT {COL_STOCK_A} AS portfolio_stock, {COL_STOCK_B} AS candidate_stock, {COL_DCOR} AS dcor
         FROM `{bq_table}`
-        WHERE {COL_STOCK_A} IN ({tickers_sql}) AND {COL_STOCK_B} NOT IN ({tickers_sql})
+        WHERE as_of_date = (SELECT max_date FROM latest)
+          AND {COL_STOCK_A} IN ({tickers_sql}) AND {COL_STOCK_B} NOT IN ({tickers_sql})
           AND {COL_DCOR} <= {dcor_threshold}
         UNION ALL
         SELECT {COL_STOCK_B}, {COL_STOCK_A}, {COL_DCOR}
         FROM `{bq_table}`
-        WHERE {COL_STOCK_B} IN ({tickers_sql}) AND {COL_STOCK_A} NOT IN ({tickers_sql})
+        WHERE as_of_date = (SELECT max_date FROM latest)
+          AND {COL_STOCK_B} IN ({tickers_sql}) AND {COL_STOCK_A} NOT IN ({tickers_sql})
           AND {COL_DCOR} <= {dcor_threshold}
     ),
     aggregated AS (
@@ -252,11 +260,13 @@ def fetch_candidates_and_features(
     feature_rows AS (
         SELECT {COL_STOCK_A} AS stock, {feat_i}{sector_i_sql}
         FROM `{bq_table}`
-        WHERE {COL_STOCK_A} IN (SELECT candidate_stock FROM top_candidates)
+        WHERE as_of_date = (SELECT max_date FROM latest)
+          AND {COL_STOCK_A} IN (SELECT candidate_stock FROM top_candidates)
         UNION ALL
         SELECT {COL_STOCK_B} AS stock, {feat_j}{sector_j_sql}
         FROM `{bq_table}`
-        WHERE {COL_STOCK_B} IN (SELECT candidate_stock FROM top_candidates)
+        WHERE as_of_date = (SELECT max_date FROM latest)
+          AND {COL_STOCK_B} IN (SELECT candidate_stock FROM top_candidates)
     )
     SELECT tc.avg_dcor_to_portfolio, tc.min_dcor_to_portfolio, {fr_select}
     FROM top_candidates tc

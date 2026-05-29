@@ -715,9 +715,11 @@ function LagAlignmentLab({ stocks }: { stocks: StockSummary[] }) {
               })()}
 
               {/* ── Brush for fine-grained range selection ── */}
-              <Brush dataKey="date" height={22} stroke={BORDER}
-                fill="hsl(215,25%,9%)" travellerWidth={6}
-                startIndex={0} endIndex={chartData.length - 1} />
+              {chartData.length > 0 && (
+                <Brush dataKey="date" height={22} stroke={BORDER}
+                  fill="hsl(215,25%,9%)" travellerWidth={6}
+                  startIndex={0} endIndex={chartData.length - 1} />
+              )}
             </LineChart>
           </ResponsiveContainer>
         </div>

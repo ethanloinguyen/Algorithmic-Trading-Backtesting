@@ -658,10 +658,80 @@ function PortfolioDropdown({
   );
 }
 
+// ── Add-to-portfolio dropdown button ──────────────────────────────────────────
+
+function AddToPortfolioButton({ ticker, portfolios, onAdd }: {
+  ticker:     string;
+  portfolios: { id: string; name: string; tickers: string[] }[];
+  onAdd:      (portfolioId: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  return (
+    <div ref={ref} className="relative" onClick={e => e.stopPropagation()}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="transition-all hover:scale-110"
+        title="Add to portfolio"
+        aria-label="Add to portfolio"
+      >
+        <Briefcase className="w-3.5 h-3.5" style={{ color: open ? BLUE : TEXT_MUT }} />
+      </button>
+      {open && (
+        <div
+          className="absolute z-50 rounded-xl overflow-hidden min-w-40"
+          style={{
+            background:  "hsl(215,28%,13%)",
+            border:      `1px solid ${BORDER}`,
+            boxShadow:   "0 8px 32px rgba(0,0,0,0.5)",
+            top:         "calc(100% + 4px)",
+            right:       0,
+          }}
+        >
+          {portfolios.length === 0 ? (
+            <div className="px-4 py-3 text-xs" style={{ color: TEXT_MUT }}>
+              No portfolios saved yet.
+            </div>
+          ) : (
+            portfolios.map((p, i) => {
+              const alreadyIn = p.tickers.includes(ticker);
+              return (
+                <button
+                  key={p.id}
+                  onMouseDown={() => { onAdd(p.id); setOpen(false); }}
+                  className="w-full text-left px-4 py-2.5 flex items-center justify-between gap-3 text-xs"
+                  style={{
+                    color:       alreadyIn ? BLUE : TEXT_PRI,
+                    borderTop:   i > 0 ? `1px solid ${BORDER_D}` : "none",
+                  }}
+                  onMouseEnter={e => (e.currentTarget.style.background = "hsl(215,25%,18%)")}
+                  onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
+                >
+                  <span className="font-medium truncate">{p.name}</span>
+                  {alreadyIn && <span style={{ color: BLUE }}>✓</span>}
+                </button>
+              );
+            })
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function DiversifyPage() {
-  const { savedStocks, customPortfolios } = useAuth();
+  const { savedStocks, customPortfolios, isSaved, toggleSave, updatePortfolio } = useAuth();
 
   const [analysisMode,  setAnalysisMode]  = useState<AnalysisMode>("broad_market");
   const [resultMode,    setResultMode]    = useState<AnalysisMode>("broad_market");
@@ -1035,6 +1105,14 @@ export default function DiversifyPage() {
                       onActiveChange={setActiveSpiderIdx}
                       onTickerClick={handleTickerClick}
                       companyNames={companyNames}
+                      isSaved={isSaved}
+                      onToggleSave={(ticker, name) => toggleSave({ symbol: ticker, name })}
+                      portfolios={customPortfolios}
+                      onAddToPortfolio={(ticker, portfolioId) => {
+                        const p = customPortfolios.find(p => p.id === portfolioId);
+                        if (p && !p.tickers.includes(ticker))
+                          updatePortfolio(portfolioId, p.name, [...p.tickers, ticker]);
+                      }}
                     />
                   </div>
                   <div className="mb-6">
@@ -1088,16 +1166,37 @@ export default function DiversifyPage() {
                       <div className="grid grid-cols-3 gap-3">
                         {clusteringResult.recommendations.map((rec: ClusteringPick) => (
                           <div key={rec.stock} className="rounded-xl p-4 flex flex-col gap-2" style={CARD}>
-                            <div className="flex items-center justify-between">
-                              <button className="text-sm font-bold hover:underline" style={{ color: TEXT_PRI }}
+                            <div className="flex items-center justify-between gap-2">
+                              <button className="text-sm font-bold hover:underline min-w-0 truncate" style={{ color: TEXT_PRI }}
                                 onClick={() => handleTickerClick(rec.stock)}>
                                 {rec.stock}
                                 {rec.is_medoid && <span className="ml-1 text-xs" style={{ color: AMBER }}>★</span>}
                               </button>
-                              <span className="text-xs px-1.5 py-0.5 rounded font-mono"
-                                style={{ background: GREEN_DIM, color: GREEN }}>
-                                {rec.avg_dcor_to_portfolio.toFixed(3)}
-                              </span>
+                              <div className="flex items-center gap-2 flex-shrink-0">
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); toggleSave({ symbol: rec.stock, name: companyNames[rec.stock] ?? rec.stock }); }}
+                                  className="transition-all hover:scale-110"
+                                  title={isSaved(rec.stock) ? "Remove from watchlist" : "Save to watchlist"}
+                                  aria-label={isSaved(rec.stock) ? "Remove from watchlist" : "Save to watchlist"}
+                                >
+                                  <Star className="w-3.5 h-3.5" style={isSaved(rec.stock)
+                                    ? { fill: "hsl(48,96%,53%)", color: "hsl(48,96%,53%)" }
+                                    : { fill: "transparent",     color: TEXT_MUT }} />
+                                </button>
+                                <AddToPortfolioButton
+                                  ticker={rec.stock}
+                                  portfolios={customPortfolios}
+                                  onAdd={(portfolioId) => {
+                                    const p = customPortfolios.find(p => p.id === portfolioId);
+                                    if (p && !p.tickers.includes(rec.stock))
+                                      updatePortfolio(portfolioId, p.name, [...p.tickers, rec.stock]);
+                                  }}
+                                />
+                                <span className="text-xs px-1.5 py-0.5 rounded font-mono"
+                                  style={{ background: GREEN_DIM, color: GREEN }}>
+                                  {rec.avg_dcor_to_portfolio.toFixed(3)}
+                                </span>
+                              </div>
                             </div>
                             <SectorTag sector={rec.sector} />
                           </div>
