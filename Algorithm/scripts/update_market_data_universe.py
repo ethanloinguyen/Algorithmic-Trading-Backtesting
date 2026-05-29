@@ -256,8 +256,22 @@ def _parse_ishares_csv(url: str, label: str) -> pd.DataFrame:
             logger.warning(f"  {label}: could not locate header row in CSV")
             return pd.DataFrame()
 
-        csv_content = "\n".join(lines[header_idx:])
-        df = pd.read_csv(StringIO(csv_content))
+        # iShares CSVs include footer rows (fund metadata, disclaimers) after
+        # the holdings data that have a completely different column count.
+        # Truncate at the first blank line after the header to drop footers,
+        # then fall back to skipping bad lines so format changes don't crash us.
+        data_lines = [lines[header_idx]]  # keep header
+        for line in lines[header_idx + 1:]:
+            if not line.strip():           # blank line signals end of holdings
+                break
+            data_lines.append(line)
+        csv_content = "\n".join(data_lines)
+
+        try:
+            df = pd.read_csv(StringIO(csv_content), on_bad_lines="skip")
+        except TypeError:
+            # pandas < 1.3 uses error_bad_lines instead of on_bad_lines
+            df = pd.read_csv(StringIO(csv_content), error_bad_lines=False, warn_bad_lines=False)
 
         if "Ticker" not in df.columns:
             logger.warning(f"  {label}: 'Ticker' column missing")
