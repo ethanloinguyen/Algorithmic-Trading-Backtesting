@@ -37,12 +37,12 @@ const RED      = "hsl(0, 84%, 60%)";
 const BORDER   = "hsl(215, 20%, 18%)";
 const BORDER_D = "hsl(215, 20%, 16%)";
 
-// Cone colors — match the Python output visually
-const CONE_FILL    = "hsla(217, 91%, 60%, 0.18)";   // 1σ band
-const CONE_FILL_2  = "hsla(217, 91%, 60%, 0.08)";   // 2σ band
-const MEDIAN_CLR   = "hsl(217, 91%, 60%)";           // MC median line
-const ACTUAL_CLR   = "hsl(0, 84%, 60%)";             // actual price line
-const TRAIN_CLR    = "hsl(215, 15%, 55%)";           // training period line
+// Cone colors
+const CONE_FILL    = "hsla(217, 91%, 60%, 0.22)";   // 1σ band (slightly more opaque for visibility)
+const CONE_FILL_2  = "hsla(217, 91%, 60%, 0.10)";   // 2σ band
+const MEDIAN_CLR   = "hsl(217, 91%, 65%)";           // MC median line — slightly lighter blue
+const ACTUAL_CLR   = "hsl(0, 80%, 65%)";             // actual price line — softer red
+const TRAIN_CLR    = "hsl(215, 20%, 68%)";           // training period line — brighter gray
 
 const labelStyle = { fill: TEXT_SEC, fontSize: 11 } as const;
 
@@ -280,22 +280,63 @@ function ConeChart({
               domain={["auto", "auto"]}
             />
             <Tooltip
-              contentStyle={{
-                background: "hsl(215,25%,13%)",
-                border: `1px solid ${BORDER}`,
-                borderRadius: 8,
-                fontSize: 11,
-              }}
-              labelStyle={{ color: TEXT_SEC, marginBottom: 4 }}
-              formatter={(value, name) => {
-                const labels: Record<string, string> = {
-                  train:  "Historical",
-                  p50:    "Median",
-                  actual: "Actual",
-                  p84:    "84th pct",
-                  p16:    "16th pct",
+              cursor={{ stroke: BORDER, strokeWidth: 1 }}
+              content={(props: any) => {
+                const { payload, label, active } = props;
+                if (!active || !payload?.length) return null;
+
+                // Only surface the three meaningful series; skip raw band edges.
+                const SERIES: Record<string, { label: string; color: string }> = {
+                  train:  { label: "Historical",  color: TRAIN_CLR  },
+                  p50:    { label: "MC Median",    color: MEDIAN_CLR },
+                  actual: { label: "Actual price", color: ACTUAL_CLR },
                 };
-                return [`$${(value as number)?.toFixed(2)}`, labels[name as string] ?? (name as string)];
+
+                const visible = payload.filter(
+                  (p: any) => SERIES[p.dataKey as string] && p.value != null
+                );
+                if (!visible.length) return null;
+
+                const dayLabel =
+                  label === 0   ? "Split day"  :
+                  label > 0     ? `Day +${label}` :
+                  label != null ? `Day ${label}`   : "";
+                const dateStr = payload[0]?.payload?.date;
+
+                return (
+                  <div style={{
+                    background:   "hsl(215,25%,13%)",
+                    border:       `1px solid ${BORDER}`,
+                    borderRadius: 8,
+                    padding:      "10px 12px",
+                    minWidth:     150,
+                  }}>
+                    <p style={{
+                      color: TEXT_PRI, fontWeight: 700, fontSize: 11, marginBottom: 6,
+                    }}>
+                      {dayLabel}
+                      {dateStr && (
+                        <span style={{ color: TEXT_SEC, fontWeight: 400, marginLeft: 5 }}>
+                          {dateStr}
+                        </span>
+                      )}
+                    </p>
+                    {visible.map((p: any) => {
+                      const s = SERIES[p.dataKey as string];
+                      return (
+                        <div key={p.dataKey} style={{
+                          display: "flex", justifyContent: "space-between",
+                          gap: 18, marginBottom: 3,
+                        }}>
+                          <span style={{ color: s.color, fontSize: 11 }}>{s.label}</span>
+                          <span style={{ color: TEXT_PRI, fontWeight: 700, fontSize: 11 }}>
+                            ${(p.value as number).toFixed(2)}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
               }}
             />
 

@@ -114,3 +114,16 @@ class PipelineResponse(BaseModel):
     user_portfolio:  list[str]
     recommendations: list[ClusteringRecommendation]
     risk:            dict[str, Any]  # full mc_engine output — see mc_engine.py docstring
+
+
+class PortfolioRiskResponse(BaseModel):
+    """Response for the fast /portfolio-risk endpoint — user holdings MC risk only."""
+    user_portfolio: list[str]
+    risk:           dict[str, Any]  # mc_engine output: tickers, missing, weights, horizon_days, n_simulations, portfolio
+
+
+class ClusteringPipelineResponse(BaseModel):
+    """Response for the slow /clustering-pipeline endpoint — K-Medoids + per-stock MC risk."""
+    user_portfolio:  list[str]
+    recommendations: list[ClusteringRecommendation]
+    risk:            dict[str, Any]  # mc_engine output: tickers, missing, weights, horizon_days, n_simulations, per_stock

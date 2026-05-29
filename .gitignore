@@ -3,6 +3,8 @@
 *.env
 .env.local
 .env.*.local
+.env.example
+.env.*.example
 bin
 lib
 capstone-487001-67dc66175c53.json
@@ -57,3 +59,6 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Algorithm runtime artifacts
+Algorithm/checkpoints/

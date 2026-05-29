@@ -117,16 +117,16 @@ def _fetch_momentum_prices(tickers: list, today: date) -> pd.DataFrame:
         WITH latest AS (
             SELECT
                 ticker,
-                close          AS latest_close,
+                adj_close      AS latest_close,
                 ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY date DESC) AS rn
             FROM `{table_id}`
             WHERE ticker IN ({tlist})
-              AND close > 0
+              AND adj_close > 0
         ),
         start_window AS (
             SELECT
                 ticker,
-                close          AS start_close,
+                adj_close      AS start_close,
                 DATE(date)     AS start_date,
                 ABS(DATE_DIFF(DATE(date), DATE('{start_target}'), DAY)) AS days_away,
                 ROW_NUMBER() OVER (
@@ -136,7 +136,7 @@ def _fetch_momentum_prices(tickers: list, today: date) -> pd.DataFrame:
             FROM `{table_id}`
             WHERE ticker IN ({tlist})
               AND DATE(date) BETWEEN '{start_from}' AND '{start_to}'
-              AND close > 0
+              AND adj_close > 0
         )
         SELECT
             l.ticker,
@@ -173,22 +173,22 @@ def _fetch_centrality(tickers: list) -> pd.DataFrame:
     tlist    = ", ".join(f"'{t}'" for t in tickers)
 
     query = f"""
-        WITH latest_date AS (
-            SELECT MAX(as_of_date) AS max_date FROM `{table_id}`
+        WITH latest_snapshot AS (
+            SELECT ticker_i, ticker_j, centrality_i, centrality_j
+            FROM `{table_id}`
+            WHERE as_of_date = (SELECT MAX(as_of_date) FROM `{table_id}`)
         ),
         unioned AS (
             SELECT ticker_i AS ticker, centrality_i AS centrality
-            FROM `{table_id}`, latest_date
-            WHERE as_of_date = max_date
-              AND ticker_i IN ({tlist})
+            FROM latest_snapshot
+            WHERE ticker_i IN ({tlist})
               AND centrality_i IS NOT NULL
 
             UNION ALL
 
             SELECT ticker_j AS ticker, centrality_j AS centrality
-            FROM `{table_id}`, latest_date
-            WHERE as_of_date = max_date
-              AND ticker_j IN ({tlist})
+            FROM latest_snapshot
+            WHERE ticker_j IN ({tlist})
               AND centrality_j IS NOT NULL
         )
         SELECT ticker, MAX(centrality) AS centrality_raw
@@ -225,13 +225,13 @@ def _fetch_annualized_vol(tickers: list) -> pd.DataFrame:
         WITH daily_returns AS (
             SELECT
                 ticker,
-                LOG(close / NULLIF(
-                    LAG(close) OVER (PARTITION BY ticker ORDER BY date), 0
+                LOG(adj_close / NULLIF(
+                    LAG(adj_close) OVER (PARTITION BY ticker ORDER BY date), 0
                 )) AS log_return
             FROM `{table_id}`
             WHERE DATE(date) >= DATE_SUB(CURRENT_DATE(), INTERVAL 365 DAY)
               AND ticker IN ({tlist})
-              AND close > 0
+              AND adj_close > 0
         )
         SELECT
             ticker,
