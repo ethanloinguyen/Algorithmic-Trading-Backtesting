@@ -7,6 +7,7 @@ import {
   createUserWithEmailAndPassword,
   sendEmailVerification,
   updateProfile,
+  signOut,
   AuthError,
 } from "firebase/auth";
 
@@ -125,8 +126,19 @@ export default function AuthForm() {
 
     try {
       if (mode === "signin") {
-        await signInWithEmailAndPassword(auth, email, pw);
-        // AuthContext.loadUserData handles Firestore doc creation on first login
+        const { user } = await signInWithEmailAndPassword(auth, email, pw);
+        if (!user.emailVerified) {
+          try {
+            await sendEmailVerification(user, {
+              url: `${window.location.origin}/verify-email?verified=true`,
+            });
+          } catch {
+            // Rate limit or domain error — redirect anyway, user can resend from verify page
+          }
+          await signOut(auth);
+          router.push(`/verify-email?email=${encodeURIComponent(email)}`);
+          return;
+        }
         setAuthCookie();
         router.push(next);
 
@@ -197,7 +209,7 @@ export default function AuthForm() {
                 value={displayName}
                 onChange={e => setDisplayName(e.target.value)}
                 placeholder="Your name"
-                className="w-full px-4 py-2.5 rounded-lg text-sm outline-none transition-all"
+                className="w-full px-4 py-2.5 rounded-lg text-sm outline-none transition-all placeholder:text-[hsl(215,15%,35%)]"
                 style={{ ...inputBase, border: "1px solid hsl(215,20%,22%)" }}
                 onFocus={e => (e.currentTarget.style.borderColor = "hsl(217,91%,60%)")}
                 onBlur={e  => (e.currentTarget.style.borderColor = "hsl(215,20%,22%)")}
