@@ -1066,6 +1066,15 @@ export default function DiversifyPage() {
                   ? <><Loader2 className="w-4 h-4 animate-spin" />Analyzing…</>
                   : <><Sparkles className="w-4 h-4" />Analyze Portfolio</>}
               </button>
+              {tickers.length > 0 && !hasResult && (
+                <button onClick={reset}
+                  className="text-xs px-3 py-2 rounded-lg"
+                  style={{ background: "hsl(215,25%,16%)", border: `1px solid ${BORDER}`, color: TEXT_SEC }}
+                  onMouseEnter={e => (e.currentTarget.style.background = "hsl(215,25%,20%)")}
+                  onMouseLeave={e => (e.currentTarget.style.background = "hsl(215,25%,16%)")}>
+                  Clear Tickers
+                </button>
+              )}
               {hasResult && (
                 <button onClick={reset}
                   className="text-xs px-3 py-2 rounded-lg"

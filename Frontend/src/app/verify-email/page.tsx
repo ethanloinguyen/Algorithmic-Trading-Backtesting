@@ -17,10 +17,12 @@ function VerifyEmailContent() {
   const router = useRouter();
   const email = searchParams.get("email") ?? "";
   const isVerified = searchParams.get("verified") === "true";
+  const initialSendFailed = searchParams.get("emailSent") === "false";
 
   const [currentUser, setCurrentUser] = useState<User | null | undefined>(undefined);
   const [resending, setResending] = useState(false);
   const [resent, setResent] = useState(false);
+  const [resendError, setResendError] = useState("");
   const docWritten = useRef(false);
 
   useEffect(() => {
@@ -55,13 +57,15 @@ function VerifyEmailContent() {
     const user = currentUser ?? auth.currentUser;
     if (resending || resent || !user) return;
     setResending(true);
+    setResendError("");
     try {
       await sendEmailVerification(user, {
         url: `${window.location.origin}/verify-email?verified=true`,
       });
       setResent(true);
-    } catch {
-      // silently fail — user can try again
+    } catch (err: unknown) {
+      const msg = (err as { message?: string })?.message ?? "Failed to send email.";
+      setResendError(msg.replace("Firebase: ", "").replace(/\(auth\/.*\)/, "").trim());
     } finally {
       setResending(false);
     }
@@ -131,10 +135,28 @@ function VerifyEmailContent() {
               {email || "your email address"}
             </p>
 
+            {initialSendFailed && (
+              <p
+                className="text-xs rounded-lg px-3 py-2 mb-4 leading-relaxed"
+                style={{ color: "hsl(38,92%,65%)", background: "hsl(38,92%,10%)", border: "1px solid hsl(38,92%,25%)" }}
+              >
+                The verification email couldn&apos;t be sent automatically. Use the button below to try again.
+              </p>
+            )}
+
             <p className="text-xs mb-6 leading-relaxed" style={{ color: "hsl(215,15%,50%)" }}>
               Click the link in the email to verify your account, then come back and sign in.
-              Check your spam folder if you don&apos;t see it.
+              Check your spam folder if you don&apos;t see it — institutional emails (.edu, .org) are sometimes filtered.
             </p>
+
+            {resendError && (
+              <p
+                className="text-xs rounded-lg px-3 py-2 mb-3 leading-relaxed"
+                style={{ color: "hsl(0,84%,65%)", background: "hsl(0,84%,10%)", border: "1px solid hsl(0,84%,20%)" }}
+              >
+                {resendError}
+              </p>
+            )}
 
             {/* Resend */}
             <button
