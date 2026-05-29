@@ -64,6 +64,9 @@ os.environ.setdefault("MKL_NUM_THREADS", "1")
 
 # ── Ensure project root is on path ────────────────────────────────────────────
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+# 'from Algorithm.src.*' imports require the PARENT of Algorithm/ to be on the
+# path so Python can find the 'Algorithm' package by name.
+sys.path.insert(0, os.path.dirname(PROJECT_ROOT))
 sys.path.insert(0, PROJECT_ROOT)
 
 from Algorithm.src.config_loader import load_config, get_config
