@@ -1116,8 +1116,6 @@ export default function DiversifyPage() {
                 ))}
               </div>
 
-              <FactorExplanations />
-
               {(portfolioRiskLoading || portfolioRiskResult !== null || portfolioRiskError !== null) && (
                 <section className="mb-8">
                   <div className="flex items-center gap-2 mb-1">
@@ -1152,6 +1150,8 @@ export default function DiversifyPage() {
                   {portfolioRiskResult && <RiskResultPanel result={portfolioRiskResult} onTickerClick={handleTickerClick} />}
                 </section>
               )}
+
+              <FactorExplanations />
 
               {qualityPicks.length > 0 && (
                 <section className="mb-8">
