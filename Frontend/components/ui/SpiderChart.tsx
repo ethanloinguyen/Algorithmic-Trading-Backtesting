@@ -1,6 +1,8 @@
 // Frontend/components/ui/SpiderChart.tsx
 "use client";
-import { TrendingUp, Globe, Layers, Activity, BarChart2 } from "lucide-react";
+import { useState, useRef, useEffect } from "react";
+import { TrendingUp, Globe, Layers, Activity, BarChart2, Star, Briefcase, Check, ExternalLink } from "lucide-react";
+import { useRouter } from "next/navigation";
 import type { QualityRecommendation } from "@/src/app/lib/api";
 
 // ── Axes — 5 quality factors ──────────────────────────────────────────────────
@@ -86,13 +88,161 @@ function polygonPoints(rec: QualityRecommendation): string {
   }).join(" ");
 }
 
+// ── Mini add-to-portfolio dropdown ────────────────────────────────────────────
+
+const BORDER_SC   = "hsl(215, 20%, 18%)";
+const BORDER_D_SC = "hsl(215, 20%, 16%)";
+const TEXT_PRI_SC = "hsl(210, 40%, 92%)";
+const TEXT_SEC_SC = "hsl(215, 15%, 55%)";
+const TEXT_MUT_SC = "hsl(215, 15%, 40%)";
+const BLUE_SC     = "hsl(217, 91%, 60%)";
+const BLUE_DIM_SC = "hsla(217, 91%, 60%, 0.15)";
+
+function MiniPortfolioDropdown({ ticker, portfolios, onToggle }: {
+  ticker:     string;
+  portfolios: { id: string; name: string; tickers: string[] }[];
+  onToggle:   (portfolioId: string, add: boolean) => void;
+}) {
+  const router = useRouter();
+  const [open,  setOpen]  = useState(false);
+  const [saved, setSaved] = useState(false);
+  const ref   = useRef<HTMLDivElement>(null);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => {
+      document.removeEventListener("mousedown", handler);
+      if (timer.current) clearTimeout(timer.current);
+    };
+  }, []);
+
+  function handleToggle(portfolioId: string, currentlyIn: boolean) {
+    onToggle(portfolioId, !currentlyIn);
+    setSaved(true);
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(() => setSaved(false), 1500);
+  }
+
+  const active = open || saved;
+
+  return (
+    <div ref={ref} className="relative flex items-center" onClick={e => e.stopPropagation()}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="transition-all hover:scale-110"
+        title="Add to portfolio"
+        aria-label="Add to portfolio"
+      >
+        {saved && !open
+          ? <Check     className="w-3 h-3" style={{ color: "hsl(142,71%,45%)" }} />
+          : <Briefcase className="w-3 h-3" style={{ color: active ? BLUE_SC : TEXT_MUT_SC }} />
+        }
+      </button>
+      {open && (
+        <div
+          className="absolute z-50 rounded-xl overflow-hidden"
+          style={{
+            minWidth:   "200px",
+            background: "hsl(215,28%,13%)",
+            border:     `1px solid ${BORDER_SC}`,
+            boxShadow:  "0 8px 32px rgba(0,0,0,0.5)",
+            top:        "calc(100% + 4px)",
+            right:      0,
+          }}
+        >
+          {/* Header */}
+          <div className="px-4 py-2.5" style={{ borderBottom: `1px solid ${BORDER_D_SC}` }}>
+            <span className="text-[10px] font-bold uppercase tracking-widest" style={{ color: TEXT_MUT_SC }}>
+              Add to Portfolio
+            </span>
+          </div>
+
+          {portfolios.length === 0 ? (
+            <div className="px-4 py-4 flex flex-col gap-3">
+              <p className="text-xs" style={{ color: TEXT_SEC_SC }}>
+                You don't have any custom portfolios yet.
+              </p>
+              <button
+                onMouseDown={() => { setOpen(false); router.push("/dashboard/profile"); }}
+                className="flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg transition-all hover:opacity-80"
+                style={{
+                  background: BLUE_DIM_SC,
+                  border:     "1px solid hsla(217,91%,60%,0.3)",
+                  color:      BLUE_SC,
+                }}
+              >
+                <ExternalLink className="w-3 h-3" />
+                Create one on Profile
+              </button>
+            </div>
+          ) : (
+            <>
+              {portfolios.map((p, i) => {
+                const checked = p.tickers.includes(ticker);
+                return (
+                  <button
+                    key={p.id}
+                    onMouseDown={() => handleToggle(p.id, checked)}
+                    className="w-full text-left px-4 py-2.5 flex items-center justify-between gap-3 text-xs"
+                    style={{
+                      color:      checked ? BLUE_SC : TEXT_PRI_SC,
+                      borderTop:  i > 0 ? `1px solid ${BORDER_D_SC}` : "none",
+                      background: "transparent",
+                    }}
+                    onMouseEnter={e => (e.currentTarget.style.background = "hsl(215,25%,18%)")}
+                    onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
+                  >
+                    <span className="font-medium truncate">{p.name}</span>
+                    <span
+                      className="flex-shrink-0 w-4 h-4 rounded flex items-center justify-center"
+                      style={{
+                        background: checked ? BLUE_SC : "transparent",
+                        border:     `1.5px solid ${checked ? BLUE_SC : "hsl(215,20%,35%)"}`,
+                      }}
+                    >
+                      {checked && <Check className="w-2.5 h-2.5" style={{ color: "white" }} />}
+                    </span>
+                  </button>
+                );
+              })}
+              {/* Create new portfolio footer */}
+              <div className="px-3 py-2.5" style={{ borderTop: `1px solid ${BORDER_D_SC}` }}>
+                <button
+                  onMouseDown={() => { setOpen(false); router.push("/dashboard/profile"); }}
+                  className="w-full flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg transition-all hover:opacity-80"
+                  style={{
+                    background: BLUE_DIM_SC,
+                    border:     "1px solid hsla(217,91%,60%,0.3)",
+                    color:      BLUE_SC,
+                  }}
+                >
+                  <ExternalLink className="w-3 h-3" />
+                  Create new portfolio
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 interface SpiderChartProps {
-  recommendations:  QualityRecommendation[];
-  activeIdx:        number | null;
-  onActiveChange:   (idx: number | null) => void;
-  onTickerClick?:   (ticker: string) => void;
-  companyNames?:    Record<string, string>;
+  recommendations:    QualityRecommendation[];
+  activeIdx:          number | null;
+  onActiveChange:     (idx: number | null) => void;
+  onTickerClick?:     (ticker: string) => void;
+  companyNames?:      Record<string, string>;
+  isSaved?:           (ticker: string) => boolean;
+  onToggleSave?:      (ticker: string, name: string) => void;
+  portfolios?:           { id: string; name: string; tickers: string[] }[];
+  onTogglePortfolio?:    (ticker: string, portfolioId: string, add: boolean) => void;
 }
 
 export default function SpiderChart({
@@ -101,6 +251,10 @@ export default function SpiderChart({
   onActiveChange,
   onTickerClick,
   companyNames = {},
+  isSaved,
+  onToggleSave,
+  portfolios,
+  onTogglePortfolio,
 }: SpiderChartProps) {
   const recs        = recommendations.slice(0, 10);
   const setActiveIdx = onActiveChange;
@@ -232,10 +386,10 @@ export default function SpiderChart({
             </p>
             <div className="grid grid-cols-2 gap-1.5">
               {recs.map((rec, i) => (
-                <button
+                <div
                   key={rec.ticker}
                   onClick={() => setActiveIdx(activeIdx === i ? null : i)}
-                  className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all text-left"
+                  className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer"
                   style={{
                     background: activeIdx === i ? `${RANK_COLORS[i]}20` : "hsl(215,25%,9%)",
                     border:     `1px solid ${activeIdx === i ? RANK_COLORS[i] : "hsl(215,20%,18%)"}`,
@@ -248,7 +402,6 @@ export default function SpiderChart({
                   </span>
                   <span className="w-2 h-2 rounded-full flex-shrink-0"
                     style={{ background: RANK_COLORS[i] }} />
-                  {/* Ticker — clicking opens OHLCV modal without toggling selection */}
                   <span
                     className="truncate hover:underline cursor-pointer"
                     onClick={e => { e.stopPropagation(); onTickerClick?.(rec.ticker); }}
@@ -256,11 +409,32 @@ export default function SpiderChart({
                   >
                     {rec.ticker}
                   </span>
-                  <span className="ml-auto tabular-nums flex-shrink-0"
-                    style={{ color: activeIdx === i ? RANK_COLORS[i] : "hsl(215,15%,38%)", fontSize: "10px" }}>
-                    {rec.composite_score.toFixed(0)}
-                  </span>
-                </button>
+                  <div className="ml-auto flex items-center gap-1.5 flex-shrink-0">
+                    <span className="tabular-nums"
+                      style={{ color: activeIdx === i ? RANK_COLORS[i] : "hsl(215,15%,38%)", fontSize: "10px" }}>
+                      {rec.composite_score.toFixed(0)}
+                    </span>
+                    {isSaved && onToggleSave && (
+                      <button
+                        onClick={e => { e.stopPropagation(); onToggleSave(rec.ticker, companyNames[rec.ticker] ?? rec.ticker); }}
+                        className="transition-all hover:scale-110"
+                        title={isSaved(rec.ticker) ? "Remove from watchlist" : "Save to watchlist"}
+                        aria-label={isSaved(rec.ticker) ? "Remove from watchlist" : "Save to watchlist"}
+                      >
+                        <Star className="w-3 h-3" style={isSaved(rec.ticker)
+                          ? { fill: "hsl(48,96%,53%)", color: "hsl(48,96%,53%)" }
+                          : { fill: "transparent", color: TEXT_MUT }} />
+                      </button>
+                    )}
+                    {portfolios && onTogglePortfolio && (
+                      <MiniPortfolioDropdown
+                        ticker={rec.ticker}
+                        portfolios={portfolios}
+                        onToggle={(portfolioId, add) => onTogglePortfolio!(rec.ticker, portfolioId, add)}
+                      />
+                    )}
+                  </div>
+                </div>
               ))}
             </div>
           </div>
@@ -292,19 +466,45 @@ export default function SpiderChart({
                   </p>
                 )}
 
-                {/* Explicit "View Price Chart" button — always visible */}
-                <button
-                  onClick={() => onTickerClick?.(activeRec.ticker)}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold mb-3 transition-all hover:opacity-80"
-                  style={{
-                    background: `${activeColor}18`,
-                    border:     `1px solid ${activeColor}50`,
-                    color:      activeColor,
-                  }}
-                >
-                  <BarChart2 className="w-3.5 h-3.5" />
-                  View Price Chart
-                </button>
+                {/* Action buttons row */}
+                <div className="flex items-center gap-2 flex-wrap mb-3">
+                  <button
+                    onClick={() => onTickerClick?.(activeRec.ticker)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all hover:opacity-80"
+                    style={{
+                      background: `${activeColor}18`,
+                      border:     `1px solid ${activeColor}50`,
+                      color:      activeColor,
+                    }}
+                  >
+                    <BarChart2 className="w-3.5 h-3.5" />
+                    View Price Chart
+                  </button>
+                  {isSaved && onToggleSave && (
+                    <button
+                      onClick={() => onToggleSave(activeRec.ticker, companyNames[activeRec.ticker] ?? activeRec.ticker)}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all hover:opacity-80"
+                      title={isSaved(activeRec.ticker) ? "Remove from watchlist" : "Save to watchlist"}
+                      style={{
+                        background: isSaved(activeRec.ticker) ? "hsla(48,96%,53%,0.15)" : "hsl(215,25%,14%)",
+                        border:     `1px solid ${isSaved(activeRec.ticker) ? "hsla(48,96%,53%,0.4)" : "hsl(215,20%,22%)"}`,
+                        color:      isSaved(activeRec.ticker) ? "hsl(48,96%,53%)" : TEXT_MUT,
+                      }}
+                    >
+                      <Star className="w-3.5 h-3.5" style={isSaved(activeRec.ticker)
+                        ? { fill: "hsl(48,96%,53%)", color: "hsl(48,96%,53%)" }
+                        : { fill: "transparent" }} />
+                      {isSaved(activeRec.ticker) ? "Saved" : "Save"}
+                    </button>
+                  )}
+                  {portfolios && onTogglePortfolio && (
+                    <MiniPortfolioDropdown
+                      ticker={activeRec.ticker}
+                      portfolios={portfolios}
+                      onToggle={(portfolioId, add) => onTogglePortfolio!(activeRec.ticker, portfolioId, add)}
+                    />
+                  )}
+                </div>
 
                 {/* Summary stat pills */}
                 <div className="flex items-center gap-3 mt-3 flex-wrap">
