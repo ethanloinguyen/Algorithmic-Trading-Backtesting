@@ -23,14 +23,17 @@ export default function CreateAccountPage() {
       const cred = await createUserWithEmailAndPassword(auth, email, password);
       await updateProfile(cred.user, { displayName: name });
       // Send verification email — user must verify before accessing dashboard
+      let emailSent = true;
       try {
         await sendEmailVerification(cred.user, {
           url: `${window.location.origin}/verify-email?verified=true`,
         });
       } catch {
-        // Domain may not be authorized yet — user can resend from verify page
+        emailSent = false;
       }
-      router.push(`/verify-email?email=${encodeURIComponent(email)}`);
+      router.push(
+        `/verify-email?email=${encodeURIComponent(email)}${emailSent ? "" : "&emailSent=false"}`
+      );
     } catch (err: unknown) {
       const msg = (err as { message?: string })?.message ?? "Account creation failed.";
       setError(msg.replace("Firebase: ", "").replace(/\(auth\/.*\)/, "").trim());
