@@ -66,6 +66,7 @@ function friendlyError(err: AuthError): string {
     case "auth/email-already-in-use": return "An account with this email already exists.";
     case "auth/weak-password":        return "Password must be at least 6 characters.";
     case "auth/too-many-requests":    return "Too many attempts. Please try again later.";
+    case "auth/unauthorized-domain":  return "Sign-in is not enabled for this domain. Contact support.";
     default:                          return "Something went wrong. Please try again.";
   }
 }
