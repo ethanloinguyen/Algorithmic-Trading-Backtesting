@@ -5,11 +5,14 @@ import { useRouter } from "next/navigation";
 import {
   Star, User, Mail, LogOut, Loader2,
   ChevronDown, Layers,
-  FolderPlus, Trash2, X, Plus, Briefcase,
+  FolderPlus, Trash2, X, Plus, Briefcase, AlertTriangle, Eye, EyeOff,
 } from "lucide-react";
 import Sidebar from "@/components/ui/Sidebar";
 import { useAuth } from "@/src/app/context/AuthContext";
 import { fetchStockSummaries, fetchAllStocks, type StockSummary } from "@/src/app/lib/api";
+import { auth, db } from "@/src/app/lib/firebase";
+import { reauthenticateWithCredential, EmailAuthProvider, deleteUser } from "firebase/auth";
+import { doc, deleteDoc } from "firebase/firestore";
 import { SECTORS, ALL_SECTORS, filterBySector } from "@/src/app/lib/sectorData";
 import { PageHelp } from "@/components/ui/PageHelp";
 
@@ -105,6 +108,66 @@ export default function ProfilePage() {
   const [pricesError,    setPricesError]    = useState(false);
   const [selectedSector, setSelectedSector] = useState(ALL_SECTORS);
 
+  // Delete account modal state
+  const [showDeleteModal,   setShowDeleteModal]   = useState(false);
+  const [deletePassword,    setDeletePassword]    = useState("");
+  const [deleteError,       setDeleteError]       = useState("");
+  const [deletingAccount,   setDeletingAccount]   = useState(false);
+  const [showDeletePw,      setShowDeletePw]      = useState(false);
+  // Prevents the unauthenticated-redirect useEffect from racing with our own navigation
+  const isDeletingRef = useRef(false);
+
+  const handleDeleteAccount = async () => {
+    const currentUser = auth.currentUser;
+    if (!currentUser || !currentUser.email) return;
+
+    setDeleteError("");
+    setDeletingAccount(true);
+    isDeletingRef.current = true;
+
+    // Reject after ms — used to prevent any single Firebase call from hanging forever
+    const deadline = (ms: number) =>
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(Object.assign(new Error("timeout"), { code: "app/timeout" })), ms)
+      );
+
+    // Step 1: Re-authenticate — only step that shows user-visible errors on failure
+    try {
+      const credential = EmailAuthProvider.credential(currentUser.email, deletePassword);
+      await Promise.race([
+        reauthenticateWithCredential(currentUser, credential),
+        deadline(10_000),
+      ]);
+    } catch (err: unknown) {
+      isDeletingRef.current = false;
+      setDeletingAccount(false);
+      const code = (err as { code?: string })?.code ?? "";
+      if (code === "auth/wrong-password" || code === "auth/invalid-credential") {
+        setDeleteError("Incorrect password. Please try again.");
+      } else if (code === "auth/too-many-requests") {
+        setDeleteError("Too many attempts. Please try again later.");
+      } else if (code === "app/timeout") {
+        setDeleteError("Request timed out. Check your connection and try again.");
+      } else {
+        setDeleteError("Failed to verify password. Please try again.");
+      }
+      return;
+    }
+
+    const uid = currentUser.uid;
+
+    // Step 2: Delete Firestore data and Firebase Auth account concurrently.
+    // Each is raced against a deadline so a hung operation never blocks navigation.
+    await Promise.allSettled([
+      Promise.race([deleteDoc(doc(db, "users", uid)), deadline(5_000)]),
+      Promise.race([deleteUser(currentUser), deadline(5_000)]),
+    ]);
+
+    // Step 3: Hard-navigate — page fully reloads, auth cookie cleared
+    document.cookie = "ll_authed=; Max-Age=0; path=/";
+    window.location.href = "/";
+  };
+
   // Custom portfolio form state
   const [portfolioName,    setPortfolioName]    = useState("");
   const [portfolioTickers, setPortfolioTickers] = useState<string[]>([]);
@@ -116,9 +179,9 @@ export default function ProfilePage() {
   const portfolioInputRef  = useRef<HTMLInputElement>(null);
   const suggestionsRef     = useRef<HTMLDivElement>(null);
 
-  // Redirect unauthenticated
+  // Redirect unauthenticated (skip during account deletion — handled by window.location)
   useEffect(() => {
-    if (!authLoading && !user) router.replace("/");
+    if (!authLoading && !user && !isDeletingRef.current) router.replace("/");
   }, [user, authLoading, router]);
 
   // Load all stocks for ticker autocomplete
@@ -677,8 +740,119 @@ export default function ProfilePage() {
             </div>
           </div>
 
+          {/* ── Delete Account ── */}
+          <div className="mt-6 rounded-xl p-5" style={{ background: "hsl(215,25%,11%)", border: "1px solid hsl(0,84%,30%)" }}>
+            <div className="flex items-center gap-2 mb-1">
+              <AlertTriangle className="w-4 h-4" style={{ color: "hsl(0,84%,60%)" }} />
+              <h2 className="text-base font-semibold" style={{ color: "hsl(0,84%,60%)" }}>
+                Delete Account
+              </h2>
+            </div>
+            <p className="text-xs mb-4" style={{ color: "hsl(215,15%,45%)" }}>
+              Permanently delete your account and all associated data. This action cannot be undone.
+            </p>
+            <button
+              onClick={() => { setShowDeleteModal(true); setDeletePassword(""); setDeleteError(""); }}
+              className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-opacity hover:opacity-80"
+              style={{ background: "hsla(0,84%,60%,0.12)", border: "1px solid hsl(0,84%,35%)", color: "hsl(0,84%,65%)" }}
+            >
+              <Trash2 className="w-4 h-4" /> Delete My Account
+            </button>
+          </div>
+
         </div>
       </main>
+
+      {/* ── Delete account modal ── */}
+      {showDeleteModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          style={{ background: "rgba(0,0,0,0.7)" }}
+          onClick={(e) => { if (e.target === e.currentTarget) setShowDeleteModal(false); }}
+        >
+          <div
+            className="w-full max-w-md rounded-2xl p-6"
+            style={{ background: "hsl(215,25%,11%)", border: "1px solid hsl(0,84%,30%)" }}
+          >
+            <div className="flex items-center gap-3 mb-4">
+              <div
+                className="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0"
+                style={{ background: "hsla(0,84%,60%,0.15)" }}
+              >
+                <AlertTriangle className="w-5 h-5" style={{ color: "hsl(0,84%,60%)" }} />
+              </div>
+              <div>
+                <h3 className="text-base font-bold" style={{ color: "hsl(210,40%,92%)" }}>
+                  Delete Account
+                </h3>
+                <p className="text-xs" style={{ color: "hsl(215,15%,50%)" }}>
+                  This will permanently remove all your data.
+                </p>
+              </div>
+            </div>
+
+            <p className="text-sm mb-4" style={{ color: "hsl(215,15%,55%)" }}>
+              Enter your password to confirm. Your saved stocks, portfolios, and account will be permanently deleted and cannot be recovered.
+            </p>
+
+            <div className="relative mb-4">
+              <input
+                type={showDeletePw ? "text" : "password"}
+                placeholder="Enter your password"
+                value={deletePassword}
+                onChange={(e) => { setDeletePassword(e.target.value); setDeleteError(""); }}
+                className="w-full px-4 py-2.5 pr-11 rounded-lg text-sm outline-none transition-all"
+                style={{
+                  background: "hsl(215,25%,8%)",
+                  border: deleteError ? "1px solid hsl(0,84%,50%)" : "1px solid hsl(215,20%,22%)",
+                  color: "hsl(210,40%,92%)",
+                }}
+                onFocus={(e) => { if (!deleteError) e.currentTarget.style.borderColor = "hsl(0,84%,50%)"; }}
+                onBlur={(e) => { if (!deleteError) e.currentTarget.style.borderColor = "hsl(215,20%,22%)"; }}
+                onKeyDown={(e) => { if (e.key === "Enter" && deletePassword) handleDeleteAccount(); }}
+                autoFocus
+              />
+              <button
+                type="button"
+                onClick={() => setShowDeletePw(s => !s)}
+                className="absolute right-3 top-1/2 -translate-y-1/2"
+                style={{ color: "hsl(215,15%,55%)" }}
+              >
+                {showDeletePw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
+
+            {deleteError && (
+              <p
+                className="text-xs rounded-lg px-3 py-2 mb-4"
+                style={{ color: "hsl(0,84%,65%)", background: "hsl(0,84%,10%)", border: "1px solid hsl(0,84%,20%)" }}
+              >
+                {deleteError}
+              </p>
+            )}
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowDeleteModal(false)}
+                className="flex-1 py-2.5 rounded-lg text-sm font-medium transition-opacity hover:opacity-80"
+                style={{ background: "hsl(215,25%,16%)", border: "1px solid hsl(215,20%,22%)", color: "hsl(215,15%,65%)" }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDeleteAccount}
+                disabled={deletingAccount || !deletePassword}
+                className="flex-1 py-2.5 rounded-lg text-sm font-semibold transition-opacity hover:opacity-80 disabled:opacity-40 flex items-center justify-center gap-2"
+                style={{ background: "hsl(0,84%,45%)", color: "white" }}
+              >
+                {deletingAccount
+                  ? <><Loader2 className="w-4 h-4 animate-spin" /> Deleting…</>
+                  : "Delete Account"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
