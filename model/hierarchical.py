@@ -296,6 +296,12 @@ def fetch_candidates_and_features(
     feat_cols    = ['stock'] + numeric_features + (['sector_i'] if use_sector else [])
     feature_rows = df[feat_cols].copy()
 
+    # BQ NUMERIC columns arrive as ArrowDtype via db-dtypes; pandas 2.2+
+    # groupby().median() silently drops non-float columns, causing a shape
+    # mismatch downstream. Coerce all feature columns to float64 here.
+    for col in numeric_features:
+        feature_rows[col] = pd.to_numeric(feature_rows[col], errors='coerce')
+
     return candidate_df, feature_rows
 
 
@@ -308,8 +314,13 @@ def build_feature_matrix(feature_rows, candidate_stocks,
     if numeric_features is None:
         numeric_features = NUMERIC_FEATURES
     numeric_agg = feature_rows.groupby('stock')[numeric_features].median().reindex(candidate_stocks)
+    all_nan_cols = numeric_agg.columns[numeric_agg.isna().all()].tolist()
+    if all_nan_cols:
+        print(f'WARNING: features are entirely NaN (likely NULL in BQ table): {all_nan_cols}')
+    # keep_empty_features=True prevents sklearn from dropping all-NaN columns;
+    # they become 0 after imputation (no discriminating power but shape is preserved)
     numeric_df = pd.DataFrame(
-        SimpleImputer(strategy='median').fit_transform(numeric_agg),
+        SimpleImputer(strategy='median', keep_empty_features=True).fit_transform(numeric_agg),
         index=candidate_stocks, columns=numeric_features
     )
     if use_sector:
